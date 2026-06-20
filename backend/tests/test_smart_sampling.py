@@ -1,4 +1,5 @@
 """Tests for backend.normalizer.smart.sample_raw_entries + helpers (021E-1)."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,7 +12,6 @@ from backend.normalizer.smart import (
     discover_raw_field_names,
     sample_raw_entries,
 )
-
 
 # ── _sanitise_value ─────────────────────────────────────────────────────────
 

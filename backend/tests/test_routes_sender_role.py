@@ -3,6 +3,7 @@
 A 'sender' is a listener-only machine account: it may POST to
 /api/ingest/listener and reach the self-service paths, but nothing else.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,6 +43,7 @@ def _login(username: str, password: str) -> TestClient:
 
 # ── role is accepted by the data layer / admin routes ───────────────────────────
 
+
 def test_sender_is_a_valid_role():
     assert "sender" in auth_db.VALID_ROLES
 
@@ -67,6 +69,7 @@ def test_invalid_role_still_rejected(sender_env):
 
 
 # ── sender authz at the middleware boundary ─────────────────────────────────────
+
 
 def test_sender_can_post_listener(sender_env, monkeypatch):
     captured: dict = {}

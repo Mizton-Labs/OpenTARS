@@ -2,6 +2,7 @@
 RSS pull ingestion — fetches and normalises RSS/Atom feeds on a schedule.
 Maps common RSS fields to the supported field schema.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,11 +22,11 @@ _RSS_FIELD_MAP: dict[str, str] = {
     "title": "title",
     "summary": "description",
     "link": "source_url",
-    "id": "source_url",          # fallback if no link
+    "id": "source_url",  # fallback if no link
     "published": "published_at",
     "updated": "last_seen",
     "author": "actor",
-    "tags": "_tags_raw",         # handled specially below
+    "tags": "_tags_raw",  # handled specially below
 }
 
 
@@ -69,23 +70,37 @@ async def pull_rss_source(source: dict[str, Any]) -> dict[str, int]:
     except Exception as exc:
         msg = f"[rss_pull:{name}] fetch failed: {exc}"
         logger.error(msg)
-        return {"inserted": 0, "skipped": 0, "errors": [msg],
-                "total_read": 0, "duplicates": 0, "discarded": 0}
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "errors": [msg],
+            "total_read": 0,
+            "duplicates": 0,
+            "discarded": 0,
+        }
 
     feed = feedparser.parse(content)
 
     if feed.bozo and not feed.entries:
         msg = f"[rss_pull:{name}] feed parse error: {feed.bozo_exception}"
         logger.warning(msg)
-        return {"inserted": 0, "skipped": 0, "errors": [msg],
-                "total_read": 0, "duplicates": 0, "discarded": 0}
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "errors": [msg],
+            "total_read": 0,
+            "duplicates": 0,
+            "discarded": 0,
+        }
 
     total_read = len(feed.entries)
 
     for entry in feed.entries:
         try:
             raw = _map_rss_entry(entry, name)
-            normalised = normalise(raw, ingest_mode="rss_pull", source_name=name, source_fields=source.get("fields"))
+            normalised = normalise(
+                raw, ingest_mode="rss_pull", source_name=name, source_fields=source.get("fields")
+            )
             result = await insert_entry(name, normalised)
             if result == "inserted":
                 inserted += 1
@@ -98,10 +113,17 @@ async def pull_rss_source(source: dict[str, Any]) -> dict[str, int]:
             discarded += 1
 
     skipped = duplicates + discarded
-    logger.info(f"[rss_pull:{name}] read={total_read} inserted={inserted} duplicates={duplicates} discarded={discarded}")
+    logger.info(
+        f"[rss_pull:{name}] read={total_read} inserted={inserted} duplicates={duplicates} discarded={discarded}"
+    )
     audit.info(
         "ingest source=%s mode=rss_pull total_read=%d inserted=%d duplicates=%d discarded=%d errors=%d",
-        name, total_read, inserted, duplicates, discarded, len(errors),
+        name,
+        total_read,
+        inserted,
+        duplicates,
+        discarded,
+        len(errors),
     )
     return {
         "inserted": inserted,

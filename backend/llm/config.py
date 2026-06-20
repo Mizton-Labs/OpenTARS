@@ -11,6 +11,7 @@ Secret hygiene:
       sending ``"***"`` back means "keep existing".
     * Keys are NEVER logged. Validation logs include provider name only.
 """
+
 from __future__ import annotations
 
 import copy
@@ -50,7 +51,7 @@ _DEFAULTS: dict[str, Any] = {
 def _read() -> dict[str, Any]:
     if not _LLM_CONFIG_PATH.exists():
         return copy.deepcopy(_DEFAULTS)
-    with open(_LLM_CONFIG_PATH, "r", encoding="utf-8") as fh:
+    with open(_LLM_CONFIG_PATH, encoding="utf-8") as fh:
         loaded = yaml.safe_load(fh) or {}
     merged = copy.deepcopy(_DEFAULTS)
     merged.update(loaded)
@@ -160,12 +161,9 @@ def validate_config(cfg: dict[str, Any]) -> None:
         # list of non-empty strings if present.
         avail = p.get("available_models")
         if avail is not None:
-            if not isinstance(avail, list) or not all(
-                isinstance(m, str) and m for m in avail
-            ):
+            if not isinstance(avail, list) or not all(isinstance(m, str) and m for m in avail):
                 raise LLMConfigError(
-                    f"provider {name!r}: 'available_models' must be a list of "
-                    "non-empty strings"
+                    f"provider {name!r}: 'available_models' must be a list of non-empty strings"
                 )
 
         # prompts-034: persisted list of models that have passed a green
@@ -173,12 +171,9 @@ def validate_config(cfg: dict[str, Any]) -> None:
         # Mapping model dropdown (decision A). Public ids, not redacted.
         tested = p.get("tested_models")
         if tested is not None:
-            if not isinstance(tested, list) or not all(
-                isinstance(m, str) and m for m in tested
-            ):
+            if not isinstance(tested, list) or not all(isinstance(m, str) and m for m in tested):
                 raise LLMConfigError(
-                    f"provider {name!r}: 'tested_models' must be a list of "
-                    "non-empty strings"
+                    f"provider {name!r}: 'tested_models' must be a list of non-empty strings"
                 )
 
         # prompts-035 (#2b): optional config-driven request-body additions
@@ -191,15 +186,12 @@ def validate_config(cfg: dict[str, Any]) -> None:
                 isinstance(k, str) and k for k in extra_body
             ):
                 raise LLMConfigError(
-                    f"provider {name!r}: 'extra_body' must be a mapping with "
-                    "non-empty string keys"
+                    f"provider {name!r}: 'extra_body' must be a mapping with non-empty string keys"
                 )
 
     default_provider = cfg.get("default_provider")
     if default_provider is not None and default_provider not in seen:
-        raise LLMConfigError(
-            f"default_provider {default_provider!r} is not a configured provider"
-        )
+        raise LLMConfigError(f"default_provider {default_provider!r} is not a configured provider")
 
     if enabled:
         if not providers:

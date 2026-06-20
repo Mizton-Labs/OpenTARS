@@ -1,4 +1,5 @@
 """Tests for the population-weighted scoring helpers (021E-4)."""
+
 from __future__ import annotations
 
 from backend.normalizer.smart import (
@@ -6,7 +7,6 @@ from backend.normalizer.smart import (
     raw_field_population,
     score_proposal,
 )
-
 
 # ── raw_field_population ────────────────────────────────────────────────────
 
@@ -42,7 +42,9 @@ def test_score_proposal_simple_addition():
     # existing maps b only → coverage = 5/16 = 0.3125
     # proposed adds a and c → after = 16/16 = 1.0
     before, after, delta = score_proposal(
-        {"b": "x"}, {"a": "y", "c": "z"}, pop,
+        {"b": "x"},
+        {"a": "y", "c": "z"},
+        pop,
     )
     assert round(before, 4) == 0.3125
     assert after == 1.0
@@ -55,7 +57,9 @@ def test_score_proposal_existing_wins_overlay():
     # Existing already maps both → coverage 1.0
     # Proposed re-maps a (no effect under existing-wins) → delta should be 0
     before, after, delta = score_proposal(
-        {"a": "x", "b": "y"}, {"a": "different"}, pop,
+        {"a": "x", "b": "y"},
+        {"a": "different"},
+        pop,
     )
     assert before == 1.0
     assert after == 1.0

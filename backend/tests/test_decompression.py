@@ -8,6 +8,7 @@ Covers the locked decisions:
   Q4 — multi-member and empty zips rejected
   Q5 — decompressed payload must be plaintext JSON/NDJSON/CSV/XML
 """
+
 from __future__ import annotations
 
 import gzip

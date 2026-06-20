@@ -18,6 +18,7 @@ makes the run reproducible for the recorded markdown artifacts; pass --seed 0
 
 Dependency-free: Python standard library only.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,8 +32,14 @@ _THREAT_TYPES = ["malware", "phishing", "c2", "exploit", "ransomware"]
 _ACTORS = ["APT-Quokka", "Spider-Wasp", "Velvet-Mole", "Iron-Heron", "Static-Lynx"]
 _CAMPAIGNS = ["SilentQuill", "RustyGate", "PaleHarbor", "GlassFerry", "DimEcho"]
 _TAG_POOL = [
-    "credential-theft", "supply-chain", "loader", "infostealer",
-    "backdoor", "downloader", "spearphishing", "lateral-movement",
+    "credential-theft",
+    "supply-chain",
+    "loader",
+    "infostealer",
+    "backdoor",
+    "downloader",
+    "spearphishing",
+    "lateral-movement",
 ]
 
 # Deterministic npm-vulnerable-package events seeded for the T6 search test.
@@ -155,9 +162,7 @@ _SUPPLY_CHAIN_SEED_EVENTS = [
 
 # Ordered seed set: npm (T6), CVE-2026 (T7), supply-chain (T8). Placed before
 # the random fillers so a count >= 6 always includes every search theme.
-_SEED_EVENTS = (
-    _NPM_SEED_EVENTS + _CVE_2026_SEED_EVENTS + _SUPPLY_CHAIN_SEED_EVENTS
-)
+_SEED_EVENTS = _NPM_SEED_EVENTS + _CVE_2026_SEED_EVENTS + _SUPPLY_CHAIN_SEED_EVENTS
 
 
 def _rand_indicator(rng: random.Random, itype: str) -> str:
@@ -219,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--count", type=int, default=10, help="number of events (default: 10)")
     parser.add_argument("--seed", type=int, default=57, help="RNG seed (default: 57)")
     parser.add_argument(
-        "--list-tags", action="store_true",
+        "--list-tags",
+        action="store_true",
         help="emit tags as a JSON list (reproduces the T2 silent-discard finding)",
     )
     args = parser.parse_args(argv)

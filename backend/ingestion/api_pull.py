@@ -1,6 +1,7 @@
 """
 API pull ingestion — fetches JSON from a configured remote URL on a schedule.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,8 +37,14 @@ async def pull_api_source(source: dict[str, Any]) -> dict[str, int]:
     except Exception as exc:
         msg = f"[api_pull:{name}] fetch failed: {exc}"
         logger.error(msg)
-        return {"inserted": 0, "skipped": 0, "errors": [msg],
-                "total_read": 0, "duplicates": 0, "discarded": 0}
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "errors": [msg],
+            "total_read": 0,
+            "duplicates": 0,
+            "discarded": 0,
+        }
 
     entries = extract_entries(payload)
     total_read = len(entries)
@@ -47,7 +54,9 @@ async def pull_api_source(source: dict[str, Any]) -> dict[str, int]:
             discarded += 1
             continue
         try:
-            normalised = normalise(raw, ingest_mode="api_pull", source_name=name, source_fields=source.get("fields"))
+            normalised = normalise(
+                raw, ingest_mode="api_pull", source_name=name, source_fields=source.get("fields")
+            )
             result = await insert_entry(name, normalised)
             if result == "inserted":
                 inserted += 1
@@ -60,10 +69,17 @@ async def pull_api_source(source: dict[str, Any]) -> dict[str, int]:
             discarded += 1
 
     skipped = duplicates + discarded
-    logger.info(f"[api_pull:{name}] read={total_read} inserted={inserted} duplicates={duplicates} discarded={discarded}")
+    logger.info(
+        f"[api_pull:{name}] read={total_read} inserted={inserted} duplicates={duplicates} discarded={discarded}"
+    )
     audit.info(
         "ingest source=%s mode=api_pull total_read=%d inserted=%d duplicates=%d discarded=%d errors=%d",
-        name, total_read, inserted, duplicates, discarded, len(errors),
+        name,
+        total_read,
+        inserted,
+        duplicates,
+        discarded,
+        len(errors),
     )
     return {
         "inserted": inserted,

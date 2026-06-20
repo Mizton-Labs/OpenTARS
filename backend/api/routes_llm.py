@@ -25,6 +25,7 @@ Route map (post-022):
 Both /test routes return the canonical run_provider_test shape
 (see backend/llm/test_runner.py).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +35,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Response
 
 from backend.llm.config import (
-    PROVIDER_NAME_RE,  # re-exported for tests; not used here directly
     load_llm_config,
     merge_write_only_key,
     record_tested_model,
@@ -254,13 +254,15 @@ async def test_llm_provider_draft(body: dict[str, Any]) -> dict[str, Any]:
             cfg = load_llm_config()
             existing = {
                 "providers": [
-                    p for p in cfg.get("providers", [])
+                    p
+                    for p in cfg.get("providers", [])
                     if isinstance(p, dict) and p.get("name") == name
                 ]
             }
             if existing["providers"]:
                 merged = merge_write_only_key(
-                    {"providers": [body]}, existing,
+                    {"providers": [body]},
+                    existing,
                 )
                 body = merged["providers"][0]
 

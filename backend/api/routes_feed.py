@@ -13,6 +13,7 @@ per-watcher periodic job trims stored events down to ``max_feed_events`` between
 bursts (issue_local_008). Each rendered event carries the trigger timestamp, the
 watcher name, and all event fields.
 """
+
 from __future__ import annotations
 
 import csv
@@ -100,14 +101,16 @@ def _render_xml(name: str, rows: list[dict[str, Any]], request: Request) -> Resp
         title = ev.get("indicator") or ev.get("title") or ev.get("cve_id") or name
         guid = f"{ev.get('source_name') or ''}:{ev.get('id') or ''}"
         body = json.dumps(ev, ensure_ascii=False, default=str)
-        parts.extend([
-            "    <item>",
-            f"      <title>{escape(str(title))}</title>",
-            f"      <guid isPermaLink=\"false\">{escape(guid)}</guid>",
-            f"      <pubDate>{escape(str(ev.get('triggered_at') or ''))}</pubDate>",
-            f"      <description>{escape(body)}</description>",
-            "    </item>",
-        ])
+        parts.extend(
+            [
+                "    <item>",
+                f"      <title>{escape(str(title))}</title>",
+                f'      <guid isPermaLink="false">{escape(guid)}</guid>',
+                f"      <pubDate>{escape(str(ev.get('triggered_at') or ''))}</pubDate>",
+                f"      <description>{escape(body)}</description>",
+                "    </item>",
+            ]
+        )
     parts.extend(["  </channel>", "</rss>"])
     return Response(content="\n".join(parts), media_type="application/rss+xml; charset=utf-8")
 

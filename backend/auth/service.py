@@ -12,12 +12,13 @@ Pure security logic on top of :mod:`backend.auth.db`:
 Plaintext passwords and raw session tokens never leave this module's call
 frames — only their hashes are persisted.
 """
+
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
-import hashlib
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,15 +48,14 @@ _failures: dict[tuple[str, str], list[float]] = {}
 
 # ── Password hashing ─────────────────────────────────────────────────────────
 
+
 def hash_password(password: str) -> str:
     """Return a bcrypt hash of *password*. Raises on empty/over-long input."""
     if not password:
         raise ValueError("password must not be empty")
     raw = password.encode("utf-8")
     if len(raw) > _MAX_PASSWORD_BYTES:
-        raise ValueError(
-            f"password must be at most {_MAX_PASSWORD_BYTES} bytes"
-        )
+        raise ValueError(f"password must be at most {_MAX_PASSWORD_BYTES} bytes")
     salt = bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)
     return bcrypt.hashpw(raw, salt).decode("utf-8")
 
@@ -74,6 +74,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 # ── Session tokens ───────────────────────────────────────────────────────────
+
 
 def generate_session_token() -> str:
     """Return a new opaque, URL-safe session token (~256 bits)."""
@@ -114,6 +115,7 @@ async def destroy_session(token: str) -> None:
 
 
 # ── Login throttle ───────────────────────────────────────────────────────────
+
 
 def _prune(key: tuple[str, str], now: float) -> list[float]:
     stamps = [t for t in _failures.get(key, []) if now - t < _THROTTLE_WINDOW_SECONDS]
@@ -165,12 +167,13 @@ async def authenticate(username: str, password: str, ip: str) -> dict | None:
 
 # Pre-computed bcrypt hash of a random string; used for timing-equalisation when
 # the supplied username does not exist.
-_DUMMY_HASH = bcrypt.hashpw(
-    secrets.token_bytes(16), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)
-).decode("utf-8")
+_DUMMY_HASH = bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode(
+    "utf-8"
+)
 
 
 # ── First-run bootstrap ──────────────────────────────────────────────────────
+
 
 async def bootstrap_admin_if_empty() -> str | None:
     """Create an ``admin`` user with a random password if no users exist.
@@ -185,9 +188,7 @@ async def bootstrap_admin_if_empty() -> str | None:
     if await db.count_users() > 0:
         return None
     password = secrets.token_urlsafe(18)
-    await db.create_user(
-        "admin", hash_password(password), role="admin", must_change_password=True
-    )
+    await db.create_user("admin", hash_password(password), role="admin", must_change_password=True)
     _emit_credential("admin", password)
     return password
 
@@ -220,17 +221,13 @@ async def reset_admin_password(username: str = "admin") -> str:
         )
         context = "created"
     else:
-        await db.set_password(
-            existing["id"], hash_password(password), must_change_password=True
-        )
+        await db.set_password(existing["id"], hash_password(password), must_change_password=True)
         context = "reset"
     _emit_credential(username, password, context=context)
     return password
 
 
-def format_credential_box(
-    username: str, password: str, *, context: str = "first-run"
-) -> str:
+def format_credential_box(username: str, password: str, *, context: str = "first-run") -> str:
     """Render the admin credentials inside an ASCII frame drawn with ``#``.
 
     Makes the generated credential clearly visible in the operator's terminal on
@@ -274,9 +271,7 @@ _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 _CREDENTIAL_FILE = _DATA_DIR / "first-run-admin-credentials.txt"
 
 
-def _emit_credential(
-    username: str, password: str, *, context: str = "first-run"
-) -> None:
+def _emit_credential(username: str, password: str, *, context: str = "first-run") -> None:
     """Persist a generated admin credential to an owner-only (0600) file and
     log only a pointer to it.
 

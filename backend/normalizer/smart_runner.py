@@ -14,6 +14,7 @@ decision. The scoring values and final ``outcome`` are persisted with
 every proposal regardless of trigger, so the operator-facing review
 queue and the audit log share one shape.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -83,11 +84,13 @@ def _merge_with_existing_wins(
     for raw_field, canonical in proposal_mapping.items():
         if raw_field in existing:
             if existing[raw_field] != canonical:
-                skipped.append({
-                    "raw_field": raw_field,
-                    "existing_canonical": existing[raw_field],
-                    "proposal_canonical": canonical,
-                })
+                skipped.append(
+                    {
+                        "raw_field": raw_field,
+                        "existing_canonical": existing[raw_field],
+                        "proposal_canonical": canonical,
+                    }
+                )
             continue
         merged[raw_field] = canonical
         added.append({"raw_field": raw_field, "canonical": canonical})
@@ -120,7 +123,9 @@ async def reapply_consolidated_to_sources(sources: list[str]) -> int:
     logger.info(
         "reapply_consolidated_to_sources: cleared %d normalized rows, reset %d "
         "raw rows across sources=%s",
-        deleted, reset_total, sources,
+        deleted,
+        reset_total,
+        sources,
     )
     return reset_total
 
@@ -166,14 +171,21 @@ async def _approve_consolidated_core(
     )
     await activate_consolidated_version(version_id)
     await update_proposal_status(
-        proposal_id, "approved", note=note, outcome="approved",
+        proposal_id,
+        "approved",
+        note=note,
+        outcome="approved",
         consolidated_version_id=version_id,
     )
     reset_rows = await reapply_consolidated_to_sources(sources)
     logger.info(
         "consolidated approve: proposal=%d new consolidated_version_id=%d "
         "sources=%s fields=%d reset_rows=%d",
-        proposal_id, version_id, sources, len(mapping), reset_rows,
+        proposal_id,
+        version_id,
+        sources,
+        len(mapping),
+        reset_rows,
     )
     return {
         "proposal_id": proposal_id,
@@ -224,9 +236,7 @@ async def approve_proposal_core(
     if proposal is None:
         raise LookupError(f"Proposal {proposal_id} not found")
     if proposal["status"] != "pending":
-        raise ValueError(
-            f"Proposal {proposal_id} is {proposal['status']}, not pending"
-        )
+        raise ValueError(f"Proposal {proposal_id} is {proposal['status']}, not pending")
 
     # prompts-032 Phase D: consolidated (global, multi-feed) proposals follow
     # a distinct apply path — they create + activate a consolidated_versions
@@ -251,13 +261,17 @@ async def approve_proposal_core(
         existing_for_source = dict(yaml_mappings.get(source) or {})
 
     merged, added, skipped = _merge_with_existing_wins(
-        existing_for_source, proposal_mapping,
+        existing_for_source,
+        proposal_mapping,
     )
     for s in skipped:
         logger.warning(
             "smart-mode approve: keeping existing mapping for source=%s field=%s "
             "(existing=%s, proposal=%s)",
-            source, s["raw_field"], s["existing_canonical"], s["proposal_canonical"],
+            source,
+            s["raw_field"],
+            s["existing_canonical"],
+            s["proposal_canonical"],
         )
 
     # Create + activate the new version atomically. Local import for the
@@ -283,7 +297,9 @@ async def approve_proposal_core(
     logger.info(
         "smart-mode approve: source=%s new mapping_version_id=%d "
         "(reset %d rows for re-normalization)",
-        source, new_version_id, reset_rows,
+        source,
+        new_version_id,
+        reset_rows,
     )
 
     # Refresh cfg in case set_mode_manual is requested. yaml has already
@@ -298,7 +314,10 @@ async def approve_proposal_core(
 
     outcome = "auto_applied" if auto_applied else "approved"
     await update_proposal_status(
-        proposal_id, "approved", note=note, outcome=outcome,
+        proposal_id,
+        "approved",
+        note=note,
+        outcome=outcome,
         mapping_version_id=new_version_id,
     )
 
@@ -368,8 +387,7 @@ def _decide_outcome(
     if sample_count < _AUTO_APPLY_MIN_SAMPLE_SIZE:
         return (
             "pending_review",
-            f"sample size {sample_count} < {_AUTO_APPLY_MIN_SAMPLE_SIZE} "
-            f"(auto-apply minimum)",
+            f"sample size {sample_count} < {_AUTO_APPLY_MIN_SAMPLE_SIZE} (auto-apply minimum)",
         )
 
     min_delta = float(auto_cfg.get("min_coverage_delta", 0.05))
@@ -432,8 +450,11 @@ async def run_smart_job(
         job_store.update_step(job_id, "normalising")
         try:
             response_text = await asyncio.to_thread(
-                client.complete, user_prompt, system=system_prompt,
-                max_tokens=1024, temperature=0.0,
+                client.complete,
+                user_prompt,
+                system=system_prompt,
+                max_tokens=1024,
+                temperature=0.0,
             )
         except (LLMTransportError, LLMProviderError) as exc:
             # prompts-037: capture the raw request + full HTTP response (from
@@ -497,7 +518,9 @@ async def run_smart_job(
 
         population = raw_field_population(samples)
         cov_before, cov_after, cov_delta = score_proposal(
-            existing_for_source, cleaned, population,
+            existing_for_source,
+            cleaned,
+            population,
         )
         breakdown = {
             "coverage_before": cov_before,
@@ -521,7 +544,12 @@ async def run_smart_job(
             logger.warning(
                 "smart-mode discarded: source=%s trigger=%s reason=%s "
                 "coverage_before=%.4f after=%.4f delta=%.4f",
-                source, trigger_reason, reason, cov_before, cov_after, cov_delta,
+                source,
+                trigger_reason,
+                reason,
+                cov_before,
+                cov_after,
+                cov_delta,
             )
             proposal_id = await insert_proposal(
                 source_name=source,
@@ -544,14 +572,18 @@ async def run_smart_job(
             )
             # Mark a decided_at + note for audit.
             await update_proposal_status(
-                proposal_id, "rejected",
+                proposal_id,
+                "rejected",
                 note=f"auto-discarded: {reason}",
                 outcome="discarded_below_threshold",
             )
-            job_store.complete(job_id, {
-                "proposal_id": proposal_id,
-                "outcome": "discarded_below_threshold",
-            })
+            job_store.complete(
+                job_id,
+                {
+                    "proposal_id": proposal_id,
+                    "outcome": "discarded_below_threshold",
+                },
+            )
             return
 
         # outcome in {"pending_review", "auto_applied"} — both insert as 'pending'
@@ -578,15 +610,16 @@ async def run_smart_job(
 
         if outcome == "auto_applied":
             logger.info(
-                "smart-mode auto-applying proposal %d source=%s trigger=%s "
-                "coverage_delta=%.4f",
-                proposal_id, source, trigger_reason, cov_delta,
+                "smart-mode auto-applying proposal %d source=%s trigger=%s coverage_delta=%.4f",
+                proposal_id,
+                source,
+                trigger_reason,
+                cov_delta,
             )
             try:
                 await approve_proposal_core(
                     proposal_id,
-                    note=f"auto-applied (trigger={trigger_reason}, "
-                         f"coverage_delta={cov_delta:.4f})",
+                    note=f"auto-applied (trigger={trigger_reason}, coverage_delta={cov_delta:.4f})",
                     set_mode_manual=False,
                     auto_applied=True,
                 )
@@ -594,20 +627,27 @@ async def run_smart_job(
                 # Race condition (proposal already touched); demote to pending.
                 logger.warning(
                     "smart-mode auto-apply failed for proposal %d: %s",
-                    proposal_id, exc,
+                    proposal_id,
+                    exc,
                 )
-                job_store.complete(job_id, {
-                    "proposal_id": proposal_id,
-                    "outcome": "pending_review",
-                    "auto_apply_error": str(exc),
-                })
+                job_store.complete(
+                    job_id,
+                    {
+                        "proposal_id": proposal_id,
+                        "outcome": "pending_review",
+                        "auto_apply_error": str(exc),
+                    },
+                )
                 return
 
-        job_store.complete(job_id, {
-            "proposal_id": proposal_id,
-            "outcome": outcome,
-            "coverage_delta": cov_delta,
-        })
+        job_store.complete(
+            job_id,
+            {
+                "proposal_id": proposal_id,
+                "outcome": outcome,
+                "coverage_delta": cov_delta,
+            },
+        )
     except Exception as exc:  # pragma: no cover — defensive
         logger.exception("smart-mode job %s crashed", job_id)
         try:
@@ -666,7 +706,8 @@ async def run_consolidated_smart_job(
 
         try:
             samples, contributing = await sample_consolidated_entries(
-                sources, sample_size=sample_size,
+                sources,
+                sample_size=sample_size,
             )
         except SmartModeError as exc:
             job_store.fail(job_id, str(exc))
@@ -686,7 +727,7 @@ async def run_consolidated_smart_job(
         # prompts-034: the consolidated call is the slow, large one. Use the
         # dedicated smart_mode budget/timeout (defaults: 8192 tokens, 600s)
         # rather than the short per-provider timeout used for Test/Discover.
-        smart_cfg = (load_normalizer_config().get("smart_mode") or {})
+        smart_cfg = load_normalizer_config().get("smart_mode") or {}
         llm_max_tokens = int(smart_cfg.get("llm_max_tokens") or 8192)
         llm_timeout_seconds = float(smart_cfg.get("llm_timeout_seconds") or 600)
         # prompts-034: per-proposal model override. Falls back to the
@@ -695,9 +736,13 @@ async def run_consolidated_smart_job(
         effective_model = model or client.model
         try:
             response_text = await asyncio.to_thread(
-                client.complete, user_prompt, system=system_prompt,
-                max_tokens=llm_max_tokens, temperature=0.0,
-                timeout=llm_timeout_seconds, model=model,
+                client.complete,
+                user_prompt,
+                system=system_prompt,
+                max_tokens=llm_max_tokens,
+                temperature=0.0,
+                timeout=llm_timeout_seconds,
+                model=model,
             )
         except (LLMTransportError, LLMProviderError) as exc:
             # prompts-037: capture raw request + full HTTP response for the card.
@@ -774,11 +819,14 @@ async def run_consolidated_smart_job(
             llm_request_raw=req_raw,
             llm_response_json=resp_json,
         )
-        job_store.complete(job_id, {
-            "proposal_id": proposal_id,
-            "outcome": "pending_review",
-            "sources": contributing,
-        })
+        job_store.complete(
+            job_id,
+            {
+                "proposal_id": proposal_id,
+                "outcome": "pending_review",
+                "sources": contributing,
+            },
+        )
     except Exception as exc:  # pragma: no cover — defensive
         logger.exception("consolidated smart-mode job %s crashed", job_id)
         try:

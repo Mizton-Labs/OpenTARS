@@ -7,6 +7,7 @@ Covers:
     the named feeds and resets their raw ``normalized`` flag so the next run
     reprocesses them.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -36,9 +37,7 @@ async def _seed_norm(*feeds: str) -> None:
 
 def _seed_source(tmp_path: Path, feed: str, *, normalized: int, count: int) -> None:
     with sqlite3.connect(tmp_path / f"{feed}.db") as con:
-        con.execute(
-            "CREATE TABLE entries (id INTEGER PRIMARY KEY, normalized INTEGER NOT NULL)"
-        )
+        con.execute("CREATE TABLE entries (id INTEGER PRIMARY KEY, normalized INTEGER NOT NULL)")
         for _ in range(count):
             con.execute("INSERT INTO entries (normalized) VALUES (?)", (normalized,))
         con.commit()
@@ -82,9 +81,7 @@ async def test_reapply_clears_output_and_resets_flags(tmp_path: Path):
     # Raw flags reset only for the mapping feeds.
     for feed, expected_zero in (("feed-a", 3), ("feed-b", 2), ("feed-other", 0)):
         with sqlite3.connect(tmp_path / f"{feed}.db") as con:
-            n = con.execute(
-                "SELECT COUNT(*) FROM entries WHERE normalized=0"
-            ).fetchone()[0]
+            n = con.execute("SELECT COUNT(*) FROM entries WHERE normalized=0").fetchone()[0]
             assert n == expected_zero
 
     # Normalized output cleared only for the mapping feeds.

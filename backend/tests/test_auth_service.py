@@ -1,4 +1,5 @@
 """Tests for backend.auth.service (prompts-045)."""
+
 from __future__ import annotations
 
 import pytest
@@ -12,9 +13,9 @@ from backend.auth.service import (
     create_session_for_user,
     destroy_session,
     format_credential_box,
+    generate_session_token,
     hash_password,
     hash_token,
-    generate_session_token,
     is_throttled,
     record_failure,
     reset_admin_password,
@@ -29,9 +30,7 @@ def _isolate_users_db(tmp_path, monkeypatch):
     # Redirect the first-run credential file into the tmp dir so bootstrap
     # never writes a real secret file into the repo's data/ directory.
     monkeypatch.setattr(service, "_DATA_DIR", tmp_path)
-    monkeypatch.setattr(
-        service, "_CREDENTIAL_FILE", tmp_path / "first-run-admin-credentials.txt"
-    )
+    monkeypatch.setattr(service, "_CREDENTIAL_FILE", tmp_path / "first-run-admin-credentials.txt")
     # Clear the in-memory throttle ledger between tests.
     service._failures.clear()
     yield
@@ -39,6 +38,7 @@ def _isolate_users_db(tmp_path, monkeypatch):
 
 
 # ── Password hashing ─────────────────────────────────────────────────────────
+
 
 def test_hash_and_verify_password():
     h = hash_password("correct horse battery staple")
@@ -69,6 +69,7 @@ def test_unique_salts():
 
 # ── Tokens ───────────────────────────────────────────────────────────────────
 
+
 def test_token_is_random_and_hash_stable():
     t1 = generate_session_token()
     t2 = generate_session_token()
@@ -78,6 +79,7 @@ def test_token_is_random_and_hash_stable():
 
 
 # ── Sessions ─────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_session_create_resolve_destroy():
@@ -107,6 +109,7 @@ async def test_resolve_session_empty_token():
 
 # ── Throttle ─────────────────────────────────────────────────────────────────
 
+
 def test_throttle_after_max_failures():
     for _ in range(5):
         assert is_throttled("u", "1.2.3.4") is False
@@ -119,6 +122,7 @@ def test_throttle_after_max_failures():
 
 
 # ── authenticate() ───────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_authenticate_success_clears_failures():
@@ -165,6 +169,7 @@ async def test_authenticate_throttled_returns_none():
 
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_bootstrap_creates_admin_once():
@@ -214,6 +219,7 @@ async def test_bootstrap_skips_when_users_exist():
 
 
 # ── must_change_password / reset_admin_password (prompts-047) ─────────────────
+
 
 @pytest.mark.asyncio
 async def test_bootstrap_flags_must_change_password():
@@ -277,6 +283,7 @@ async def test_reset_admin_password_writes_credential_file_not_log(caplog):
 
 
 # ── format_credential_box (prompts-059) ─────────────────────────────────────────
+
 
 def test_format_credential_box_contains_username_and_password():
     box = format_credential_box("admin", "s3cr3t-token")

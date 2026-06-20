@@ -1,6 +1,7 @@
 """
 Job status routes — let the frontend poll background ingest progress.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -13,7 +14,9 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.get("")
-async def list_jobs(active: bool = Query(False, description="Only running/queued jobs")) -> list[dict[str, Any]]:
+async def list_jobs(
+    active: bool = Query(False, description="Only running/queued jobs"),
+) -> list[dict[str, Any]]:
     if active:
         return [j.to_dict() for j in job_store.list_active()]
     # Default: return all (including recently-finished within TTL)

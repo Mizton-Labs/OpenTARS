@@ -6,6 +6,7 @@ through (api_pull, rss_pull, remote_feed, local, listener). These tests pin
 that the bypass keeps *all* raw fields for external-feed ingest modes, so the
 toggle is not silently limited to local feeds.
 """
+
 import pytest
 
 
@@ -20,9 +21,7 @@ import pytest
 def test_ingest_all_fields_keeps_all_fields_for_external_feeds(
     monkeypatch, ingest_mode, source_name
 ):
-    monkeypatch.setattr(
-        "backend.ingestion.normaliser.load_ingest_all_fields", lambda: True
-    )
+    monkeypatch.setattr("backend.ingestion.normaliser.load_ingest_all_fields", lambda: True)
     # A minimal/strict configured field set — proving the bypass ignores it.
     monkeypatch.setattr(
         "backend.ingestion.normaliser.load_fields",
@@ -49,9 +48,7 @@ def test_ingest_all_fields_keeps_all_fields_for_external_feeds(
 
 def test_ingest_all_disabled_still_filters_external_feed(monkeypatch):
     """Sanity counterpart: with the flag OFF, an external feed is filtered."""
-    monkeypatch.setattr(
-        "backend.ingestion.normaliser.load_ingest_all_fields", lambda: False
-    )
+    monkeypatch.setattr("backend.ingestion.normaliser.load_ingest_all_fields", lambda: False)
     monkeypatch.setattr(
         "backend.ingestion.normaliser.load_fields",
         lambda: {"core_fields": [{"name": "indicator", "enabled": True}], "custom_fields": []},

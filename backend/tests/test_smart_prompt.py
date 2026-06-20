@@ -1,4 +1,5 @@
 """Tests for backend.normalizer.smart.build_prompt (021E-1)."""
+
 from __future__ import annotations
 
 from backend.normalizer.smart import (
@@ -47,9 +48,7 @@ def test_build_prompt_is_field_centric_with_selective_examples():
     assert "e.g." in usr
     assert "v1" in usr or "v2" in usr
     # Self-describing field line has no example marker.
-    title_line = next(
-        ln for ln in usr.splitlines() if ln.strip() == "- title"
-    )
+    title_line = next(ln for ln in usr.splitlines() if ln.strip() == "- title")
     assert "e.g." not in title_line
     # No full-row JSON sample block is emitted any more.
     assert '{"title"' not in usr and '{"weird_col"' not in usr
@@ -82,6 +81,7 @@ def test_canonical_field_names_configured_filters_disabled(tmp_path, monkeypatch
     """field_scope='configured' returns only ENABLED fields; 'all' returns
     every field regardless of its enabled flag (prompts-032 Phase E)."""
     import backend.config.loader as loader
+
     p = tmp_path / "feed-fields.yaml"
     p.write_text(
         "core_fields:\n"
@@ -98,4 +98,3 @@ def test_canonical_field_names_configured_filters_disabled(tmp_path, monkeypatch
     # default 'all' keeps the disabled field too.
     assert _canonical_field_names("all") == ["indicator", "severity", "vendor_score"]
     assert _canonical_field_names() == ["indicator", "severity", "vendor_score"]
-

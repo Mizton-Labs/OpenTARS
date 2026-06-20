@@ -3,6 +3,7 @@
 api_pull / rss_pull honour an optional ``continuous`` flag; absent defaults to
 True (backward compatible). remote_json_pull keeps continuous default False.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -92,9 +93,7 @@ def test_remote_json_absent_continuous_not_scheduled(monkeypatch):
     monkeypatch.setattr(
         scheduler_mod,
         "load_sources",
-        lambda: {
-            "remote_json_pull": [{"name": "rj", "url": "http://x", "enabled": True}]
-        },
+        lambda: {"remote_json_pull": [{"name": "rj", "url": "http://x", "enabled": True}]},
     )
     scheduler_mod.reload()
     assert "remote_json_pull__rj" not in _job_ids()

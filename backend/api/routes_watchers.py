@@ -10,21 +10,20 @@ enabled (the middleware in main.py fails closed for non-admin roles on any path
 not in its viewer allowlist). The PUBLIC per-watcher feed lives separately in
 ``routes_feed.py``.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from backend import scheduler as scheduler_mod
+from backend.config.loader import load_watcher_max_events
 from backend.db import watchers as store
 from backend.db.manager import CORE_COLUMNS, _get_all_sources, query_entries
 from backend.models.watcher import WatcherEnabledIn, WatcherIn
-from backend.normalizer.db import _allowed_columns, get_normalized_summary
-from backend.normalizer.db import query_normalized
-from backend.config.loader import load_watcher_max_events
-from backend import scheduler as scheduler_mod
-from backend.watchers import engine
-from backend.watchers import delivery
+from backend.normalizer.db import _allowed_columns, get_normalized_summary, query_normalized
+from backend.watchers import delivery, engine
 
 router = APIRouter(prefix="/api/watchers", tags=["watchers"])
 
@@ -188,9 +187,7 @@ async def trigger_watcher(watcher_id: str) -> dict[str, Any]:
     watcher = await store.get_watcher(watcher_id)
     if watcher is None:
         raise HTTPException(status_code=404, detail="watcher not found")
-    triggered = await engine.evaluate_watcher(
-        watcher, {"raw", "normalized"}, ignore_enabled=True
-    )
+    triggered = await engine.evaluate_watcher(watcher, {"raw", "normalized"}, ignore_enabled=True)
     # Deliver synchronously here (outside the realtime fast-path) so the response
     # reflects the delivery outcome the operator just requested.
     delivered = {"delivered": 0, "failed": 0}

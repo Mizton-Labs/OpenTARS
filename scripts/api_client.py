@@ -49,6 +49,7 @@ Examples:
   scripts/api_client.py get-raw --field severity=critical --field indicator_type=ipv4
   scripts/api_client.py get-normalized --field cve_id=CVE-2026-0001
 """
+
 from __future__ import annotations
 
 import argparse
@@ -126,10 +127,7 @@ def build_url(base: str, path: str, params: dict[str, object] | None = None) -> 
     """
     url = base.rstrip("/") + path
     if params:
-        query = {
-            k: v for k, v in params.items()
-            if v is not None and v != []
-        }
+        query = {k: v for k, v in params.items() if v is not None and v != []}
         if query:
             url += "?" + urllib.parse.urlencode(query, doseq=True)
     return url
@@ -146,7 +144,10 @@ def http_post_json(opener: urllib.request.OpenerDirector, url: str, payload: obj
     """POST a JSON payload to a URL and decode the JSON response."""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        url, data=body, method="POST", headers={"Content-Type": "application/json"},
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
     )
     with opener.open(req, timeout=_TIMEOUT) as resp:  # noqa: S310 (trusted local API)
         return json.loads(resp.read().decode("utf-8"))
@@ -155,14 +156,19 @@ def http_post_json(opener: urllib.request.OpenerDirector, url: str, payload: obj
 def login(opener: urllib.request.OpenerDirector, base: str, username: str, password: str) -> object:
     """Authenticate against /api/auth/login; the session cookie is stored in the jar."""
     return http_post_json(
-        opener, build_url(base, "/api/auth/login"),
+        opener,
+        build_url(base, "/api/auth/login"),
         {"username": username, "password": password},
     )
 
 
 def fetch_events(
-    opener: urllib.request.OpenerDirector, base: str, path: str,
-    feeds: list[str], max_events: int, search: str | None = None,
+    opener: urllib.request.OpenerDirector,
+    base: str,
+    path: str,
+    feeds: list[str],
+    max_events: int,
+    search: str | None = None,
     fields: list[str] | None = None,
 ) -> list[object]:
     """
@@ -178,7 +184,8 @@ def fetch_events(
     results: list[object] = []
     if not feeds:
         url = build_url(
-            base, path,
+            base,
+            path,
             {"limit": max_events, "search": search, "field": fields},
         )
         results = list(http_get_json(opener, url))
@@ -188,9 +195,9 @@ def fetch_events(
             if remaining <= 0:
                 break
             url = build_url(
-                base, path,
-                {"source": feed, "limit": remaining, "search": search,
-                 "field": fields},
+                base,
+                path,
+                {"source": feed, "limit": remaining, "search": search, "field": fields},
             )
             results.extend(http_get_json(opener, url))
     return results[:max_events]
@@ -211,7 +218,7 @@ SUMMARY_PATHS = {
 def _read_send_payload(args: argparse.Namespace) -> object:
     """Resolve the JSON payload for `send` from --file, --data, or stdin."""
     if args.file:
-        with open(args.file, "r", encoding="utf-8") as fh:
+        with open(args.file, encoding="utf-8") as fh:
             raw = fh.read()
     elif args.data is not None:
         raw = args.data
@@ -236,7 +243,11 @@ def cmd_get_raw(args: argparse.Namespace) -> int:
     opener = build_opener(args.insecure)
     _maybe_login(opener, args)
     events = fetch_events(
-        opener, args.url, "/api/viewer/entries", args.feeds, args.max,
+        opener,
+        args.url,
+        "/api/viewer/entries",
+        args.feeds,
+        args.max,
         fields=args.field,
     )
     print(json.dumps(events))
@@ -247,7 +258,11 @@ def cmd_get_normalized(args: argparse.Namespace) -> int:
     opener = build_opener(args.insecure)
     _maybe_login(opener, args)
     events = fetch_events(
-        opener, args.url, "/api/normalizer/entries", args.feeds, args.max,
+        opener,
+        args.url,
+        "/api/normalizer/entries",
+        args.feeds,
+        args.max,
         fields=args.field,
     )
     print(json.dumps(events))
@@ -269,8 +284,13 @@ def cmd_search(args: argparse.Namespace) -> int:
     _maybe_login(opener, args)
     path = ENTRIES_PATHS[args.type]
     events = fetch_events(
-        opener, args.url, path, args.feeds, args.max,
-        search=args.query, fields=args.field,
+        opener,
+        args.url,
+        path,
+        args.feeds,
+        args.max,
+        search=args.query,
+        fields=args.field,
     )
     print(json.dumps(events))
     return 0
@@ -314,31 +334,38 @@ def build_parser() -> argparse.ArgumentParser:
             "  api_client.py --url http://host:8001 --username test get-raw\n"
             "  api_client.py --url http://host:8000 send --file events.json\n"
             "  cat events.json | api_client.py send\n"
-            "  api_client.py search \"npm\" --type raw --max 20\n"
+            '  api_client.py search "npm" --type raw --max 20\n'
             "  api_client.py get-raw --field severity=critical --field indicator_type=ipv4\n"
             "  api_client.py get-normalized --field cve_id=CVE-2026-0001\n"
-            "  api_client.py query \"critical CVEs from 2026 affecting nginx\"\n"
+            '  api_client.py query "critical CVEs from 2026 affecting nginx"\n'
             "  api_client.py list-feeds\n"
             "  api_client.py --url https://host/alias --insecure get-raw   # self-signed TLS\n"
         ),
     )
     parser.add_argument(
-        "--url", default=DEFAULT_URL,
+        "--url",
+        default=DEFAULT_URL,
         help=f"Base API endpoint URL (default: {DEFAULT_URL})",
     )
     parser.add_argument(
-        "--insecure", "-k", action="store_true",
+        "--insecure",
+        "-k",
+        action="store_true",
         help=(
             "Skip TLS certificate verification for HTTPS (accept self-signed / "
             "untrusted certs). Disables MITM protection — trusted/dev use only."
         ),
     )
     parser.add_argument(
-        "--username", "-u", default=None,
+        "--username",
+        "-u",
+        default=None,
         help="Username for auth-enabled servers (triggers a login)",
     )
     parser.add_argument(
-        "--password", "-p", default=None,
+        "--password",
+        "-p",
+        default=None,
         help="Password for --username (prompted securely if omitted)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -346,11 +373,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_raw = sub.add_parser("get-raw", help="Get the raw events table as a JSON string")
     p_raw.add_argument("feeds", nargs="*", help="Feed names to fetch (omit for all feeds)")
     p_raw.add_argument(
-        "--max", type=int, default=DEFAULT_MAX,
+        "--max",
+        type=int,
+        default=DEFAULT_MAX,
         help=f"Maximum number of events (default: {DEFAULT_MAX})",
     )
     p_raw.add_argument(
-        "--field", action="append", metavar="NAME=VALUE", default=None,
+        "--field",
+        action="append",
+        metavar="NAME=VALUE",
+        default=None,
         help=_FIELD_HELP,
     )
     p_raw.set_defaults(func=cmd_get_raw)
@@ -358,11 +390,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_norm = sub.add_parser("get-normalized", help="Get the normalized data table as a JSON string")
     p_norm.add_argument("feeds", nargs="*", help="Feed names to fetch (omit for all feeds)")
     p_norm.add_argument(
-        "--max", type=int, default=DEFAULT_MAX,
+        "--max",
+        type=int,
+        default=DEFAULT_MAX,
         help=f"Maximum number of events (default: {DEFAULT_MAX})",
     )
     p_norm.add_argument(
-        "--field", action="append", metavar="NAME=VALUE", default=None,
+        "--field",
+        action="append",
+        metavar="NAME=VALUE",
+        default=None,
         help=_FIELD_HELP,
     )
     p_norm.set_defaults(func=cmd_get_normalized)
@@ -376,18 +413,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Full-text search the raw or normalized table")
     p_search.add_argument("query", help="Search term (matched against indexed text fields)")
     p_search.add_argument(
-        "feeds", nargs="*", help="Feed names to restrict the search to (omit for all feeds)",
+        "feeds",
+        nargs="*",
+        help="Feed names to restrict the search to (omit for all feeds)",
     )
     p_search.add_argument(
-        "--type", choices=("raw", "normalized"), default="raw",
+        "--type",
+        choices=("raw", "normalized"),
+        default="raw",
         help="Which table to search (default: raw)",
     )
     p_search.add_argument(
-        "--max", type=int, default=DEFAULT_MAX,
+        "--max",
+        type=int,
+        default=DEFAULT_MAX,
         help=f"Maximum number of results (default: {DEFAULT_MAX})",
     )
     p_search.add_argument(
-        "--field", action="append", metavar="NAME=VALUE", default=None,
+        "--field",
+        action="append",
+        metavar="NAME=VALUE",
+        default=None,
         help=_FIELD_HELP,
     )
     p_search.set_defaults(func=cmd_search)
@@ -398,21 +444,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_query.add_argument("question", help="Natural-language question (quote it)")
     p_query.add_argument(
-        "--type", choices=("raw", "normalized"), default=None,
+        "--type",
+        choices=("raw", "normalized"),
+        default=None,
         help="Force the dataset to query (default: let the server/LLM decide)",
     )
     p_query.add_argument(
-        "--source", default=None, help="Restrict to a single feed name",
+        "--source",
+        default=None,
+        help="Restrict to a single feed name",
     )
     p_query.add_argument(
-        "--max", type=int, default=None,
+        "--max",
+        type=int,
+        default=None,
         help="Maximum number of results (overrides the LLM's limit)",
     )
     p_query.set_defaults(func=cmd_query)
 
     p_feeds = sub.add_parser("list-feeds", help="List available feeds with per-source counts")
     p_feeds.add_argument(
-        "--type", choices=("raw", "normalized"), default="raw",
+        "--type",
+        choices=("raw", "normalized"),
+        default="raw",
         help="Which catalogue to list (default: raw)",
     )
     p_feeds.set_defaults(func=cmd_list_feeds)

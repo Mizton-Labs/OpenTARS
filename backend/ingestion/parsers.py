@@ -2,6 +2,7 @@
 Parsers — format detection and parsing for JSON, NDJSON, CSV, and XML feeds.
 Used by both local upload and remote fetch ingestion paths.
 """
+
 from __future__ import annotations
 
 import csv
@@ -18,8 +19,19 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB hard limit
 # Well-known envelope keys used by major TI/REST APIs to wrap a record list.
 # Extended in prompts-015 for NVD (1.1 + 2.0) and other common feeds.
 _ENVELOPE_KEYS: tuple[str, ...] = (
-    "data", "results", "items", "entries", "objects", "indicators", "events",
-    "vulnerabilities", "CVE_Items", "cves", "records", "feed", "value",
+    "data",
+    "results",
+    "items",
+    "entries",
+    "objects",
+    "indicators",
+    "events",
+    "vulnerabilities",
+    "CVE_Items",
+    "cves",
+    "records",
+    "feed",
+    "value",
 )
 
 # Default flatten depth when no setting is available (used by tests).
@@ -54,14 +66,18 @@ def flatten_entry(
             out[key] = _stringify_leaf(v)
             continue
         if isinstance(v, dict):
-            out.update(flatten_entry(v, max_depth=max_depth, sep=sep, _prefix=key, _depth=_depth + 1))
+            out.update(
+                flatten_entry(v, max_depth=max_depth, sep=sep, _prefix=key, _depth=_depth + 1)
+            )
         elif isinstance(v, list):
             if not v:
                 out[key] = ""
             elif all(not isinstance(x, (dict, list)) for x in v):
                 out[key] = ", ".join("" if x is None else str(x) for x in v)
             elif all(isinstance(x, dict) for x in v):
-                nested = flatten_entry(v[0], max_depth=max_depth, sep=sep, _prefix=key, _depth=_depth + 1)
+                nested = flatten_entry(
+                    v[0], max_depth=max_depth, sep=sep, _prefix=key, _depth=_depth + 1
+                )
                 out.update(nested)
                 out[f"{key}{sep}_count"] = len(v)
             else:
@@ -79,6 +95,7 @@ def _stringify_leaf(v: Any) -> str:
         return str(v)
     try:
         import json as _json
+
         return _json.dumps(v, ensure_ascii=False)
     except Exception:
         return str(v)
@@ -88,6 +105,7 @@ def _flatten_all(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Apply flatten_entry to every dict in a list, using the configured depth."""
     try:
         from backend.config.loader import load_flatten_max_depth
+
         depth = load_flatten_max_depth()
     except Exception:
         depth = _DEFAULT_FLATTEN_DEPTH
@@ -168,7 +186,8 @@ def extract_entries(payload: Any) -> list[dict[str, Any]]:
 
     # Step 3 — single list[dict] value
     list_dict_values = [
-        v for v in payload.values()
+        v
+        for v in payload.values()
         if isinstance(v, list) and v and all(isinstance(x, dict) for x in v)
     ]
     if len(list_dict_values) == 1:
@@ -295,9 +314,7 @@ def _parse_ndjson(text: str) -> list[dict[str, Any]]:
         try:
             obj = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"File is not valid JSON or NDJSON: line {i}: {exc}"
-            ) from exc
+            raise ValueError(f"File is not valid JSON or NDJSON: line {i}: {exc}") from exc
         result.append(obj)
     return _flatten_all(result)
 
@@ -319,7 +336,7 @@ def _sniff_delimiter(text: str) -> str:
         if ln.strip():
             start = i
             break
-    sample = "\n".join(lines[start:start + 50])[:8192]
+    sample = "\n".join(lines[start : start + 50])[:8192]
     if not sample:
         return ","
 

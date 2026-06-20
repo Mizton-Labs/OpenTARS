@@ -1,61 +1,65 @@
 """Pydantic models for ingest entries and API responses."""
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
 class EntryIn(BaseModel):
     """Payload accepted by the push listener and ingest endpoints."""
+
     model_config = {"extra": "allow"}  # pass-through unknown fields to normaliser
 
-    indicator: Optional[str] = None
-    indicator_type: Optional[str] = None
-    threat_type: Optional[str] = None
-    severity: Optional[str] = None
-    confidence: Optional[float] = None
-    source: Optional[str] = None
-    source_url: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[str] = None
-    tlp: Optional[str] = None
-    published_at: Optional[str] = None
-    first_seen: Optional[str] = None
-    last_seen: Optional[str] = None
-    cve_id: Optional[str] = None
-    cvss_score: Optional[float] = None
-    cvss_vector: Optional[str] = None
-    affected_product: Optional[str] = None
-    affected_vendor: Optional[str] = None
-    patch_available: Optional[bool] = None
-    mitre_attack_id: Optional[str] = None
-    malware_family: Optional[str] = None
-    campaign: Optional[str] = None
-    actor: Optional[str] = None
-    country: Optional[str] = None
-    autonomous_system: Optional[str] = None
-    port: Optional[int] = None
-    protocol: Optional[str] = None
-    geo_lat: Optional[float] = None
-    geo_lon: Optional[float] = None
-    ingest_mode: Optional[str] = None
-    raw: Optional[str] = None
+    indicator: str | None = None
+    indicator_type: str | None = None
+    threat_type: str | None = None
+    severity: str | None = None
+    confidence: float | None = None
+    source: str | None = None
+    source_url: str | None = None
+    title: str | None = None
+    description: str | None = None
+    tags: str | None = None
+    tlp: str | None = None
+    published_at: str | None = None
+    first_seen: str | None = None
+    last_seen: str | None = None
+    cve_id: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    affected_product: str | None = None
+    affected_vendor: str | None = None
+    patch_available: bool | None = None
+    mitre_attack_id: str | None = None
+    malware_family: str | None = None
+    campaign: str | None = None
+    actor: str | None = None
+    country: str | None = None
+    autonomous_system: str | None = None
+    port: int | None = None
+    protocol: str | None = None
+    geo_lat: float | None = None
+    geo_lon: float | None = None
+    ingest_mode: str | None = None
+    raw: str | None = None
 
 
 class EntryOut(BaseModel):
     """Entry as returned by the viewer API."""
+
     model_config = {"extra": "allow"}
 
-    id: Optional[int] = None
+    id: int | None = None
     source: str
     ingested_at: str
-    indicator: Optional[str] = None
-    indicator_type: Optional[str] = None
-    threat_type: Optional[str] = None
-    severity: Optional[str] = None
-    title: Optional[str] = None
-    ingest_mode: Optional[str] = None
+    indicator: str | None = None
+    indicator_type: str | None = None
+    threat_type: str | None = None
+    severity: str | None = None
+    title: str | None = None
+    ingest_mode: str | None = None
 
 
 class SummaryItem(BaseModel):

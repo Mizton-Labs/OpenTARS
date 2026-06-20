@@ -7,11 +7,13 @@ These tests assert structural invariants over `_SYNONYM_GROUPS` and
 config/feed-fields.yaml — the engine and the rest of the system share one
 canonical namespace.
 """
+
 from __future__ import annotations
 
 
 def test_no_duplicate_wildcard_patterns():
     from backend.normalizer.engine import _WILDCARD_PATTERNS
+
     seen: set[str] = set()
     for pattern, _canonical in _WILDCARD_PATTERNS:
         assert pattern not in seen, f"duplicate wildcard pattern: {pattern!r}"
@@ -22,6 +24,7 @@ def test_every_wildcard_canonical_exists_in_engine():
     """Q-A=C invariant: wildcards may only target canonicals already present
     in _SYNONYM_GROUPS."""
     from backend.normalizer.engine import _SYNONYM_GROUPS, _WILDCARD_PATTERNS
+
     engine_canonicals = {c for c, _ in _SYNONYM_GROUPS}
     for pattern, canonical in _WILDCARD_PATTERNS:
         assert canonical in engine_canonicals, (
@@ -34,23 +37,24 @@ def test_no_wildcard_targets_severity():
     reserved for pure severity-level terms. Numeric scoring routes to
     `cvss_score`; adding severity wildcards would re-introduce that overload."""
     from backend.normalizer.engine import _WILDCARD_PATTERNS
+
     offenders = [p for p, c in _WILDCARD_PATTERNS if c == "severity"]
-    assert offenders == [], (
-        f"021C deliberately omits severity wildcards; found: {offenders!r}"
-    )
+    assert offenders == [], f"021C deliberately omits severity wildcards; found: {offenders!r}"
 
 
 def test_specificity_function_ranks_correctly():
     from backend.normalizer.engine import _specificity
-    assert _specificity("cve") == 0          # exact, no glob
-    assert _specificity("cve*") == 1         # anchored at end
-    assert _specificity("*cve") == 1         # anchored at start
-    assert _specificity("*cve*") == 2        # free glob (both ends)
-    assert _specificity("c*e*id") == 2       # free glob (interior)
+
+    assert _specificity("cve") == 0  # exact, no glob
+    assert _specificity("cve*") == 1  # anchored at end
+    assert _specificity("*cve") == 1  # anchored at start
+    assert _specificity("*cve*") == 2  # free glob (both ends)
+    assert _specificity("c*e*id") == 2  # free glob (interior)
 
 
 def test_patterns_are_lowercase_and_stripped():
     from backend.normalizer.engine import _WILDCARD_PATTERNS
+
     for pattern, canonical in _WILDCARD_PATTERNS:
         assert pattern == pattern.lower(), f"pattern not lowercase: {pattern!r}"
         assert pattern == pattern.strip(), f"pattern has whitespace: {pattern!r}"
@@ -58,6 +62,7 @@ def test_patterns_are_lowercase_and_stripped():
 
 
 # ── Q-PRE-6 invariant (021E-pre) ───────────────────────────────────────────────
+
 
 def test_every_engine_canonical_exists_in_feed_fields_yaml():
     """Engine canonicals must be a subset of config/feed-fields.yaml.

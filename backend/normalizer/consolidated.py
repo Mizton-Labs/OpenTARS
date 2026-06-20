@@ -26,6 +26,7 @@ Concurrency: ``BEGIN IMMEDIATE`` + the partial unique index guarantee at most
 one active row even under concurrent activation (the loser raises
 IntegrityError).
 """
+
 from __future__ import annotations
 
 import json
@@ -142,9 +143,7 @@ async def list_consolidated_versions() -> list[dict[str, Any]]:
     async with aiosqlite.connect(_CONSOLIDATED_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         rows: list[dict[str, Any]] = []
-        async for row in await db.execute(
-            "SELECT * FROM consolidated_versions ORDER BY id DESC"
-        ):
+        async for row in await db.execute("SELECT * FROM consolidated_versions ORDER BY id DESC"):
             rows.append(_row_to_dict(row))
     return rows
 
@@ -153,9 +152,7 @@ async def get_consolidated_version(version_id: int) -> dict[str, Any] | None:
     await init_consolidated_db()
     async with aiosqlite.connect(_CONSOLIDATED_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM consolidated_versions WHERE id = ?", (version_id,)
-        )
+        cur = await db.execute("SELECT * FROM consolidated_versions WHERE id = ?", (version_id,))
         row = await cur.fetchone()
         await cur.close()
     if row is None:
@@ -168,9 +165,7 @@ async def get_active_consolidated() -> dict[str, Any] | None:
     await init_consolidated_db()
     async with aiosqlite.connect(_CONSOLIDATED_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM consolidated_versions WHERE active = 1 LIMIT 1"
-        )
+        cur = await db.execute("SELECT * FROM consolidated_versions WHERE active = 1 LIMIT 1")
         row = await cur.fetchone()
         await cur.close()
     if row is None:
@@ -204,12 +199,9 @@ async def activate_consolidated_version(version_id: int) -> None:
             await cur.close()
             if row is None:
                 await db.rollback()
-                raise LookupError(
-                    f"consolidated version {version_id} not found"
-                )
+                raise LookupError(f"consolidated version {version_id} not found")
             await db.execute(
-                "UPDATE consolidated_versions SET active = 0 "
-                "WHERE active = 1 AND id != ?",
+                "UPDATE consolidated_versions SET active = 0 WHERE active = 1 AND id != ?",
                 (version_id,),
             )
             await db.execute(

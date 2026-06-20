@@ -30,6 +30,7 @@ Failure semantics (Q4):
     the existing 021E-1 behaviour). No exponential backoff. Next scheduled
     tick runs normally.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -119,9 +120,7 @@ def reload() -> None:
             id=f"remote_json_pull__{src['name']}",
             replace_existing=True,
         )
-        logger.info(
-            "Scheduled remote_json_pull '%s' every %dm", src["name"], interval
-        )
+        logger.info("Scheduled remote_json_pull '%s' every %dm", src["name"], interval)
 
     # ── Normalizer auto-run ────────────────────────────────────────────────
     norm_cfg = load_normalizer_config()
@@ -137,7 +136,8 @@ def reload() -> None:
         )
         logger.info(
             "Scheduled normalizer (mode=%s) every %dm",
-            norm_cfg.get("mode", "auto"), norm_interval,
+            norm_cfg.get("mode", "auto"),
+            norm_interval,
         )
 
     # ── Smart-mode scheduled trigger ───────────────────────────────────────
@@ -233,9 +233,7 @@ def _resolved_smart_mode_config(norm_cfg: dict[str, Any]) -> dict[str, Any]:
     return dict(norm_cfg.get("smart_mode", {}))
 
 
-def _resolve_per_source(
-    smart_cfg: dict[str, Any], source_name: str
-) -> dict[str, Any]:
+def _resolve_per_source(smart_cfg: dict[str, Any], source_name: str) -> dict[str, Any]:
     """Resolve per-source overrides for a given source.
 
     Returns a dict with keys: enabled, provider, sample_size. Per-source
@@ -247,9 +245,7 @@ def _resolve_per_source(
             return {
                 "enabled": bool(entry.get("enabled", smart_cfg.get("enabled", False))),
                 "provider": entry.get("provider", smart_cfg.get("provider")),
-                "sample_size": int(
-                    entry.get("sample_size", smart_cfg.get("sample_size", 20))
-                ),
+                "sample_size": int(entry.get("sample_size", smart_cfg.get("sample_size", 20))),
             }
     return {
         "enabled": bool(smart_cfg.get("enabled", False)),
@@ -326,7 +322,8 @@ async def submit_smart_job(
     if not smart_cfg.get("enabled", False) and reason != "manual":
         logger.debug(
             "scheduler.smart_job suppressed source=%s reason=%s cause=smart_mode_disabled",
-            source_name, reason,
+            source_name,
+            reason,
         )
         return None
 
@@ -334,7 +331,8 @@ async def submit_smart_job(
     if not per_source["enabled"] and reason != "manual":
         logger.debug(
             "scheduler.smart_job suppressed source=%s reason=%s cause=per_source_disabled",
-            source_name, reason,
+            source_name,
+            reason,
         )
         return None
 
@@ -344,22 +342,23 @@ async def submit_smart_job(
         if not on_new.get("enabled", False):
             logger.debug(
                 "scheduler.smart_job suppressed source=%s reason=on_new_feed "
-                "cause=on_new_feed_disabled", source_name,
+                "cause=on_new_feed_disabled",
+                source_name,
             )
             return None
 
     # Idempotency: skip when a pending proposal already exists for this source.
     if await _has_pending_proposal(source_name):
         logger.info(
-            "scheduler.smart_job suppressed source=%s reason=%s "
-            "cause=pending_proposal_exists", source_name, reason,
+            "scheduler.smart_job suppressed source=%s reason=%s cause=pending_proposal_exists",
+            source_name,
+            reason,
         )
         return None
 
     # Provider precedence: per-call > per-source > global > default_provider.
     resolved_provider = (
-        provider
-        or per_source["provider"]
+        provider or per_source["provider"]
         # Fall through to llm.default_provider via the smart runner / registry.
     )
     resolved_sample_size = int(sample_size or per_source["sample_size"])
@@ -371,7 +370,10 @@ async def submit_smart_job(
     job = job_store.create(source=source_name, kind="smart_proposal")
     logger.info(
         "scheduler.smart_job submitted job_id=%s source=%s reason=%s provider=%s",
-        job.id, source_name, reason, resolved_provider,
+        job.id,
+        source_name,
+        reason,
+        resolved_provider,
     )
 
     async def _runner() -> None:

@@ -13,6 +13,7 @@ are auto-translated to the equivalent yaml canonical names and the file is
 rewritten in place. Each translation is logged at WARNING level so the
 operator can audit the change.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,7 @@ _DEFAULTS: dict[str, Any] = {
     # prompts-021E-3: smart-mode triggers + concurrency. Deep-merged below.
     "smart_mode": {
         "enabled": False,
-        "provider": None,            # null → fall back to llm.default_provider
+        "provider": None,  # null → fall back to llm.default_provider
         "sample_size": 10,
         # prompts-034: the consolidated-proposal LLM call can be slow (large
         # union of raw fields, big sample block, slow local models). This
@@ -59,7 +60,7 @@ _DEFAULTS: dict[str, Any] = {
             "interval_minutes": 1440,  # daily
         },
         "on_new_feed": {
-            "enabled": True,           # acts only when smart_mode.enabled=True
+            "enabled": True,  # acts only when smart_mode.enabled=True
             "first_ingest_only": True,
         },
         # auto_apply: 021E-4 makes this functional.
@@ -115,7 +116,10 @@ def _migrate_manual_mappings(data: dict[str, Any]) -> tuple[dict[str, Any], bool
                 logger.warning(
                     "normalizer-config.yaml: migrating manual_mapping "
                     "%s.%s: %s → %s (021E-pre canonical reconciliation)",
-                    source_name, raw_field, canonical, new_canonical,
+                    source_name,
+                    raw_field,
+                    canonical,
+                    new_canonical,
                 )
                 changed = True
             translated[raw_field] = new_canonical
@@ -139,11 +143,7 @@ def _deep_merge(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str
     """
     out: dict[str, Any] = dict(defaults)
     for key, value in overrides.items():
-        if (
-            key in out
-            and isinstance(out[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
             out[key] = _deep_merge(out[key], value)
         else:
             out[key] = value
@@ -157,19 +157,18 @@ def _read() -> dict[str, Any]:
             _NORMALIZER_CONFIG_PATH,
         )
         return _deep_merge(_DEFAULTS, {})
-    with open(_NORMALIZER_CONFIG_PATH, "r", encoding="utf-8") as fh:
+    with open(_NORMALIZER_CONFIG_PATH, encoding="utf-8") as fh:
         loaded = yaml.safe_load(fh) or {}
     merged = _deep_merge(_DEFAULTS, loaded)
     merged, changed = _migrate_manual_mappings(merged)
     if changed:
         try:
             _write(merged)
-            logger.info(
-                "normalizer-config.yaml rewritten with migrated manual_mappings"
-            )
+            logger.info("normalizer-config.yaml rewritten with migrated manual_mappings")
         except OSError as exc:  # pragma: no cover — defensive
             logger.warning(
-                "Failed to persist migrated normalizer-config.yaml: %s", exc,
+                "Failed to persist migrated normalizer-config.yaml: %s",
+                exc,
             )
     return merged
 

@@ -1,4 +1,5 @@
 """Tests for the 4-counter ingest summary (total_read / inserted / duplicates / discarded)."""
+
 from __future__ import annotations
 
 import json
@@ -17,8 +18,10 @@ async def test_local_feed_returns_four_counter_shape():
 
     data = json.dumps([{"indicator": "1.1.1.1"}, {"indicator": "2.2.2.2"}]).encode()
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(data, "summary_src")
 
     assert result["total_read"] == 2
@@ -42,14 +45,18 @@ async def test_local_feed_distinguishes_duplicates_from_discarded():
         # 1st → inserted, 2nd → duplicate, 3rd → error
         return ["inserted", "duplicate", "error"][calls["n"] - 1]
 
-    data = json.dumps([
-        {"indicator": "a"},
-        {"indicator": "b"},
-        {"indicator": "c"},
-    ]).encode()
+    data = json.dumps(
+        [
+            {"indicator": "a"},
+            {"indicator": "b"},
+            {"indicator": "c"},
+        ]
+    ).encode()
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(data, "split_src")
 
     assert result["total_read"] == 3

@@ -4,13 +4,14 @@ The endpoint derives the Raw-table default columns on demand from the most
 recent entries, so these tests seed entries via insert_entry and assert the
 endpoint surfaces their populated fields.
 """
+
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.main import app
 from backend.db.manager import insert_entry
+from backend.main import app
 
 
 @pytest.fixture
@@ -28,10 +29,17 @@ def test_field_presence_empty(temp_data_dir):
 
 @pytest.mark.asyncio
 async def test_field_presence_derived_from_recent_entries(temp_data_dir):
-    await insert_entry("fp_src", {
-        "source": "fp_src", "indicator": "1.1.1.1", "indicator_type": "ip",
-        "cve_id": "CVE-2026-1", "title": "", "published_at": "2026-01-01",
-    })
+    await insert_entry(
+        "fp_src",
+        {
+            "source": "fp_src",
+            "indicator": "1.1.1.1",
+            "indicator_type": "ip",
+            "cve_id": "CVE-2026-1",
+            "title": "",
+            "published_at": "2026-01-01",
+        },
+    )
 
     with TestClient(app) as client:
         resp = client.get("/api/viewer/field-presence")

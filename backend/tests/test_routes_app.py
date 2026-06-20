@@ -1,13 +1,14 @@
 """Tests for /api/app/base-prefix (prompts-017)."""
+
 from __future__ import annotations
 
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from backend.main import app
-from backend.config import loader
 from backend.api import routes_app
+from backend.config import loader
+from backend.main import app
 
 
 @pytest.fixture
@@ -49,13 +50,16 @@ def test_put_base_prefix_empty_is_valid(client):
     assert resp.json()["app_base_prefix"] == ""
 
 
-@pytest.mark.parametrize("bad", [
-    "feeds",         # no leading slash
-    "/feeds/",       # trailing slash
-    "/has spaces",   # whitespace
-    "http://x",      # scheme
-    "/a//b",         # double slash
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "feeds",  # no leading slash
+        "/feeds/",  # trailing slash
+        "/has spaces",  # whitespace
+        "http://x",  # scheme
+        "/a//b",  # double slash
+    ],
+)
 def test_put_base_prefix_rejects_invalid_format(client, bad):
     resp = client.put("/api/app/base-prefix", json={"app_base_prefix": bad})
     assert resp.status_code == 400

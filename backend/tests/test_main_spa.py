@@ -6,6 +6,7 @@ no-prefix-relative contract:
     prefix == ""   →  inject <base href="./">; OMIT the app-base-prefix <meta>
     prefix != ""   →  inject <base href="<prefix>/"> AND the <meta> tag
 """
+
 from __future__ import annotations
 
 import pytest
@@ -24,6 +25,7 @@ def client_with_prefix(tmp_path, monkeypatch):
     # The catch-all reads load_app_base_prefix() per request, so we can use
     # the existing app without reloading the module.
     from backend.main import app
+
     return TestClient(app)
 
 
@@ -33,11 +35,13 @@ def client_empty_prefix(tmp_path, monkeypatch):
     fake.write_text(yaml.safe_dump({"app_base_prefix": ""}), encoding="utf-8")
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", fake)
     from backend.main import app
+
     return TestClient(app)
 
 
 def _frontend_dist_present() -> bool:
     from backend.main import _FRONTEND_DIST
+
     return (_FRONTEND_DIST / "index.html").exists()
 
 
@@ -88,6 +92,7 @@ def test_spa_injection_is_idempotent_across_prefix_changes():
     correctly REMOVES the prior <meta> tag.
     """
     from backend.main import _render_index_html
+
     once = _render_index_html("/a")
     assert once.count("<base href=") == 1
     assert once.count('name="app-base-prefix"') == 1
@@ -110,6 +115,7 @@ def test_spa_injection_is_idempotent_across_prefix_changes():
 def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
     """Regression: idempotency must not silently re-introduce the meta tag."""
     from backend.main import _render_index_html
+
     for _ in range(3):
         out = _render_index_html("")
         assert '<base href="./">' in out

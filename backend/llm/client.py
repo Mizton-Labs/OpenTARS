@@ -13,18 +13,19 @@ Security notes:
     * Retries: 5xx is retried up to ``max_retries`` with exponential
       backoff; 4xx fails immediately with :class:`LLMProviderError`.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import socket
 import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from backend.llm.errors import (
     LLMEmptyContentError,
@@ -65,8 +66,7 @@ def _parse_json_or_raise(
         return json.loads(body_str)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise LLMProviderError(
-            f"provider {provider_name!r} returned non-JSON body on "
-            f"{where} ({type(exc).__name__})",
+            f"provider {provider_name!r} returned non-JSON body on {where} ({type(exc).__name__})",
             status=status,
             body=body_str,
         ) from exc
@@ -93,8 +93,8 @@ def _candidate_model_list_urls(base_url: str) -> list[str]:
     """
     base = base_url.rstrip("/")
     candidates = [
-        f"{base}/models",        # OpenAI proper + …/v1 compatibles (common case)
-        f"{base}/v1/models",     # non-versioned base (e.g. OpenWebUI …/api)
+        f"{base}/models",  # OpenAI proper + …/v1 compatibles (common case)
+        f"{base}/v1/models",  # non-versioned base (e.g. OpenWebUI …/api)
         f"{base}/openai/models",  # OpenWebUI explicit OpenAI passthrough
     ]
     # Host-root mounts: a server may expose the OpenAI API at the origin
@@ -123,11 +123,7 @@ def _extract_openai_model_ids(data: Any) -> list[str] | None:
     entries = data.get("data")
     if not isinstance(entries, list):
         return None
-    return [
-        m.get("id", "")
-        for m in entries
-        if isinstance(m, dict) and m.get("id")
-    ]
+    return [m.get("id", "") for m in entries if isinstance(m, dict) and m.get("id")]
 
 
 def _recover_json_object_from_reasoning(text: str) -> str | None:
@@ -184,7 +180,11 @@ def _recover_json_object_from_reasoning(text: str) -> str | None:
 
 
 def _extract_openai_content(
-    data: Any, *, provider_name: str, status: int | None, body_str: str,
+    data: Any,
+    *,
+    provider_name: str,
+    status: int | None,
+    body_str: str,
 ) -> str:
     """Return ``choices[0].message.content`` from an OpenAI-shaped response.
 
@@ -210,8 +210,7 @@ def _extract_openai_content(
         message = choice["message"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMProviderError(
-            f"provider {provider_name!r} returned non-OpenAI response shape "
-            f"({type(exc).__name__})",
+            f"provider {provider_name!r} returned non-OpenAI response shape ({type(exc).__name__})",
             status=status,
             body=body_str,
         ) from exc
@@ -237,7 +236,9 @@ def _extract_openai_content(
             logger.info(
                 "llm.recovered provider=%s: content empty but a JSON answer was "
                 "recovered from reasoning_content (%d chars, finish_reason=%s)",
-                provider_name, len(recovered), finish_reason,
+                provider_name,
+                len(recovered),
+                finish_reason,
             )
             return recovered
 
@@ -420,17 +421,17 @@ def _http_request(
             except Exception:
                 last_body = b""
             if 500 <= exc.code < 600 and attempt < max_retries:
-                time.sleep(0.5 * (2 ** attempt))
+                time.sleep(0.5 * (2**attempt))
                 continue
             raise LLMProviderError(
                 f"provider {provider_name!r} returned HTTP {exc.code}",
                 status=exc.code,
                 body=last_body.decode("utf-8", errors="replace"),
             ) from exc
-        except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError) as exc:
             last_exc = exc
             if attempt < max_retries:
-                time.sleep(0.5 * (2 ** attempt))
+                time.sleep(0.5 * (2**attempt))
                 continue
             raise LLMTransportError(
                 f"provider {provider_name!r} transport failure: {exc!s}"
@@ -524,11 +525,19 @@ class LLMClient(ABC):
             request_body_str = _truncate_body(body)
             logger.debug(
                 "llm.request.body provider=%s method=%s url=%s headers=%s body=%s",
-                self.name, method, url, redacted, request_body_str,
+                self.name,
+                method,
+                url,
+                redacted,
+                request_body_str,
             )
         logger.info(
             "llm.request provider=%s purpose=%s context=%s method=%s url=%s",
-            self.name, purpose, context, method, url,
+            self.name,
+            purpose,
+            context,
+            method,
+            url,
         )
 
         started = time.monotonic()
@@ -557,12 +566,18 @@ class LLMClient(ABC):
             if err is None:
                 logger.info(
                     "llm.response provider=%s purpose=%s status=%d duration_ms=%d bytes=%d",
-                    self.name, purpose, status or 0, duration_ms, len(resp_body),
+                    self.name,
+                    purpose,
+                    status or 0,
+                    duration_ms,
+                    len(resp_body),
                 )
                 if debug_enabled:
                     logger.debug(
                         "llm.response.body provider=%s status=%d body=%s",
-                        self.name, status or 0, _truncate_body(resp_body),
+                        self.name,
+                        status or 0,
+                        _truncate_body(resp_body),
                     )
             else:
                 # Errors carry their own structured info inside the message
@@ -571,7 +586,11 @@ class LLMClient(ABC):
                 # so failed calls stand out without DEBUG noise.
                 logger.warning(
                     "llm.response provider=%s purpose=%s duration_ms=%d error=%s: %s",
-                    self.name, purpose, duration_ms, type(err).__name__, err,
+                    self.name,
+                    purpose,
+                    duration_ms,
+                    type(err).__name__,
+                    err,
                 )
 
             # prompts-037: capture the full exchange for proposal persistence,
@@ -596,23 +615,23 @@ class LLMClient(ABC):
             # render the transcript.
             tap = getattr(self, "_tap", None)
             if tap is not None:
-                tap({
-                    "step": step,
-                    "method": method,
-                    "url": url,
-                    "headers_redacted": redacted,
-                    "request_body": request_body_str
+                tap(
+                    {
+                        "step": step,
+                        "method": method,
+                        "url": url,
+                        "headers_redacted": redacted,
+                        "request_body": request_body_str
                         if request_body_str is not None
                         else _truncate_body(body),
-                    "status_code": status,
-                    "response_body": _truncate_body(resp_body),
-                    "duration_ms": duration_ms,
-                    "error": None if err is None else f"{type(err).__name__}: {err}",
-                })
+                        "status_code": status,
+                        "response_body": _truncate_body(resp_body),
+                        "duration_ms": duration_ms,
+                        "error": None if err is None else f"{type(err).__name__}: {err}",
+                    }
+                )
 
-    def last_exchange_raw(
-        self, error: Exception | None = None
-    ) -> tuple[str, str]:
+    def last_exchange_raw(self, error: Exception | None = None) -> tuple[str, str]:
         """Return ``(llm_request_raw, llm_response_json)`` for the last ``_send``.
 
         prompts-037: consumed by the smart-mapping runner to persist the raw
@@ -647,8 +666,7 @@ class LLMClient(ABC):
         temperature: float = 0.0,
         timeout: float | None = None,
         model: str | None = None,
-    ) -> str:
-        ...
+    ) -> str: ...
 
     def list_models(self) -> list[str] | None:
         """Return available model names, or None if the provider has no
@@ -701,8 +719,12 @@ class OpenAIClient(LLMClient):
             "Authorization": f"Bearer {self.api_key}",
         }
         status, _, resp = self._send(
-            "POST", f"{self.base_url}/chat/completions", headers=headers, body=body,
-            timeout=timeout, step="complete",
+            "POST",
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete",
         )
         body_str = resp.decode("utf-8", errors="replace")
         # prompts-023: defensive parse. Previously a server that returned
@@ -716,15 +738,17 @@ class OpenAIClient(LLMClient):
             data = json.loads(body_str)
         except json.JSONDecodeError as exc:
             raise LLMProviderError(
-                f"provider {self.name!r} returned non-OpenAI response shape "
-                f"({type(exc).__name__})",
+                f"provider {self.name!r} returned non-OpenAI response shape ({type(exc).__name__})",
                 status=status,
                 body=body_str,
             ) from exc
         # prompts-035 (#2.5): extract via the standard envelope; empty content
         # raises a deterministic finish_reason/reasoning diagnostic.
         return _extract_openai_content(
-            data, provider_name=self.name, status=status, body_str=body_str,
+            data,
+            provider_name=self.name,
+            status=status,
+            body_str=body_str,
         )
 
     def list_models(self) -> list[str] | None:
@@ -734,13 +758,20 @@ class OpenAIClient(LLMClient):
             "Authorization": f"Bearer {self.api_key}",
         }
         status, _, resp = self._send(
-            "GET", f"{self.base_url}/models", headers=headers, body=None, step="list_models",
+            "GET",
+            f"{self.base_url}/models",
+            headers=headers,
+            body=None,
+            step="list_models",
         )
         # prompts-025: defensive parse — see _parse_json_or_raise. A 200
         # OK with an empty / HTML / otherwise-non-JSON body used to crash
         # the Test route with json.JSONDecodeError → HTTP 500.
         data = _parse_json_or_raise(
-            provider_name=self.name, body=resp, status=status, where="list_models",
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="list_models",
         )
         try:
             return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
@@ -784,12 +815,19 @@ class AnthropicClient(LLMClient):
             "anthropic-version": self._ANTHROPIC_VERSION,
         }
         status, _, resp = self._send(
-            "POST", f"{self.base_url}/v1/messages", headers=headers, body=body,
-            timeout=timeout, step="complete",
+            "POST",
+            f"{self.base_url}/v1/messages",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete",
         )
         # prompts-025: defensive parse (see _parse_json_or_raise).
         data = _parse_json_or_raise(
-            provider_name=self.name, body=resp, status=status, where="complete",
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="complete",
         )
         # Anthropic returns content as a list of blocks.
         try:
@@ -839,30 +877,43 @@ class OllamaClient(LLMClient):
         body = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         status, _, resp = self._send(
-            "POST", f"{self.base_url}/api/chat", headers=headers, body=body,
-            timeout=timeout, step="complete",
+            "POST",
+            f"{self.base_url}/api/chat",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete",
         )
         # prompts-025: defensive parse.
         data = _parse_json_or_raise(
-            provider_name=self.name, body=resp, status=status, where="complete",
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="complete",
         )
         try:
             return data.get("message", {}).get("content", "")
         except (AttributeError, TypeError) as exc:
             raise LLMProviderError(
-                f"provider {self.name!r} returned non-Ollama response shape "
-                f"({type(exc).__name__})",
+                f"provider {self.name!r} returned non-Ollama response shape ({type(exc).__name__})",
                 status=status,
                 body=resp.decode("utf-8", errors="replace"),
             ) from exc
 
     def list_models(self) -> list[str] | None:
         status, _, resp = self._send(
-            "GET", f"{self.base_url}/api/tags", headers={}, body=None, step="list_models",
+            "GET",
+            f"{self.base_url}/api/tags",
+            headers={},
+            body=None,
+            step="list_models",
         )
         # prompts-025: defensive parse.
         data = _parse_json_or_raise(
-            provider_name=self.name, body=resp, status=status, where="list_models",
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="list_models",
         )
         try:
             return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
@@ -921,23 +972,29 @@ class OpenAICompatibleClient(OpenAIClient):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         status, _, resp = self._send(
-            "POST", f"{self.base_url}/chat/completions", headers=headers, body=body,
-            timeout=timeout, step="complete",
+            "POST",
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete",
         )
         body_str = resp.decode("utf-8", errors="replace")
         try:
             data = json.loads(body_str)
         except json.JSONDecodeError as exc:
             raise LLMProviderError(
-                f"provider {self.name!r} returned non-OpenAI response shape "
-                f"({type(exc).__name__})",
+                f"provider {self.name!r} returned non-OpenAI response shape ({type(exc).__name__})",
                 status=status,
                 body=body_str,
             ) from exc
         # prompts-035 (#2.5): standard-envelope extraction with a deterministic
         # finish_reason/reasoning diagnostic when content is empty.
         return _extract_openai_content(
-            data, provider_name=self.name, status=status, body_str=body_str,
+            data,
+            provider_name=self.name,
+            status=status,
+            body_str=body_str,
         )
 
     def list_models(self) -> list[str] | None:
@@ -986,7 +1043,11 @@ class OpenAICompatibleClient(OpenAIClient):
             attempted.append(url)
             try:
                 status, _, resp = self._send(
-                    "GET", url, headers=headers, body=None, step="list_models",
+                    "GET",
+                    url,
+                    headers=headers,
+                    body=None,
+                    step="list_models",
                 )
             except (LLMProviderError, LLMTransportError):
                 # Endpoint absent / transport error — try the next candidate.
@@ -1028,4 +1089,3 @@ class OpenAICompatibleClient(OpenAIClient):
         # Every candidate failed with a transport/HTTP error — the server
         # genuinely exposes no catalog. Caller falls back to free-text.
         return None
-

@@ -4,6 +4,7 @@ Covers: init idempotency, CRUD, single-global-active invariant (incl. partial
 unique index race protection), activate atomicity, field_scope validation,
 and the diff wrapper.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,14 +35,14 @@ def _isolate_consolidated_db(tmp_path, monkeypatch):
 # init / schema
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_init_creates_schema_and_is_idempotent():
     await init_consolidated_db()
     await init_consolidated_db()  # second call must not error
     with sqlite3.connect(consolidated_mod._CONSOLIDATED_DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' "
-            "AND name='idx_cv_active_global'"
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_cv_active_global'"
         ).fetchall()
     assert rows, "partial unique index must exist after init"
 
@@ -49,6 +50,7 @@ async def test_init_creates_schema_and_is_idempotent():
 # ---------------------------------------------------------------------------
 # create / list / get
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_and_get_roundtrip():
@@ -99,14 +101,13 @@ async def test_create_rejects_non_list_sources():
 @pytest.mark.asyncio
 async def test_create_rejects_invalid_field_scope():
     with pytest.raises(ValueError):
-        await create_consolidated_version(
-            mapping={}, sources=[], field_scope="bogus"
-        )
+        await create_consolidated_version(mapping={}, sources=[], field_scope="bogus")
 
 
 # ---------------------------------------------------------------------------
 # activate — single global active invariant
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_activate_promotes_and_demotes_globally():
@@ -141,14 +142,10 @@ async def test_partial_unique_index_prevents_two_active():
     v1 = await create_consolidated_version(mapping={"a": "title"}, sources=["s1"])
     v2 = await create_consolidated_version(mapping={"b": "title"}, sources=["s2"])
     with sqlite3.connect(consolidated_mod._CONSOLIDATED_DB_PATH) as conn:
-        conn.execute(
-            "UPDATE consolidated_versions SET active=1 WHERE id=?", (v1,)
-        )
+        conn.execute("UPDATE consolidated_versions SET active=1 WHERE id=?", (v1,))
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "UPDATE consolidated_versions SET active=1 WHERE id=?", (v2,)
-            )
+            conn.execute("UPDATE consolidated_versions SET active=1 WHERE id=?", (v2,))
             conn.commit()
 
 
@@ -170,13 +167,14 @@ async def test_concurrent_activate_serialises():
 # diff wrapper
 # ---------------------------------------------------------------------------
 
+
 def test_diff_consolidated_matches_mappings_diff():
     out = diff_consolidated(
         {"keep": "title", "drop": "summary", "mut": "title"},
         {"keep": "title", "mut": "subject", "new": "published_at"},
     )
     assert out == {
-        "added":   [{"raw_field": "new",  "canonical": "published_at"}],
+        "added": [{"raw_field": "new", "canonical": "published_at"}],
         "removed": [{"raw_field": "drop", "canonical": "summary"}],
-        "changed": [{"raw_field": "mut",  "from": "title", "to": "subject"}],
+        "changed": [{"raw_field": "mut", "from": "title", "to": "subject"}],
     }

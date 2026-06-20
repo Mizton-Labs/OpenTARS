@@ -2,6 +2,7 @@
 Ingest routes — push listener, local feed upload, remote feed fetch.
 Supports JSON, NDJSON, CSV, and XML for local and remote feeds.
 """
+
 from __future__ import annotations
 
 import time
@@ -14,10 +15,10 @@ from backend.config.loader import load_sources
 from backend.db.manager import get_entry_count_for_source
 from backend.ingestion.jobs import job_store
 from backend.ingestion.local_feed import ingest_local_feed
+from backend.ingestion.preview import build_preview, confirm_preview
 from backend.ingestion.push_listener import process_push
 from backend.ingestion.remote_feed import ingest_remote_feed
 from backend.models.entry import IngestResponse, PreviewResponse
-from backend.ingestion.preview import build_preview, confirm_preview
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -29,19 +30,29 @@ _ALLOWED_EXTENSIONS = {".json", ".csv", ".xml", ".ndjson", ".txt", ".gz", ".zip"
 
 # ── Job-runner helpers ─────────────────────────────────────────────────────────
 
+
 async def _run_local_feed_job(
-    job_id: str, file_bytes: bytes, source_name: str, filename: str | None = None,
+    job_id: str,
+    file_bytes: bytes,
+    source_name: str,
+    filename: str | None = None,
 ) -> None:
     try:
         result = await ingest_local_feed(
-            file_bytes, source_name, job_id=job_id, filename=filename,
+            file_bytes,
+            source_name,
+            job_id=job_id,
+            filename=filename,
         )
-        job_store.complete(job_id, {
-            "total_read":  result.get("total_read", 0),
-            "inserted":    result.get("inserted", 0),
-            "duplicates":  result.get("duplicates", 0),
-            "discarded":   result.get("discarded", 0),
-        })
+        job_store.complete(
+            job_id,
+            {
+                "total_read": result.get("total_read", 0),
+                "inserted": result.get("inserted", 0),
+                "duplicates": result.get("duplicates", 0),
+                "discarded": result.get("discarded", 0),
+            },
+        )
     except Exception as exc:
         job_store.fail(job_id, str(exc))
 
@@ -52,12 +63,15 @@ async def _run_confirm_preview_job(job_id: str, preview_id: str) -> None:
         if result is None:
             job_store.fail(job_id, f"Preview '{preview_id}' not found or expired")
             return
-        job_store.complete(job_id, {
-            "total_read":  result.get("total_read", 0),
-            "inserted":    result.get("inserted", 0),
-            "duplicates":  result.get("duplicates", 0),
-            "discarded":   result.get("discarded", 0),
-        })
+        job_store.complete(
+            job_id,
+            {
+                "total_read": result.get("total_read", 0),
+                "inserted": result.get("inserted", 0),
+                "duplicates": result.get("duplicates", 0),
+                "discarded": result.get("discarded", 0),
+            },
+        )
     except Exception as exc:
         job_store.fail(job_id, str(exc))
 
@@ -65,12 +79,15 @@ async def _run_confirm_preview_job(job_id: str, preview_id: str) -> None:
 async def _run_push_job(job_id: str, payload, source_name: str) -> None:
     try:
         result = await process_push(payload, source_name, job_id=job_id)
-        job_store.complete(job_id, {
-            "total_read":  result.get("total_read", 0),
-            "inserted":    result.get("inserted", 0),
-            "duplicates":  result.get("duplicates", 0),
-            "discarded":   result.get("discarded", 0),
-        })
+        job_store.complete(
+            job_id,
+            {
+                "total_read": result.get("total_read", 0),
+                "inserted": result.get("inserted", 0),
+                "duplicates": result.get("duplicates", 0),
+                "discarded": result.get("discarded", 0),
+            },
+        )
     except Exception as exc:
         job_store.fail(job_id, str(exc))
 
@@ -93,6 +110,7 @@ def _trigger_watchers(result: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         from backend.watchers.engine import schedule_realtime_ingest_eval
+
         schedule_realtime_ingest_eval(int(result.get("inserted", 0) or 0))
     except Exception:  # pragma: no cover — never break ingestion on a hook error
         pass
@@ -192,6 +210,7 @@ async def local_feed_ingest(
     suffix = ""
     if file.filename:
         from pathlib import Path
+
         suffix = Path(file.filename).suffix.lower()
     if suffix and suffix not in _ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -203,7 +222,11 @@ async def local_feed_ingest(
         first = await _first_ingest(source_name)
         job = job_store.create(source_name, "local_feed", first_ingest=first)
         background_tasks.add_task(
-            _run_local_feed_job, job.id, raw_bytes, source_name, file.filename,
+            _run_local_feed_job,
+            job.id,
+            raw_bytes,
+            source_name,
+            file.filename,
         )
         return {"job_id": job.id}
     result = await ingest_local_feed(raw_bytes, source_name, filename=file.filename)
@@ -232,9 +255,12 @@ async def confirm_local_preview(
         # Peek the preview entry to find the source name & first-ingest flag.
         # We can't pop here; the runner will pop. Just look it up.
         from backend.ingestion.preview import _store as _preview_store
+
         stored = _preview_store.get(preview_id)
         if stored is None:
-            raise HTTPException(status_code=404, detail=f"Preview '{preview_id}' not found or expired")
+            raise HTTPException(
+                status_code=404, detail=f"Preview '{preview_id}' not found or expired"
+            )
         source_name = stored["source_name"]
         first = await _first_ingest(source_name)
         job = job_store.create(source_name, "preview_confirm", first_ingest=first)

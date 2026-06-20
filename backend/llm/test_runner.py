@@ -26,6 +26,7 @@ The returned shape is the canonical wire payload for both
 ``POST /api/llm/providers/{name}/test`` (persisted provider) and
 ``POST /api/llm/providers/test`` (ephemeral) — see Step 4.
 """
+
 from __future__ import annotations
 
 import logging
@@ -172,8 +173,7 @@ def _run_list_models_step(
             empty_msg = (
                 "client.list_models() returned None"
                 if models is None
-                else "list_models returned 0 models — "
-                     "server reachable but no models published"
+                else "list_models returned 0 models — server reachable but no models published"
             )
             if empty_is_error:
                 overall_ok = False
@@ -193,10 +193,7 @@ def _run_list_models_step(
                     rec = _new_step_record("list_models")
                     rec["warning"] = empty_msg
                     step_sink.append(rec)
-                elif (
-                    step_sink[-1].get("error") is None
-                    and not step_sink[-1].get("warning")
-                ):
+                elif step_sink[-1].get("error") is None and not step_sink[-1].get("warning"):
                     step_sink[-1]["warning"] = empty_msg
         details.extend(step_sink)
     except (LLMProviderError, LLMTransportError) as exc:
@@ -208,7 +205,8 @@ def _run_list_models_step(
         details.extend(step_sink)
         logger.info(
             "llm.test step=list_models provider=%s error=%s",
-            client.name, exc,
+            client.name,
+            exc,
         )
     except Exception as exc:  # noqa: BLE001
         # prompts-025: belt-and-braces safety net.
@@ -218,13 +216,13 @@ def _run_list_models_step(
             rec["error"] = f"unexpected {type(exc).__name__}: {exc}"
             step_sink.append(rec)
         else:
-            step_sink[-1]["error"] = (
-                f"unexpected {type(exc).__name__}: {exc}"
-            )
+            step_sink[-1]["error"] = f"unexpected {type(exc).__name__}: {exc}"
         details.extend(step_sink)
         logger.warning(
             "llm.test step=list_models provider=%s unexpected_error=%s: %s",
-            client.name, type(exc).__name__, exc,
+            client.name,
+            type(exc).__name__,
+            exc,
         )
     finally:
         client._tap = prev_tap  # type: ignore[attr-defined]
@@ -248,9 +246,7 @@ def run_provider_test(client: LLMClient) -> dict[str, Any]:
     # model catalog is a non-blocking warning, not a failure. The completion
     # probe (Step B) is the real gate, so a reachable provider that publishes
     # no /models list still passes when complete() succeeds.
-    models, overall_ok = _run_list_models_step(
-        client, details, empty_is_error=False
-    )
+    models, overall_ok = _run_list_models_step(client, details, empty_is_error=False)
 
     # NOTE: legacy compatibility — the helper above preserves anthropic
     # synthetic-record semantics (overall_ok=True even though a
@@ -284,14 +280,13 @@ def run_provider_test(client: LLMClient) -> dict[str, Any]:
         step_sink_b: list[dict[str, Any]] = []
         prev_tap_b = _install_tap(client, "complete", step_sink_b)
         try:
-            out = client.complete(
-                _PING_PROMPT, system=_PING_SYSTEM, max_tokens=_PING_MAX_TOKENS
-            )
+            out = client.complete(_PING_PROMPT, system=_PING_SYSTEM, max_tokens=_PING_MAX_TOKENS)
             sample = (out or "")[:_SAMPLE_LIMIT]
             details.extend(step_sink_b)
             logger.info(
                 "llm.test step=complete provider=%s ok=true sample_len=%d",
-                client.name, len(sample),
+                client.name,
+                len(sample),
             )
         except LLMEmptyContentError as exc:
             # issue_local_02 soft pass: the provider answered HTTP 200 but the
@@ -317,7 +312,8 @@ def run_provider_test(client: LLMClient) -> dict[str, Any]:
             logger.info(
                 "llm.test step=complete provider=%s ok=true soft_pass=empty_content "
                 "finish_reason=%s",
-                client.name, getattr(exc, "finish_reason", None),
+                client.name,
+                getattr(exc, "finish_reason", None),
             )
         except (LLMProviderError, LLMTransportError) as exc:
             overall_ok = False
@@ -328,7 +324,8 @@ def run_provider_test(client: LLMClient) -> dict[str, Any]:
             details.extend(step_sink_b)
             logger.info(
                 "llm.test step=complete provider=%s error=%s",
-                client.name, exc,
+                client.name,
+                exc,
             )
         except Exception as exc:  # noqa: BLE001
             # prompts-025: same belt-and-braces guarantee as the
@@ -340,13 +337,13 @@ def run_provider_test(client: LLMClient) -> dict[str, Any]:
                 rec["error"] = f"unexpected {type(exc).__name__}: {exc}"
                 step_sink_b.append(rec)
             else:
-                step_sink_b[-1]["error"] = (
-                    f"unexpected {type(exc).__name__}: {exc}"
-                )
+                step_sink_b[-1]["error"] = f"unexpected {type(exc).__name__}: {exc}"
             details.extend(step_sink_b)
             logger.warning(
                 "llm.test step=complete provider=%s unexpected_error=%s: %s",
-                client.name, type(exc).__name__, exc,
+                client.name,
+                type(exc).__name__,
+                exc,
             )
         finally:
             client._tap = prev_tap_b  # type: ignore[attr-defined]

@@ -7,6 +7,7 @@ after the authenticated sending user (prompts-058) — falling back to
 listener.enabled, and logs every received payload plus detailed per-entry
 errors.
 """
+
 from __future__ import annotations
 
 import logging
@@ -106,6 +107,7 @@ async def test_listener_disabled_returns_503(monkeypatch):
 @pytest.mark.asyncio
 async def test_listener_enabled_defaults_true(monkeypatch):
     """A missing enabled flag defaults to enabled (route does not 503)."""
+
     async def fake_process_push(payload, source_name, job_id=None):
         return {"inserted": 0, "skipped": 0, "total_read": 0, "duplicates": 0, "discarded": 0}
 
@@ -118,6 +120,7 @@ async def test_listener_enabled_defaults_true(monkeypatch):
 @pytest.mark.asyncio
 async def test_process_push_logs_receipt_and_entry_errors(monkeypatch, caplog):
     """process_push logs a receipt summary and a detailed error for non-dict elements."""
+
     async def fake_insert(name, entry):
         return "inserted"
 
@@ -127,7 +130,8 @@ async def test_process_push_logs_receipt_and_entry_errors(monkeypatch, caplog):
 
     with caplog.at_level(logging.INFO):
         result = await pl.process_push(
-            [{"indicator": "1.1.1.1"}, "not-a-dict"], "Received Feed 123",
+            [{"indicator": "1.1.1.1"}, "not-a-dict"],
+            "Received Feed 123",
         )
 
     # One valid entry inserted, one bad element discarded and counted as an error.

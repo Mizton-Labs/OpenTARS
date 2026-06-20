@@ -1,6 +1,7 @@
 """
 Control routes — DB reset operations and manual source refresh.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -8,8 +9,8 @@ from fastapi import APIRouter, HTTPException
 from backend.config.loader import load_sources
 from backend.db.manager import reset_db
 from backend.ingestion.api_pull import pull_api_source
-from backend.ingestion.rss_pull import pull_rss_source
 from backend.ingestion.remote_feed import ingest_remote_feed
+from backend.ingestion.rss_pull import pull_rss_source
 from backend.models.entry import IngestResponse
 
 router = APIRouter(prefix="/api/control", tags=["control"])
@@ -92,14 +93,16 @@ async def _refresh_all(kind: str) -> dict:
         name = source.get("name", "")
         try:
             r = await _refresh_one(kind, source)
-            results.append({
-                "name": name,
-                "ok": True,
-                "inserted": r.get("inserted", 0),
-                "duplicates": r.get("duplicates", 0),
-                "skipped": r.get("skipped", 0),
-                "errors": r.get("errors", []),
-            })
+            results.append(
+                {
+                    "name": name,
+                    "ok": True,
+                    "inserted": r.get("inserted", 0),
+                    "duplicates": r.get("duplicates", 0),
+                    "skipped": r.get("skipped", 0),
+                    "errors": r.get("errors", []),
+                }
+            )
             succeeded += 1
         except Exception as exc:  # noqa: BLE001 — report, never abort the batch
             results.append({"name": name, "ok": False, "error": str(exc)})

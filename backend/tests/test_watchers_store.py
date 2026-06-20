@@ -3,6 +3,7 @@
 Covers: slugify, definition validation, CRUD round-trip, enable toggle,
 trigger dedup + retention prune, high-water advance, and event reads.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -98,8 +99,11 @@ def test_validate_rejects_non_numeric_value_for_numeric_match_type():
 
 def test_validate_accepts_contains_match_type_and_case_sensitive():
     out = store.validate_definition(
-        _defn(conditions=[{"field": "title", "value": "rce", "match_type": "contains",
-                           "case_sensitive": True}])
+        _defn(
+            conditions=[
+                {"field": "title", "value": "rce", "match_type": "contains", "case_sensitive": True}
+            ]
+        )
     )
     cond = out["conditions"][0]
     assert cond["match_type"] == "contains"
@@ -187,7 +191,14 @@ async def test_delete_removes_watcher_and_events():
     await store.create_watcher(_defn())
     await store.record_triggers(
         "critical-cves",
-        [{"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a", "event": {"id": 1}}],
+        [
+            {
+                "dataset": "normalized",
+                "source_entry_id": 1,
+                "source_name": "feed-a",
+                "event": {"id": 1},
+            }
+        ],
         max_events=100,
     )
     assert await store.count_events("critical-cves") == 1
@@ -388,9 +399,9 @@ async def test_migration_v4_backfills_webhook_format_from_host(tmp_path, monkeyp
     conn = sqlite3.connect(db_path)
     fmt = dict(conn.execute("SELECT id, webhook_format FROM watchers").fetchall())
     conn.close()
-    assert fmt["a"] == "discord"   # host-inferred
-    assert fmt["b"] == "generic"   # unknown host stays generic
-    assert fmt["c"] == "generic"   # local default
+    assert fmt["a"] == "discord"  # host-inferred
+    assert fmt["b"] == "generic"  # unknown host stays generic
+    assert fmt["c"] == "generic"  # local default
 
 
 def test_list_scheduled_watchers_sync_missing_db_is_empty(tmp_path, monkeypatch):
@@ -422,7 +433,12 @@ def test_validate_defaults_publish_target_to_local():
 
 def test_validate_local_clears_supplied_url_and_auth():
     out = store.validate_definition(
-        _defn(publish_target="local", webhook_url="https://x.example/h", auth_header="X", auth_value="y")
+        _defn(
+            publish_target="local",
+            webhook_url="https://x.example/h",
+            auth_header="X",
+            auth_value="y",
+        )
     )
     assert out["webhook_url"] == ""
     assert out["auth_header"] == ""
@@ -441,15 +457,17 @@ def test_validate_webhook_requires_url():
 
 def test_validate_webhook_rejects_non_http_url():
     with pytest.raises(ValueError):
-        store.validate_definition(
-            _defn(publish_target="webhook", webhook_url="ftp://host/x")
-        )
+        store.validate_definition(_defn(publish_target="webhook", webhook_url="ftp://host/x"))
 
 
 def test_validate_auth_header_value_must_be_paired():
     with pytest.raises(ValueError):
         store.validate_definition(
-            _defn(publish_target="http", webhook_url="https://x.example/in", auth_header="Authorization")
+            _defn(
+                publish_target="http",
+                webhook_url="https://x.example/in",
+                auth_header="Authorization",
+            )
         )
     with pytest.raises(ValueError):
         store.validate_definition(
@@ -473,8 +491,7 @@ def test_validate_defaults_webhook_format_to_generic():
 def test_validate_accepts_known_webhook_formats():
     for fmt in ("generic", "discord", "slack", "teams"):
         out = store.validate_definition(
-            _defn(publish_target="webhook", webhook_url="https://x.example/h",
-                  webhook_format=fmt)
+            _defn(publish_target="webhook", webhook_url="https://x.example/h", webhook_format=fmt)
         )
         assert out["webhook_format"] == fmt
 
@@ -482,20 +499,20 @@ def test_validate_accepts_known_webhook_formats():
 def test_validate_rejects_unknown_webhook_format():
     with pytest.raises(ValueError):
         store.validate_definition(
-            _defn(publish_target="webhook", webhook_url="https://x.example/h",
-                  webhook_format="carrier-pigeon")
+            _defn(
+                publish_target="webhook",
+                webhook_url="https://x.example/h",
+                webhook_format="carrier-pigeon",
+            )
         )
 
 
 def test_validate_forces_generic_format_for_non_webhook_targets():
     out = store.validate_definition(
-        _defn(publish_target="http", webhook_url="https://x.example/in",
-              webhook_format="discord")
+        _defn(publish_target="http", webhook_url="https://x.example/in", webhook_format="discord")
     )
     assert out["webhook_format"] == "generic"
-    out = store.validate_definition(
-        _defn(publish_target="local", webhook_format="discord")
-    )
+    out = store.validate_definition(_defn(publish_target="local", webhook_format="discord"))
     assert out["webhook_format"] == "generic"
 
 
@@ -538,9 +555,7 @@ async def test_update_switches_target_and_clears_remote_fields():
     w = await store.create_watcher(
         _defn(name="Switchy", publish_target="http", webhook_url="https://a.example/in")
     )
-    updated = await store.update_watcher(
-        w["id"], _defn(name="Switchy", publish_target="local")
-    )
+    updated = await store.update_watcher(w["id"], _defn(name="Switchy", publish_target="local"))
     assert updated["publish_target"] == "local"
     assert updated["webhook_url"] in ("", None)
 
@@ -548,15 +563,27 @@ async def test_update_switches_target_and_clears_remote_fields():
 @pytest.mark.asyncio
 async def test_delivery_status_and_pending_listing():
     w = await store.create_watcher(
-        _defn(name="Deliverable", dataset="normalized", publish_target="webhook",
-              webhook_url="https://x.example/in")
+        _defn(
+            name="Deliverable",
+            dataset="normalized",
+            publish_target="webhook",
+            webhook_url="https://x.example/in",
+        )
     )
     wid = w["id"]
     triggers = [
-        {"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a",
-         "event": {"id": 1, "cve_id": "CVE-2024-1"}},
-        {"dataset": "normalized", "source_entry_id": 2, "source_name": "feed-a",
-         "event": {"id": 2, "cve_id": "CVE-2024-2"}},
+        {
+            "dataset": "normalized",
+            "source_entry_id": 1,
+            "source_name": "feed-a",
+            "event": {"id": 1, "cve_id": "CVE-2024-1"},
+        },
+        {
+            "dataset": "normalized",
+            "source_entry_id": 2,
+            "source_name": "feed-a",
+            "event": {"id": 2, "cve_id": "CVE-2024-2"},
+        },
     ]
     await store.record_triggers(wid, triggers, max_events=100)
 
@@ -568,7 +595,9 @@ async def test_delivery_status_and_pending_listing():
     # Mark one ok, one error (with a rich detail blob).
     await store.update_delivery_status(ids[0], "ok", None)
     await store.update_delivery_status(
-        ids[1], "error", "HTTP 500",
+        ids[1],
+        "error",
+        "HTTP 500",
         {"status": 500, "url": "https://x.example/in", "body": "boom"},
     )
 
@@ -596,4 +625,3 @@ async def test_delivery_status_and_pending_listing():
     got2 = await store.get_watcher(wid)
     assert got2["delivery_error_count"] == 0
     assert got2["last_delivery_detail"] is None
-

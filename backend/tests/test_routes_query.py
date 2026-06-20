@@ -1,4 +1,5 @@
 """Tests for the natural-language query route POST /api/query/nl (prompts-064)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +20,9 @@ class _FakeClient:
     def __init__(self, response: str):
         self._response = response
 
-    def complete(self, prompt, *, system=None, max_tokens=512, temperature=0.0,
-                 timeout=None, model=None):
+    def complete(
+        self, prompt, *, system=None, max_tokens=512, temperature=0.0, timeout=None, model=None
+    ):
         return self._response
 
 
@@ -61,11 +63,13 @@ def _stub_results(monkeypatch, rows):
     async def _fake_exec(sq):
         _fake_exec.captured = sq
         return rows
+
     monkeypatch.setattr(routes_query, "execute_structured_query", _fake_exec)
     return _fake_exec
 
 
 # ── happy path ──────────────────────────────────────────────────────────────
+
 
 def test_normal_role_can_query(query_env, monkeypatch):
     _stub_llm(monkeypatch, '{"dataset": "normalized", "search": "log4j"}')
@@ -98,9 +102,15 @@ def test_client_overrides_win(query_env, monkeypatch):
     _stub_known_sources(monkeypatch, ["feedA"])
     exec_stub = _stub_results(monkeypatch, [])
     c = _login("viewer", "Viewerpass1")
-    r = c.post("/api/query/nl", json={
-        "question": "q", "dataset": "raw", "source": "feedA", "limit": 7,
-    })
+    r = c.post(
+        "/api/query/nl",
+        json={
+            "question": "q",
+            "dataset": "raw",
+            "source": "feedA",
+            "limit": 7,
+        },
+    )
     assert r.status_code == 200, r.text
     assert exec_stub.captured.dataset == "raw"
     assert exec_stub.captured.source == "feedA"
@@ -119,9 +129,11 @@ def test_client_unknown_source_override_dropped(query_env, monkeypatch):
 
 # ── error paths ─────────────────────────────────────────────────────────────
 
+
 def test_llm_disabled_returns_503(query_env, monkeypatch):
     def _raise(name=None):
         raise LLMDisabledError("disabled")
+
     monkeypatch.setattr(routes_query, "get_client", _raise)
     c = _login("viewer", "Viewerpass1")
     r = c.post("/api/query/nl", json={"question": "q"})
@@ -146,6 +158,7 @@ def test_invalid_dataset_override_returns_422(query_env, monkeypatch):
 
 
 # ── role gating ─────────────────────────────────────────────────────────────
+
 
 def test_sender_cannot_query(query_env):
     c = _login("bot", "Botpass123")

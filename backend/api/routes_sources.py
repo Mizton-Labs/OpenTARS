@@ -1,6 +1,7 @@
 """
 Sources routes — CRUD for sources.yaml (listener, api_pull, rss_pull).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,9 +61,7 @@ def _redact_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [_redact_source(s) for s in sources]
 
 
-def _restore_source_secrets(
-    new: dict[str, Any], existing: dict[str, Any]
-) -> dict[str, Any]:
+def _restore_source_secrets(new: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     """Replace masked header values in an incoming update with the stored ones.
 
     A header whose value is still the redaction sentinel is restored from the
@@ -90,6 +89,7 @@ def _restore_source_secrets(
 
 
 # ── Auto-ingest helpers ───────────────────────────────────────────────────────
+
 
 def _should_auto_ingest(source: dict[str, Any]) -> bool:
     """Auto-ingest on add only if explicitly opted in via auto_ingest=true
@@ -163,7 +163,10 @@ async def add_api_pull(source: dict[str, Any]) -> dict[str, Any]:
     save_sources(data)
     audit.info(
         "source_added type=api_pull name=%s url=%s interval=%s enabled=%s",
-        source["name"], source.get("url"), source.get("interval_minutes", 15), source.get("enabled", True),
+        source["name"],
+        source.get("url"),
+        source.get("interval_minutes", 15),
+        source.get("enabled", True),
     )
     if _should_auto_ingest(source):
         audit.info("auto_ingest_start type=api_pull name=%s", source["name"])
@@ -200,6 +203,7 @@ async def delete_api_pull(name: str) -> dict[str, str]:
 
 # ── RSS Pull ──────────────────────────────────────────────────────────────────
 
+
 @router.get("/rss-pull")
 async def list_rss_pull() -> list[dict[str, Any]]:
     return _redact_sources(load_sources().get("rss_pull", []))
@@ -215,7 +219,10 @@ async def add_rss_pull(source: dict[str, Any]) -> dict[str, Any]:
     save_sources(data)
     audit.info(
         "source_added type=rss_pull name=%s url=%s interval=%s enabled=%s",
-        source["name"], source.get("url"), source.get("interval_minutes", 15), source.get("enabled", True),
+        source["name"],
+        source.get("url"),
+        source.get("interval_minutes", 15),
+        source.get("enabled", True),
     )
     if _should_auto_ingest(source):
         audit.info("auto_ingest_start type=rss_pull name=%s", source["name"])
@@ -270,7 +277,11 @@ async def add_remote_json_pull(source: dict[str, Any]) -> dict[str, Any]:
     save_sources(data)
     audit.info(
         "source_added type=remote_json_pull name=%s url=%s continuous=%s interval=%s enabled=%s",
-        source["name"], source.get("url"), source.get("continuous"), source.get("interval_minutes", 15), source.get("enabled", True),
+        source["name"],
+        source.get("url"),
+        source.get("continuous"),
+        source.get("interval_minutes", 15),
+        source.get("enabled", True),
     )
     if _should_auto_ingest(source):
         audit.info("auto_ingest_start type=remote_json_pull name=%s", source["name"])
@@ -352,17 +363,19 @@ def _build_catalog_view() -> list[dict[str, Any]]:
             enabled = False
             continuous = False
             interval = default_interval
-        merged.append({
-            "name": name,
-            "title": item.get("title", name),
-            "kind": kind,
-            "url": item.get("url", ""),
-            "info": item.get("info", ""),
-            "default_interval_minutes": default_interval,
-            "enabled": enabled,
-            "continuous": continuous,
-            "interval_minutes": interval,
-        })
+        merged.append(
+            {
+                "name": name,
+                "title": item.get("title", name),
+                "kind": kind,
+                "url": item.get("url", ""),
+                "info": item.get("info", ""),
+                "default_interval_minutes": default_interval,
+                "enabled": enabled,
+                "continuous": continuous,
+                "interval_minutes": interval,
+            }
+        )
     return merged
 
 
@@ -390,31 +403,27 @@ async def save_threat_intel_sources(
     for toggle in body:
         item = catalog.get(toggle.name)
         if item is None:
-            raise HTTPException(
-                status_code=404, detail=f"Unknown catalogue source '{toggle.name}'"
-            )
+            raise HTTPException(status_code=404, detail=f"Unknown catalogue source '{toggle.name}'")
         kind = item.get("kind")
         if kind not in _CATALOG_KINDS:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported catalogue kind '{kind}'"
-            )
+            raise HTTPException(status_code=400, detail=f"Unsupported catalogue kind '{kind}'")
         bucket: list = data.setdefault(kind, [])
-        idx = next(
-            (i for i, s in enumerate(bucket) if s.get("name") == toggle.name), None
-        )
+        idx = next((i for i, s in enumerate(bucket) if s.get("name") == toggle.name), None)
         if toggle.enabled:
             interval = toggle.interval_minutes
             if not isinstance(interval, int) or interval < 1:
                 interval = int(item.get("default_interval_minutes", 60))
             entry = dict(bucket[idx]) if idx is not None else {}
-            entry.update({
-                "name": toggle.name,
-                "enabled": True,
-                "url": item.get("url", ""),
-                "continuous": bool(toggle.continuous),
-                "interval_minutes": interval,
-                "source_origin": _CATALOG_ORIGIN,
-            })
+            entry.update(
+                {
+                    "name": toggle.name,
+                    "enabled": True,
+                    "url": item.get("url", ""),
+                    "continuous": bool(toggle.continuous),
+                    "interval_minutes": interval,
+                    "source_origin": _CATALOG_ORIGIN,
+                }
+            )
             if idx is not None:
                 bucket[idx] = entry
             else:
@@ -422,7 +431,10 @@ async def save_threat_intel_sources(
                 newly_enabled.append((kind, entry))
             audit.info(
                 "threat_intel_enabled name=%s kind=%s continuous=%s interval=%s",
-                toggle.name, kind, toggle.continuous, interval,
+                toggle.name,
+                kind,
+                toggle.continuous,
+                interval,
             )
         elif idx is not None:
             bucket.pop(idx)
@@ -448,9 +460,7 @@ def _merge_fields_with_global(source_fields: dict[str, Any] | None) -> dict[str,
     if not source_fields:
         return global_config
     override_map: dict[str, bool] = {
-        f["name"]: f["enabled"]
-        for f in source_fields.get("core_fields", [])
-        if "enabled" in f
+        f["name"]: f["enabled"] for f in source_fields.get("core_fields", []) if "enabled" in f
     }
     merged_core = [
         {**f, "enabled": override_map.get(f["name"], f.get("enabled", True))}
@@ -523,7 +533,9 @@ async def preview_pull_source(source_type: str, source: dict[str, Any]) -> dict[
     yaml_key = kind
     existing = load_sources().get(yaml_key, [])
     if any(s.get("name") == source["name"] for s in existing):
-        raise HTTPException(status_code=409, detail=f"Source name '{source['name']}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"Source name '{source['name']}' already exists"
+        )
 
     try:
         preview = await build_source_preview(source, kind)  # type: ignore[arg-type]
@@ -542,6 +554,7 @@ async def confirm_preview_source(
     if background:
         # Peek the cached preview to learn the source name & first-ingest flag.
         from backend.ingestion.source_preview import _store as _preview_store
+
         stored = _preview_store.get(preview_id)
         if stored is None:
             raise HTTPException(status_code=404, detail="Preview not found or expired")
@@ -562,12 +575,15 @@ async def _run_source_confirm_job(job_id: str, preview_id: str) -> None:
         if result is None:
             job_store.fail(job_id, f"Preview '{preview_id}' not found or expired")
             return
-        job_store.complete(job_id, {
-            "total_read":  result.get("total_read", 0),
-            "inserted":    result.get("inserted", 0),
-            "duplicates":  result.get("duplicates", 0),
-            "discarded":   result.get("discarded", 0),
-        })
+        job_store.complete(
+            job_id,
+            {
+                "total_read": result.get("total_read", 0),
+                "inserted": result.get("inserted", 0),
+                "duplicates": result.get("duplicates", 0),
+                "discarded": result.get("discarded", 0),
+            },
+        )
     except Exception as exc:
         job_store.fail(job_id, str(exc))
 
@@ -580,6 +596,7 @@ async def cancel_preview_source(preview_id: str) -> dict[str, bool]:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _validate_source(source: dict[str, Any]) -> None:
     if not source.get("name"):

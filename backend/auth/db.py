@@ -30,6 +30,7 @@ Security note: this module deals only in *hashes*. Plaintext passwords and raw
 session tokens never touch disk. Hashing/token generation live in
 ``backend.auth.service``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -107,9 +108,7 @@ async def init_users_db() -> None:
                 (_USERS_SCHEMA_VERSION,),
             )
         else:
-            await db.execute(
-                "UPDATE schema_version SET version = ?", (_USERS_SCHEMA_VERSION,)
-            )
+            await db.execute("UPDATE schema_version SET version = ?", (_USERS_SCHEMA_VERSION,))
         await db.commit()
 
 
@@ -126,12 +125,12 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
     if "must_change_password" not in cols:
         logger.info("Migrating users schema: adding must_change_password column")
         await db.execute(
-            "ALTER TABLE users ADD COLUMN "
-            "must_change_password INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
         )
 
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
+
 
 def _user_row_to_dict(row: Any) -> dict[str, Any]:
     return {
@@ -177,9 +176,7 @@ async def create_user(
 
 async def get_user_by_username(username: str) -> dict[str, Any] | None:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        cur = await db.execute(
-            f"SELECT {_USER_COLS} FROM users WHERE username = ?", (username,)
-        )
+        cur = await db.execute(f"SELECT {_USER_COLS} FROM users WHERE username = ?", (username,))
         row = await cur.fetchone()
         await cur.close()
     return _user_row_to_dict(row) if row else None
@@ -187,9 +184,7 @@ async def get_user_by_username(username: str) -> dict[str, Any] | None:
 
 async def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        cur = await db.execute(
-            f"SELECT {_USER_COLS} FROM users WHERE id = ?", (user_id,)
-        )
+        cur = await db.execute(f"SELECT {_USER_COLS} FROM users WHERE id = ?", (user_id,))
         row = await cur.fetchone()
         await cur.close()
     return _user_row_to_dict(row) if row else None
@@ -198,9 +193,7 @@ async def get_user_by_id(user_id: int) -> dict[str, Any] | None:
 async def list_users() -> list[dict[str, Any]]:
     """Return all users (without password hashes) ordered by id."""
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        cur = await db.execute(
-            f"SELECT {_USER_COLS} FROM users ORDER BY id"
-        )
+        cur = await db.execute(f"SELECT {_USER_COLS} FROM users ORDER BY id")
         rows = await cur.fetchall()
         await cur.close()
     out = []
@@ -256,8 +249,7 @@ async def set_password(
     """
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute(
-            "UPDATE users SET password_hash = ?, must_change_password = ? "
-            "WHERE id = ?",
+            "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
             (password_hash, 1 if must_change_password else 0, user_id),
         )
         if keep_token_hash is None:
@@ -288,9 +280,7 @@ async def set_role(user_id: int, role: str) -> bool:
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r}")
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        cur = await db.execute(
-            "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
-        )
+        cur = await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
         await db.commit()
         return cur.rowcount > 0
 
@@ -305,6 +295,7 @@ async def delete_user(user_id: int) -> bool:
 
 
 # ── Session CRUD ─────────────────────────────────────────────────────────────
+
 
 async def create_session(token_hash: str, user_id: int, expires_at: str) -> None:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
@@ -323,8 +314,7 @@ async def get_session(token_hash: str) -> dict[str, Any] | None:
     """
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute(
-            "SELECT token_hash, user_id, created_at, expires_at "
-            "FROM sessions WHERE token_hash = ?",
+            "SELECT token_hash, user_id, created_at, expires_at FROM sessions WHERE token_hash = ?",
             (token_hash,),
         )
         row = await cur.fetchone()
@@ -333,9 +323,7 @@ async def get_session(token_hash: str) -> dict[str, Any] | None:
             return None
         expires_at = row[3]
         if _is_expired(expires_at):
-            await db.execute(
-                "DELETE FROM sessions WHERE token_hash = ?", (token_hash,)
-            )
+            await db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
             await db.commit()
             return None
     return {
@@ -348,9 +336,7 @@ async def get_session(token_hash: str) -> dict[str, Any] | None:
 
 async def delete_session(token_hash: str) -> None:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        await db.execute(
-            "DELETE FROM sessions WHERE token_hash = ?", (token_hash,)
-        )
+        await db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
         await db.commit()
 
 
@@ -358,9 +344,7 @@ async def purge_expired_sessions() -> int:
     """Delete all expired sessions; return the number removed."""
     now = _utc_now_iso()
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
-        cur = await db.execute(
-            "DELETE FROM sessions WHERE expires_at < ?", (now,)
-        )
+        cur = await db.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         await db.commit()
         return cur.rowcount
 

@@ -25,6 +25,7 @@ Design decisions (locked 021F kickoff):
   * Concurrency: ``BEGIN IMMEDIATE`` + partial unique index
     ``WHERE active=1`` so only one writer can mutate the active state.
 """
+
 from __future__ import annotations
 
 import json
@@ -157,10 +158,7 @@ async def list_versions(source_name: str | None = None) -> list[dict[str, Any]]:
     if source_name:
         where_sql = "WHERE source_name = ?"
         params.append(source_name)
-    sql = (
-        f"SELECT * FROM mapping_versions {where_sql} "
-        f"ORDER BY id DESC"
-    )
+    sql = f"SELECT * FROM mapping_versions {where_sql} ORDER BY id DESC"
     async with aiosqlite.connect(_MAPPINGS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         rows: list[dict[str, Any]] = []
@@ -173,9 +171,7 @@ async def get_version(version_id: int) -> dict[str, Any] | None:
     await init_mappings_db()
     async with aiosqlite.connect(_MAPPINGS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM mapping_versions WHERE id = ?", (version_id,)
-        )
+        cur = await db.execute("SELECT * FROM mapping_versions WHERE id = ?", (version_id,))
         row = await cur.fetchone()
         await cur.close()
     if row is None:
@@ -188,8 +184,7 @@ async def get_active_version(source_name: str) -> dict[str, Any] | None:
     async with aiosqlite.connect(_MAPPINGS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT * FROM mapping_versions "
-            "WHERE source_name = ? AND active = 1 LIMIT 1",
+            "SELECT * FROM mapping_versions WHERE source_name = ? AND active = 1 LIMIT 1",
             (source_name,),
         )
         row = await cur.fetchone()
@@ -256,8 +251,7 @@ async def get_all_active_mappings() -> dict[str, dict[str, str]]:
     async with aiosqlite.connect(_MAPPINGS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT source_name, mapping_json FROM mapping_versions "
-            "WHERE active = 1"
+            "SELECT source_name, mapping_json FROM mapping_versions WHERE active = 1"
         )
         out: dict[str, dict[str, str]] = {}
         async for row in cur:
@@ -299,9 +293,7 @@ async def migrate_yaml_manual_mappings_once() -> int:
     cfg = load_normalizer_config()
     manual_mappings = cfg.get("manual_mappings") or {}
     if not isinstance(manual_mappings, dict) or not manual_mappings:
-        logger.info(
-            "mapping_versions migration: no manual_mappings in yaml; nothing to seed"
-        )
+        logger.info("mapping_versions migration: no manual_mappings in yaml; nothing to seed")
         return 0
 
     created = 0
@@ -331,9 +323,7 @@ async def migrate_yaml_manual_mappings_once() -> int:
         except Exception:
             await db.rollback()
             raise
-    logger.info(
-        "mapping_versions migration: seeded %d v1 row(s) from yaml", created
-    )
+    logger.info("mapping_versions migration: seeded %d v1 row(s) from yaml", created)
     return created
 
 
@@ -358,8 +348,8 @@ async def regenerate_yaml_snapshot() -> None:
     cfg["manual_mappings"] = active
     save_normalizer_config(cfg)
     logger.info(
-        "normalizer-config.yaml manual_mappings snapshot regenerated "
-        "(%d source(s))", len(active),
+        "normalizer-config.yaml manual_mappings snapshot regenerated (%d source(s))",
+        len(active),
     )
 
 
@@ -384,12 +374,8 @@ def diff_mappings(
     added_keys = sorted(to_keys - from_keys)
     removed_keys = sorted(from_keys - to_keys)
     common_keys = sorted(from_keys & to_keys)
-    added = [
-        {"raw_field": k, "canonical": to_mapping[k]} for k in added_keys
-    ]
-    removed = [
-        {"raw_field": k, "canonical": from_mapping[k]} for k in removed_keys
-    ]
+    added = [{"raw_field": k, "canonical": to_mapping[k]} for k in added_keys]
+    removed = [{"raw_field": k, "canonical": from_mapping[k]} for k in removed_keys]
     changed = [
         {
             "raw_field": k,

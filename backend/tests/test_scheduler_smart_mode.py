@@ -9,6 +9,7 @@ called. Assert that submit_smart_job:
   * respects the concurrency semaphore
   * is unaffected by auto_apply.enabled (021E-3 contract — 021E-4 changes this)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,9 +61,7 @@ class _RunnerSpy:
 async def test_submit_fires_when_globally_enabled(_isolate: Path, monkeypatch):
     _write_cfg(_isolate, {"enabled": True, "on_new_feed": {"enabled": True}})
     spy = _RunnerSpy()
-    monkeypatch.setattr(
-        "backend.normalizer.smart_runner.run_smart_job", spy
-    )
+    monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     job_id = await scheduler_mod.submit_smart_job("feed-a", reason="on_new_feed")
     assert job_id is not None
     # Give the background task a tick to run
@@ -75,7 +74,8 @@ async def test_submit_fires_when_globally_enabled(_isolate: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_submit_suppressed_when_globally_disabled_for_schedule_reason(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     _write_cfg(_isolate, {"enabled": False})
     spy = _RunnerSpy()
@@ -87,7 +87,8 @@ async def test_submit_suppressed_when_globally_disabled_for_schedule_reason(
 
 @pytest.mark.asyncio
 async def test_submit_manual_runs_even_when_globally_disabled(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     """Manual triggers (operator-initiated) bypass the smart_mode.enabled gate."""
     _write_cfg(_isolate, {"enabled": False})
@@ -102,13 +103,17 @@ async def test_submit_manual_runs_even_when_globally_disabled(
 
 @pytest.mark.asyncio
 async def test_submit_suppressed_when_per_source_disabled(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "on_new_feed": {"enabled": True},
-        "sources": [{"name": "feed-a", "enabled": False}],
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "on_new_feed": {"enabled": True},
+            "sources": [{"name": "feed-a", "enabled": False}],
+        },
+    )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     job_id = await scheduler_mod.submit_smart_job("feed-a", reason="on_new_feed")
@@ -118,7 +123,8 @@ async def test_submit_suppressed_when_per_source_disabled(
 
 @pytest.mark.asyncio
 async def test_submit_suppressed_when_on_new_feed_disabled(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     _write_cfg(_isolate, {"enabled": True, "on_new_feed": {"enabled": False}})
     spy = _RunnerSpy()
@@ -130,14 +136,22 @@ async def test_submit_suppressed_when_on_new_feed_disabled(
 
 @pytest.mark.asyncio
 async def test_submit_suppressed_when_pending_proposal_exists(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     _write_cfg(_isolate, {"enabled": True, "on_new_feed": {"enabled": True}})
     # Seed a pending proposal for feed-a
     await proposals_mod.insert_proposal(
-        source_name="feed-a", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-        llm_response_raw="", status="pending",
+        source_name="feed-a",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        status="pending",
     )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
@@ -157,19 +171,25 @@ async def test_invalid_reason_is_rejected(_isolate: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_provider_precedence_per_call_beats_per_source(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "provider": "global-prov",
-        "on_new_feed": {"enabled": True},
-        "sources": [{"name": "feed-a", "enabled": True, "provider": "per-source-prov"}],
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "provider": "global-prov",
+            "on_new_feed": {"enabled": True},
+            "sources": [{"name": "feed-a", "enabled": True, "provider": "per-source-prov"}],
+        },
+    )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     # per-call override wins
     await scheduler_mod.submit_smart_job(
-        "feed-a", reason="manual", provider="per-call-prov",
+        "feed-a",
+        reason="manual",
+        provider="per-call-prov",
     )
     await asyncio.sleep(0)
     await asyncio.sleep(0)
@@ -178,14 +198,18 @@ async def test_provider_precedence_per_call_beats_per_source(
 
 @pytest.mark.asyncio
 async def test_provider_precedence_per_source_beats_global(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "provider": "global-prov",
-        "on_new_feed": {"enabled": True},
-        "sources": [{"name": "feed-a", "enabled": True, "provider": "per-source-prov"}],
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "provider": "global-prov",
+            "on_new_feed": {"enabled": True},
+            "sources": [{"name": "feed-a", "enabled": True, "provider": "per-source-prov"}],
+        },
+    )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     await scheduler_mod.submit_smart_job("feed-a", reason="on_new_feed")
@@ -196,13 +220,17 @@ async def test_provider_precedence_per_source_beats_global(
 
 @pytest.mark.asyncio
 async def test_provider_precedence_global_when_no_per_source(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "provider": "global-prov",
-        "on_new_feed": {"enabled": True},
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "provider": "global-prov",
+            "on_new_feed": {"enabled": True},
+        },
+    )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     await scheduler_mod.submit_smart_job("feed-a", reason="on_new_feed")
@@ -213,15 +241,19 @@ async def test_provider_precedence_global_when_no_per_source(
 
 @pytest.mark.asyncio
 async def test_auto_apply_enabled_does_not_change_021e3_behaviour(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     """021E-3 contract: auto_apply.enabled is a no-op field at this phase.
     Test locks the contract so 021E-4's behavioural change is observable."""
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "on_new_feed": {"enabled": True},
-        "auto_apply": {"enabled": True},
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "on_new_feed": {"enabled": True},
+            "auto_apply": {"enabled": True},
+        },
+    )
     spy = _RunnerSpy()
     monkeypatch.setattr("backend.normalizer.smart_runner.run_smart_job", spy)
     job_id = await scheduler_mod.submit_smart_job("feed-a", reason="on_new_feed")
@@ -233,18 +265,22 @@ async def test_auto_apply_enabled_does_not_change_021e3_behaviour(
 
 @pytest.mark.asyncio
 async def test_concurrency_semaphore_caps_at_max_concurrent(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     """Third concurrent job must wait until one of the first two completes.
 
     The semaphore is shared by all submitted jobs; we gate the spy so we
     can see the queued state.
     """
-    _write_cfg(_isolate, {
-        "enabled": True,
-        "on_new_feed": {"enabled": True},
-        "concurrency": {"max_concurrent": 2},
-    })
+    _write_cfg(
+        _isolate,
+        {
+            "enabled": True,
+            "on_new_feed": {"enabled": True},
+            "concurrency": {"max_concurrent": 2},
+        },
+    )
     # Reset the semaphore to honour the configured limit (reload() does
     # this in production; we reset it manually here).
     scheduler_mod._smart_semaphore = asyncio.Semaphore(2)
@@ -280,7 +316,8 @@ async def test_concurrency_semaphore_caps_at_max_concurrent(
 
 @pytest.mark.asyncio
 async def test_job_complete_with_first_ingest_calls_submit_smart_job(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     """When job_store.complete() runs with first_ingest=True, it must fan
     out to scheduler.submit_smart_job."""
@@ -301,7 +338,8 @@ async def test_job_complete_with_first_ingest_calls_submit_smart_job(
 
 @pytest.mark.asyncio
 async def test_job_complete_without_first_ingest_does_not_fire(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     captured: list[Any] = []
 
@@ -319,7 +357,8 @@ async def test_job_complete_without_first_ingest_does_not_fire(
 
 @pytest.mark.asyncio
 async def test_smart_proposal_job_completion_does_not_fan_out(
-    _isolate: Path, monkeypatch,
+    _isolate: Path,
+    monkeypatch,
 ):
     """Smart-proposal jobs must not recursively trigger another smart job."""
     captured: list[Any] = []

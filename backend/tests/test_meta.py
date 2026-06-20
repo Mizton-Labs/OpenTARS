@@ -1,4 +1,5 @@
 """Tests for backend.db.meta — per-source last-ingest persistence."""
+
 from __future__ import annotations
 
 import pytest
@@ -34,8 +35,12 @@ async def test_record_and_get_single_source(isolated_meta):
 
 @pytest.mark.asyncio
 async def test_record_upserts_same_source(isolated_meta):
-    await meta_mod.record_ingest("srcA", {"total_read": 1, "inserted": 1, "duplicates": 0, "discarded": 0})
-    await meta_mod.record_ingest("srcA", {"total_read": 9, "inserted": 7, "duplicates": 1, "discarded": 1}, kind="push")
+    await meta_mod.record_ingest(
+        "srcA", {"total_read": 1, "inserted": 1, "duplicates": 0, "discarded": 0}
+    )
+    await meta_mod.record_ingest(
+        "srcA", {"total_read": 9, "inserted": 7, "duplicates": 1, "discarded": 1}, kind="push"
+    )
 
     rows = await meta_mod.get_meta(["srcA"])
     assert rows["srcA"]["last_total_read"] == 9
@@ -52,8 +57,11 @@ async def test_get_meta_missing_source_returns_empty(isolated_meta):
 
 @pytest.mark.asyncio
 async def test_get_meta_no_filter_returns_all(isolated_meta):
-    await meta_mod.record_ingest("a", {"total_read": 1, "inserted": 1, "duplicates": 0, "discarded": 0})
-    await meta_mod.record_ingest("b", {"total_read": 2, "inserted": 2, "duplicates": 0, "discarded": 0})
+    await meta_mod.record_ingest(
+        "a", {"total_read": 1, "inserted": 1, "duplicates": 0, "discarded": 0}
+    )
+    await meta_mod.record_ingest(
+        "b", {"total_read": 2, "inserted": 2, "duplicates": 0, "discarded": 0}
+    )
     rows = await meta_mod.get_meta(None)
     assert set(rows.keys()) == {"a", "b"}
-

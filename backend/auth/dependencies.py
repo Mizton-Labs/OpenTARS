@@ -5,6 +5,7 @@ These guard the ``/api/auth`` routes themselves. Global request enforcement
 (401 for unauthenticated, 403 for under-privileged) lives in the middleware in
 ``backend.main`` so it applies uniformly to every router.
 """
+
 from __future__ import annotations
 
 from fastapi import HTTPException, Request, Response

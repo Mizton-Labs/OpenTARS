@@ -8,6 +8,7 @@ Sets up two output channels:
 
 Call setup_logging() once at application startup (main.py).
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,7 +57,7 @@ def setup_logging(log_dir: Path) -> None:
     # ── Audit logger ─────────────────────────────────────────────────────────
     audit_logger = logging.getLogger("backend.audit")
     audit_logger.setLevel(logging.DEBUG)  # DEBUG emitted only if root allows it
-    audit_logger.propagate = True         # flows through root handlers above
+    audit_logger.propagate = True  # flows through root handlers above
 
     # audit.log — dedicated file for structured ingestion events (INFO+)
     audit_handler = logging.handlers.RotatingFileHandler(

@@ -1,4 +1,5 @@
 """Tests for backend.api.routes_llm (prompts-021D, refactored in 022 step 4)."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -6,10 +7,10 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.api import routes_llm as routes_llm_mod
 from backend.llm import config as cfg_mod
 from backend.llm.errors import LLMProviderError
 from backend.main import app
-from backend.api import routes_llm as routes_llm_mod
 
 
 @pytest.fixture(autouse=True)
@@ -26,12 +27,20 @@ def _preload(cfg):
 
 
 def test_get_config_redacts_api_key():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.get("/api/llm/config")
     assert r.status_code == 200
@@ -43,12 +52,20 @@ def test_get_config_redacts_api_key():
 
 
 def test_put_config_updates_enabled_and_default_provider():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.put("/api/llm/config", json={"enabled": True, "default_provider": "a"})
     assert r.status_code == 200, r.text
@@ -61,12 +78,20 @@ def test_put_config_updates_enabled_and_default_provider():
 
 def test_put_config_rejects_providers_key():
     """022 step 4: managing providers moved to dedicated routes."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.put(
         "/api/llm/config",
@@ -86,12 +111,20 @@ def test_put_config_rejects_unknown_top_level_key():
 
 
 def test_get_providers_excludes_secrets():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.get("/api/llm/providers")
     assert r.status_code == 200
@@ -104,15 +137,22 @@ def test_get_providers_excludes_secrets():
 def test_get_providers_exposes_tested_models():
     """prompts-034: the listing surfaces tested_models (default []) for the
     Smart Mapping model dropdown."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x",
-             "model": "m", "api_key": "sk-real",
-             "tested_models": ["m", "m2"]},
-            {"name": "b", "kind": "ollama", "base_url": "https://y", "model": "n"},
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                    "tested_models": ["m", "m2"],
+                },
+                {"name": "b", "kind": "ollama", "base_url": "https://y", "model": "n"},
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.get("/api/llm/providers")
     assert r.status_code == 200
@@ -125,15 +165,22 @@ def test_get_providers_exposes_available_models():
     """prompts-036: the listing surfaces available_models (default []) so the
     Smart Mapping proposal dropdown can be populated from DISCOVERED models
     without a green Test."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x",
-             "model": "m", "api_key": "sk-real",
-             "available_models": ["m", "m2", "m3"]},
-            {"name": "b", "kind": "ollama", "base_url": "https://y", "model": "n"},
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                    "available_models": ["m", "m2", "m3"],
+                },
+                {"name": "b", "kind": "ollama", "base_url": "https://y", "model": "n"},
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.get("/api/llm/providers")
     assert r.status_code == 200
@@ -171,22 +218,41 @@ def test_post_providers_rejects_bad_name():
     client = TestClient(app)
     r = client.post(
         "/api/llm/providers",
-        json={"name": "bad name with spaces", "kind": "openai", "base_url": "https://x", "model": "m"},
+        json={
+            "name": "bad name with spaces",
+            "kind": "openai",
+            "base_url": "https://x",
+            "model": "m",
+        },
     )
     assert r.status_code == 400
 
 
 def test_post_providers_rejects_duplicate_name():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "dup", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "dup",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.post(
         "/api/llm/providers",
-        json={"name": "dup", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"},
+        json={
+            "name": "dup",
+            "kind": "openai",
+            "base_url": "https://x",
+            "model": "m",
+            "api_key": "sk",
+        },
     )
     assert r.status_code == 400
 
@@ -195,16 +261,30 @@ def test_post_providers_rejects_duplicate_name():
 
 
 def test_put_provider_updates_in_place_and_retains_key_on_stars():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.put(
         "/api/llm/providers/a",
-        json={"name": "a", "kind": "openai", "base_url": "https://x", "model": "m2", "api_key": "***"},
+        json={
+            "name": "a",
+            "kind": "openai",
+            "base_url": "https://x",
+            "model": "m2",
+            "api_key": "***",
+        },
     )
     assert r.status_code == 200, r.text
     on_disk = cfg_mod.load_llm_config()
@@ -213,16 +293,30 @@ def test_put_provider_updates_in_place_and_retains_key_on_stars():
 
 
 def test_put_provider_replaces_key_when_real_value_sent():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-old"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-old",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.put(
         "/api/llm/providers/a",
-        json={"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-new"},
+        json={
+            "name": "a",
+            "kind": "openai",
+            "base_url": "https://x",
+            "model": "m",
+            "api_key": "sk-new",
+        },
     )
     assert r.status_code == 200
     assert cfg_mod.load_llm_config()["providers"][0]["api_key"] == "sk-new"
@@ -242,13 +336,21 @@ def test_put_provider_404_for_unknown_name():
 
 
 def test_delete_provider_removes_and_clears_default():
-    _preload({
-        "enabled": False,
-        "default_provider": "a",
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "default_provider": "a",
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.delete("/api/llm/providers/a")
     assert r.status_code == 204
@@ -258,14 +360,28 @@ def test_delete_provider_removes_and_clears_default():
 
 
 def test_delete_provider_keeps_default_when_unrelated():
-    _preload({
-        "enabled": False,
-        "default_provider": "keep",
-        "providers": [
-            {"name": "keep", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"},
-            {"name": "drop", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"},
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "default_provider": "keep",
+            "providers": [
+                {
+                    "name": "keep",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                },
+                {
+                    "name": "drop",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                },
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.delete("/api/llm/providers/drop")
     assert r.status_code == 204
@@ -285,13 +401,21 @@ def test_delete_last_provider_while_enabled_auto_disables_llm():
     # prompts-031: deleting the only provider while enabled=true must not be
     # rejected by validate_config; the route auto-disables LLM in the same
     # write so the delete succeeds and the config stays valid.
-    _preload({
-        "enabled": True,
-        "default_provider": "only",
-        "providers": [
-            {"name": "only", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "only",
+            "providers": [
+                {
+                    "name": "only",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                }
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.delete("/api/llm/providers/only")
     assert r.status_code == 204, r.text
@@ -304,14 +428,28 @@ def test_delete_last_provider_while_enabled_auto_disables_llm():
 def test_delete_non_last_provider_while_enabled_keeps_llm_enabled():
     # Deleting a non-last provider while enabled=true must leave enabled
     # untouched (a valid provider with a key remains).
-    _preload({
-        "enabled": True,
-        "default_provider": "keep",
-        "providers": [
-            {"name": "keep", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"},
-            {"name": "drop", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk"},
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "keep",
+            "providers": [
+                {
+                    "name": "keep",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                },
+                {
+                    "name": "drop",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                },
+            ],
+        }
+    )
     client = TestClient(app)
     r = client.delete("/api/llm/providers/drop")
     assert r.status_code == 204, r.text
@@ -324,13 +462,21 @@ def test_delete_non_last_provider_while_enabled_keeps_llm_enabled():
 
 
 def test_provider_test_returns_run_provider_test_shape():
-    _preload({
-        "enabled": True,
-        "default_provider": "a",
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "a",
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
 
     class _Stub:
         name = "a"
@@ -356,14 +502,21 @@ def test_provider_test_returns_run_provider_test_shape():
 
 def test_persisted_test_records_tested_model_on_green(monkeypatch):
     """prompts-034: a green persisted Test appends the model to tested_models."""
-    _preload({
-        "enabled": True,
-        "default_provider": "a",
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x",
-             "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "a",
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
 
     class _Stub:
         name = "a"
@@ -387,14 +540,21 @@ def test_persisted_test_records_tested_model_on_green(monkeypatch):
 
 def test_persisted_test_does_not_record_on_error():
     """A failing Test must NOT append to tested_models."""
-    _preload({
-        "enabled": True,
-        "default_provider": "a",
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x",
-             "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "a",
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
 
     class _Stub:
         name = "a"
@@ -419,13 +579,21 @@ def test_persisted_test_does_not_record_on_error():
 def test_provider_test_captures_provider_error_into_transcript():
     """022 step 4: provider errors no longer surface as HTTP 502; they
     are captured into the transcript with aggregate status='error'."""
-    _preload({
-        "enabled": True,
-        "default_provider": "a",
-        "providers": [
-            {"name": "a", "kind": "openai", "base_url": "https://x", "model": "m", "api_key": "sk-real"}
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "a",
+            "providers": [
+                {
+                    "name": "a",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
 
     class _Stub:
         name = "a"
@@ -496,18 +664,20 @@ def test_test_route_merges_stored_key_when_redacted_for_persisted_name():
     """The persisted ProviderCard sends api_key='***' + the operator-chosen
     model; the route must merge the stored real key from disk so the
     request reaches the upstream with a valid credential."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "kept",
-                "kind": "openai",
-                "base_url": "https://api.openai.com/v1",
-                "model": "old-model",
-                "api_key": "sk-stored",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "kept",
+                    "kind": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "old-model",
+                    "api_key": "sk-stored",
+                },
+            ],
+        }
+    )
 
     captured: dict = {}
 
@@ -530,7 +700,7 @@ def test_test_route_merges_stored_key_when_redacted_for_persisted_name():
         )
     assert r.status_code == 200, r.text
     assert captured["api_key"] == "sk-stored"  # merged from disk
-    assert captured["model"] == "new-model"   # operator override honoured
+    assert captured["model"] == "new-model"  # operator override honoured
 
 
 def test_draft_test_records_selected_model_into_persisted_provider(monkeypatch):
@@ -539,24 +709,31 @@ def test_draft_test_records_selected_model_into_persisted_provider(monkeypatch):
     green probe the route must append THAT selected model (not the provider's
     persisted default) to the persisted provider's tested_models, so the Smart
     Mapping dropdown can offer it. This is the path runProbe actually uses."""
-    _preload({
-        "enabled": True,
-        "default_provider": "alt-provider",
-        "providers": [
-            {
-                "name": "alt-provider",
-                "kind": "openai_compatible",
-                "base_url": "https://gw.example/api",
-                "model": "default-model",      # persisted default
-                "api_key": "sk-stored",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "alt-provider",
+            "providers": [
+                {
+                    "name": "alt-provider",
+                    "kind": "openai_compatible",
+                    "base_url": "https://gw.example/api",
+                    "model": "default-model",  # persisted default
+                    "api_key": "sk-stored",
+                },
+            ],
+        }
+    )
 
     def _fake_run(client):
         # Echo the constructed model so we prove the SELECTED one is probed.
-        return {"status": "ok", "details": [], "models": ["gpt-oss:120b"],
-                "sample": "pong", "model": client.model}
+        return {
+            "status": "ok",
+            "details": [],
+            "models": ["gpt-oss:120b"],
+            "sample": "pong",
+            "model": client.model,
+        }
 
     tc = TestClient(app)
     with patch.object(routes_llm_mod, "run_provider_test", side_effect=_fake_run):
@@ -566,7 +743,7 @@ def test_draft_test_records_selected_model_into_persisted_provider(monkeypatch):
                 "name": "alt-provider",
                 "kind": "openai_compatible",
                 "base_url": "https://gw.example/api",
-                "model": "gpt-oss:120b",       # operator-SELECTED model
+                "model": "gpt-oss:120b",  # operator-SELECTED model
                 "api_key": "***",
             },
         )
@@ -582,19 +759,21 @@ def test_draft_test_does_not_record_on_error():
     """prompts-035 (#1): a RED draft probe must not append to tested_models —
     this is what (correctly) keeps an empty-content reasoning probe out of the
     dropdown until #2 makes it green."""
-    _preload({
-        "enabled": True,
-        "default_provider": "alt-provider",
-        "providers": [
-            {
-                "name": "alt-provider",
-                "kind": "openai_compatible",
-                "base_url": "https://gw.example/api",
-                "model": "default-model",
-                "api_key": "sk-stored",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": True,
+            "default_provider": "alt-provider",
+            "providers": [
+                {
+                    "name": "alt-provider",
+                    "kind": "openai_compatible",
+                    "base_url": "https://gw.example/api",
+                    "model": "default-model",
+                    "api_key": "sk-stored",
+                },
+            ],
+        }
+    )
 
     def _fake_run(client):
         return {"status": "error", "details": [], "models": [], "sample": None}
@@ -648,18 +827,20 @@ def test_test_route_does_not_merge_when_name_is_anonymous():
 
 def test_test_route_does_not_merge_when_real_key_provided_for_persisted_name():
     """If the operator types a fresh key the route must use it verbatim."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "kept",
-                "kind": "openai",
-                "base_url": "https://x",
-                "model": "m",
-                "api_key": "sk-stored",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "kept",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-stored",
+                },
+            ],
+        }
+    )
 
     captured: dict = {}
 
@@ -729,18 +910,20 @@ def test_discover_draft_rejects_unknown_kind():
 
 
 def test_discover_persisted_uses_get_client():
-    _preload({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "p1",
-                "kind": "openai",
-                "base_url": "https://x",
-                "model": "m",
-                "api_key": "sk-real",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                },
+            ],
+        }
+    )
 
     seen: dict = {}
 
@@ -766,18 +949,20 @@ def test_discover_persisted_uses_get_client():
 def test_discover_persisted_empty_list_is_023_failure():
     """list_models returns [] → discover reports status='error' with the
     023 explanatory verdict (server reachable, no models published)."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "p1",
-                "kind": "openai",
-                "base_url": "https://x",
-                "model": "m",
-                "api_key": "sk-real",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                },
+            ],
+        }
+    )
 
     class _Stub:
         name = "p1"
@@ -794,10 +979,7 @@ def test_discover_persisted_empty_list_is_023_failure():
     body = r.json()
     assert body["status"] == "error"
     # The 023 verdict text appears in some detail entry.
-    assert any(
-        d.get("error") and "0 models" in d["error"]
-        for d in body["details"]
-    )
+    assert any(d.get("error") and "0 models" in d["error"] for d in body["details"])
 
 
 # ── available_models persistence (prompts-027) ──────────────────────────────
@@ -805,18 +987,20 @@ def test_discover_persisted_empty_list_is_023_failure():
 
 def test_provider_round_trips_available_models_field():
     """PUT a provider with available_models, GET back, see it preserved."""
-    _preload({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "p1",
-                "kind": "openai",
-                "base_url": "https://x",
-                "model": "m",
-                "api_key": "sk-real",
-            },
-        ],
-    })
+    _preload(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                },
+            ],
+        }
+    )
     tc = TestClient(app)
     r = tc.put(
         "/api/llm/providers/p1",
@@ -834,4 +1018,3 @@ def test_provider_round_trips_available_models_field():
     assert on_disk["providers"][0]["available_models"] == ["m1", "m2", "m3"]
     # api_key still preserved (write-only semantics).
     assert on_disk["providers"][0]["api_key"] == "sk-real"
-

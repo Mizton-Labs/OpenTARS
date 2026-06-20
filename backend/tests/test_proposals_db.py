@@ -1,4 +1,5 @@
 """Tests for backend.normalizer.proposals (021E-1)."""
+
 from __future__ import annotations
 
 import pytest
@@ -69,26 +70,36 @@ async def test_get_proposal_missing_returns_none():
 async def test_raw_exchange_fields_roundtrip():
     """prompts-037: llm_request_raw / llm_response_json persist and return."""
     pid = await insert_proposal(
-        source_name="src", provider_name="p", model="m", sample_size=1,
-        raw_fields=["x"], mapping={}, prompt_system="", prompt_user="",
+        source_name="src",
+        provider_name="p",
+        model="m",
+        sample_size=1,
+        raw_fields=["x"],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="content",
-        llm_request_raw="POST https://h/v1/chat\n\n{\"model\":\"m\"}",
+        llm_request_raw='POST https://h/v1/chat\n\n{"model":"m"}',
         llm_response_json='{"choices":[{"message":{"content":"content"}}]}',
     )
     fetched = await get_proposal(pid)
     assert fetched is not None
     assert fetched["llm_request_raw"].startswith("POST https://h/v1/chat")
-    assert fetched["llm_response_json"] == (
-        '{"choices":[{"message":{"content":"content"}}]}'
-    )
+    assert fetched["llm_response_json"] == ('{"choices":[{"message":{"content":"content"}}]}')
 
 
 @pytest.mark.asyncio
 async def test_raw_exchange_fields_default_empty():
     """Rows inserted without the new fields default to empty strings."""
     pid = await insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     fetched = await get_proposal(pid)
@@ -100,19 +111,38 @@ async def test_raw_exchange_fields_default_empty():
 @pytest.mark.asyncio
 async def test_list_filters_by_source_and_status():
     await insert_proposal(
-        source_name="s1", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="s1",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     await insert_proposal(
-        source_name="s2", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="s2",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     s2_id = await insert_proposal(
-        source_name="s2", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-        llm_response_raw="", status="error",
+        source_name="s2",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        status="error",
     )
     s2_rows = await list_proposals(source="s2")
     assert len(s2_rows) == 2
@@ -124,8 +154,14 @@ async def test_list_filters_by_source_and_status():
 @pytest.mark.asyncio
 async def test_update_status_persists_decision_note():
     pid = await insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     changed = await update_proposal_status(pid, "approved", note="lgtm")
@@ -141,9 +177,16 @@ async def test_update_status_persists_decision_note():
 async def test_invalid_status_raises():
     with pytest.raises(ValueError):
         await insert_proposal(
-            source_name="s", provider_name=None, model=None, sample_size=1,
-            raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-            llm_response_raw="", status="bogus",
+            source_name="s",
+            provider_name=None,
+            model=None,
+            sample_size=1,
+            raw_fields=[],
+            mapping={},
+            prompt_system="",
+            prompt_user="",
+            llm_response_raw="",
+            status="bogus",
         )
 
 

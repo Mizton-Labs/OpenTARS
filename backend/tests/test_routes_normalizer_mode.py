@@ -4,6 +4,7 @@ The PUT /api/normalizer/config route accepts only the three valid modes
 (auto / manual / smart) and rejects anything else with 400. Isolated via a
 tmp_path-pointed normalizer-config.yaml.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,7 +17,9 @@ from backend.normalizer import config as norm_cfg_mod
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        norm_cfg_mod, "_NORMALIZER_CONFIG_PATH", tmp_path / "normalizer-config.yaml",
+        norm_cfg_mod,
+        "_NORMALIZER_CONFIG_PATH",
+        tmp_path / "normalizer-config.yaml",
     )
     yield
 

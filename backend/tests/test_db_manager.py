@@ -1,10 +1,8 @@
 """Tests for the DB manager."""
-import asyncio
-import pytest
-import tempfile
-import os
-from pathlib import Path
+
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.fixture
@@ -70,7 +68,7 @@ async def test_deduplication(temp_data_dir):
         "published_at": "2024-06-01T00:00:00Z",
         "ingest_mode": "push",
     }
-    first  = await insert_entry("dedup_src", entry)
+    first = await insert_entry("dedup_src", entry)
     second = await insert_entry("dedup_src", entry)
 
     assert first == "inserted"
@@ -82,9 +80,17 @@ async def test_deduplication(temp_data_dir):
 
 @pytest.mark.asyncio
 async def test_reset_db(temp_data_dir):
-    from backend.db.manager import insert_entry, reset_db, query_entries
+    from backend.db.manager import insert_entry, query_entries, reset_db
 
-    await insert_entry("reset_src", {"source": "reset_src", "indicator": "x", "published_at": "2024-01-01", "ingest_mode": "push"})
+    await insert_entry(
+        "reset_src",
+        {
+            "source": "reset_src",
+            "indicator": "x",
+            "published_at": "2024-01-01",
+            "ingest_mode": "push",
+        },
+    )
     deleted = reset_db("reset_src")
     assert len(deleted) == 1
 
@@ -94,12 +100,18 @@ async def test_reset_db(temp_data_dir):
 
 @pytest.mark.asyncio
 async def test_summary_counts(temp_data_dir):
-    from backend.db.manager import insert_entry, get_summary
+    from backend.db.manager import get_summary, insert_entry
 
     for i in range(3):
-        await insert_entry("src_a", {
-            "source": "src_a", "indicator": f"ip{i}", "published_at": f"2024-01-0{i+1}", "ingest_mode": "push",
-        })
+        await insert_entry(
+            "src_a",
+            {
+                "source": "src_a",
+                "indicator": f"ip{i}",
+                "published_at": f"2024-01-0{i + 1}",
+                "ingest_mode": "push",
+            },
+        )
 
     summary = await get_summary()
     total = next((s for s in summary if s["source"] == "__total__"), None)
@@ -110,13 +122,18 @@ async def test_summary_counts(temp_data_dir):
 @pytest.mark.asyncio
 async def test_get_summary_ignores_normalized_db(temp_data_dir):
     """A data/normalized.db file must not be treated as a feed source."""
-    from backend.db.manager import insert_entry, get_summary
+    from backend.db.manager import get_summary, insert_entry
 
     # Create a real source with one entry
-    await insert_entry("real_src", {
-        "source": "real_src", "indicator": "1.2.3.4",
-        "published_at": "2024-01-01", "ingest_mode": "push",
-    })
+    await insert_entry(
+        "real_src",
+        {
+            "source": "real_src",
+            "indicator": "1.2.3.4",
+            "published_at": "2024-01-01",
+            "ingest_mode": "push",
+        },
+    )
     # Create an empty normalized.db file (no entries table)
     (temp_data_dir / "normalized.db").touch()
 
@@ -130,12 +147,18 @@ async def test_get_summary_ignores_normalized_db(temp_data_dir):
 async def test_get_summary_tolerates_missing_entries_table(temp_data_dir):
     """A stray .db file with no `entries` table is skipped, not fatal."""
     import sqlite3 as _sql
-    from backend.db.manager import insert_entry, get_summary
 
-    await insert_entry("good_src", {
-        "source": "good_src", "indicator": "5.6.7.8",
-        "published_at": "2024-01-01", "ingest_mode": "push",
-    })
+    from backend.db.manager import get_summary, insert_entry
+
+    await insert_entry(
+        "good_src",
+        {
+            "source": "good_src",
+            "indicator": "5.6.7.8",
+            "published_at": "2024-01-01",
+            "ingest_mode": "push",
+        },
+    )
     # Create a junk DB that lacks the `entries` table
     conn = _sql.connect(temp_data_dir / "junk.db")
     conn.execute("CREATE TABLE other (x INTEGER)")
@@ -157,12 +180,18 @@ async def test_get_summary_tolerates_missing_entries_table(temp_data_dir):
 async def test_dedup_key_computed_on_insert(temp_data_dir):
     """Every inserted row must have a non-null dedup_key (SHA256 hex)."""
     import sqlite3 as _sql
-    from backend.db.manager import insert_entry, _db_path
 
-    await insert_entry("dk_src", {
-        "source": "dk_src", "indicator": "8.8.8.8",
-        "published_at": "2024-01-01", "ingest_mode": "push",
-    })
+    from backend.db.manager import _db_path, insert_entry
+
+    await insert_entry(
+        "dk_src",
+        {
+            "source": "dk_src",
+            "indicator": "8.8.8.8",
+            "published_at": "2024-01-01",
+            "ingest_mode": "push",
+        },
+    )
 
     conn = _sql.connect(_db_path("dk_src"))
     row = conn.execute("SELECT dedup_key FROM entries").fetchone()
@@ -184,7 +213,7 @@ async def test_dedup_works_when_published_at_is_null(temp_data_dir):
         "ingest_mode": "push",
         # published_at intentionally omitted
     }
-    first  = await insert_entry("null_pub_src", entry)
+    first = await insert_entry("null_pub_src", entry)
     second = await insert_entry("null_pub_src", entry)
 
     assert first == "inserted"
@@ -251,7 +280,9 @@ async def test_nvd_shape_distinct_cves_are_inserted(temp_data_dir):
     results = await query_entries(source_name="nvd_shape")
     assert len(results) == 3
     assert {r.get("cve.id") for r in results} == {
-        "CVE-2024-0001", "CVE-2024-0002", "CVE-2024-0003",
+        "CVE-2024-0001",
+        "CVE-2024-0002",
+        "CVE-2024-0003",
     }
 
 
@@ -323,12 +354,22 @@ async def test_query_entries_field_filter_matches_exact_column(temp_data_dir):
     matching rows."""
     from backend.db.manager import insert_entry, query_entries
 
-    await insert_entry("ff_src", {
-        "indicator": "1.1.1.1", "severity": "critical", "source": "ff_src",
-    })
-    await insert_entry("ff_src", {
-        "indicator": "2.2.2.2", "severity": "low", "source": "ff_src",
-    })
+    await insert_entry(
+        "ff_src",
+        {
+            "indicator": "1.1.1.1",
+            "severity": "critical",
+            "source": "ff_src",
+        },
+    )
+    await insert_entry(
+        "ff_src",
+        {
+            "indicator": "2.2.2.2",
+            "severity": "low",
+            "source": "ff_src",
+        },
+    )
 
     crit = await query_entries(source_name="ff_src", filters={"severity": "critical"})
     assert [r["indicator"] for r in crit] == ["1.1.1.1"]
@@ -341,9 +382,14 @@ async def test_query_entries_unknown_field_filter_is_ignored(temp_data_dir):
     returns all rows."""
     from backend.db.manager import insert_entry, query_entries
 
-    await insert_entry("ff_src2", {
-        "indicator": "3.3.3.3", "severity": "high", "source": "ff_src2",
-    })
+    await insert_entry(
+        "ff_src2",
+        {
+            "indicator": "3.3.3.3",
+            "severity": "high",
+            "source": "ff_src2",
+        },
+    )
 
     # Bogus column name with SQL metacharacters — must not raise and must not
     # filter anything out.
@@ -362,19 +408,32 @@ async def test_query_entries_unknown_field_filter_is_ignored(temp_data_dir):
 async def test_get_recently_populated_fields(temp_data_dir):
     """Derives populated field names from recent entries, excluding internal/
     always-shown columns and empty values, ranked by frequency."""
-    from backend.db.manager import insert_entry, get_recently_populated_fields
+    from backend.db.manager import get_recently_populated_fields, insert_entry
 
     # Two entries: cve_id populated in both, actor in one, title always empty.
-    await insert_entry("fp_src", {
-        "source": "fp_src", "indicator": "1.1.1.1", "indicator_type": "ip",
-        "cve_id": "CVE-2026-1", "actor": "APT-X", "title": "",
-        "published_at": "2026-01-01",
-    })
-    await insert_entry("fp_src", {
-        "source": "fp_src", "indicator": "2.2.2.2", "indicator_type": "ip",
-        "cve_id": "CVE-2026-2", "title": "",
-        "published_at": "2026-01-02",
-    })
+    await insert_entry(
+        "fp_src",
+        {
+            "source": "fp_src",
+            "indicator": "1.1.1.1",
+            "indicator_type": "ip",
+            "cve_id": "CVE-2026-1",
+            "actor": "APT-X",
+            "title": "",
+            "published_at": "2026-01-01",
+        },
+    )
+    await insert_entry(
+        "fp_src",
+        {
+            "source": "fp_src",
+            "indicator": "2.2.2.2",
+            "indicator_type": "ip",
+            "cve_id": "CVE-2026-2",
+            "title": "",
+            "published_at": "2026-01-02",
+        },
+    )
 
     fields = await get_recently_populated_fields()
 

@@ -1,4 +1,5 @@
 """Tests for /api/auth routes + global enforcement middleware (prompts-045)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,9 +21,7 @@ def auth_env(tmp_path, monkeypatch):
 
     async def _seed():
         await auth_db.init_users_db()
-        await auth_db.create_user(
-            "admin", service.hash_password("Adminpass1"), role="admin"
-        )
+        await auth_db.create_user("admin", service.hash_password("Adminpass1"), role="admin")
 
     asyncio.run(_seed())
     yield
@@ -42,6 +41,7 @@ def _login(username: str, password: str) -> TestClient:
 
 # ── status / disabled mode ────────────────────────────────────────────────────
 
+
 def test_status_reports_enabled(auth_env):
     r = _client().get("/api/auth/status")
     assert r.status_code == 200
@@ -58,9 +58,7 @@ def test_disabled_mode_is_open(tmp_path, monkeypatch):
     """With auth disabled, protected API is reachable and status is false."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
     monkeypatch.delenv("MIZTON_THREATBOX_ENABLE_AUTH", raising=False)
-    monkeypatch.setattr(
-        "backend.config.loader.load_app_config", lambda: {"auth_enabled": False}
-    )
+    monkeypatch.setattr("backend.config.loader.load_app_config", lambda: {"auth_enabled": False})
     c = _client()
     assert c.get("/api/auth/status").json()["auth_enabled"] is False
     # A protected endpoint is not gated when auth is off.
@@ -68,6 +66,7 @@ def test_disabled_mode_is_open(tmp_path, monkeypatch):
 
 
 # ── login ─────────────────────────────────────────────────────────────────────
+
 
 def test_login_success_sets_cookie_and_me(auth_env):
     c = _login("admin", "Adminpass1")
@@ -80,17 +79,13 @@ def test_login_success_sets_cookie_and_me(auth_env):
 
 
 def test_login_wrong_password_generic_401(auth_env):
-    r = _client().post(
-        "/api/auth/login", json={"username": "admin", "password": "nope"}
-    )
+    r = _client().post("/api/auth/login", json={"username": "admin", "password": "nope"})
     assert r.status_code == 401
     assert r.json()["detail"] == "Invalid username or password"
 
 
 def test_login_unknown_user_generic_401(auth_env):
-    r = _client().post(
-        "/api/auth/login", json={"username": "ghost", "password": "whatever"}
-    )
+    r = _client().post("/api/auth/login", json={"username": "ghost", "password": "whatever"})
     assert r.status_code == 401
     assert r.json()["detail"] == "Invalid username or password"
 
@@ -105,6 +100,7 @@ def test_login_throttled_after_five_failures(auth_env):
 
 
 # ── enforcement ───────────────────────────────────────────────────────────────
+
 
 def test_unauthenticated_protected_returns_401(auth_env):
     r = _client().get("/api/auth/users")
@@ -122,6 +118,7 @@ def test_logout_revokes_session(auth_env):
 
 # ── self password change ──────────────────────────────────────────────────────
 
+
 def test_change_own_password(auth_env):
     c = _login("admin", "Adminpass1")
     r = c.put(
@@ -130,12 +127,18 @@ def test_change_own_password(auth_env):
     )
     assert r.status_code == 200
     # Old password no longer works; new one does.
-    assert _client().post(
-        "/api/auth/login", json={"username": "admin", "password": "Adminpass1"}
-    ).status_code == 401
-    assert _client().post(
-        "/api/auth/login", json={"username": "admin", "password": "Adminpass2"}
-    ).status_code == 200
+    assert (
+        _client()
+        .post("/api/auth/login", json={"username": "admin", "password": "Adminpass1"})
+        .status_code
+        == 401
+    )
+    assert (
+        _client()
+        .post("/api/auth/login", json={"username": "admin", "password": "Adminpass2"})
+        .status_code
+        == 200
+    )
 
 
 def test_change_own_password_keeps_caller_evicts_others(auth_env):
@@ -166,9 +169,7 @@ def test_admin_reset_password_evicts_target_sessions(auth_env):
     bob = _login("bob", "Bobpass12")
     assert bob.get("/api/auth/me").status_code == 200
 
-    r = admin.put(
-        f"/api/auth/users/{uid}/password", json={"new_password": "Newbobpass1"}
-    )
+    r = admin.put(f"/api/auth/users/{uid}/password", json={"new_password": "Newbobpass1"})
     assert r.status_code == 200
     # Bob's old session is dead; the admin is unaffected.
     assert bob.get("/api/auth/me").status_code == 401
@@ -216,6 +217,7 @@ def test_change_own_password_rejects_reuse_of_current(auth_env):
 
 
 # ── forced password change (prompts-047) ──────────────────────────────────────
+
 
 @pytest.fixture
 def auth_env_must_change(tmp_path, monkeypatch):
@@ -308,13 +310,12 @@ def test_admin_reset_password_allows_reuse_unconstrained(auth_env):
     )
     uid = r.json()["id"]
     # Reset to the same value the user already has — allowed for admin reset.
-    r2 = c.put(
-        f"/api/auth/users/{uid}/password", json={"new_password": "Carolpass1"}
-    )
+    r2 = c.put(f"/api/auth/users/{uid}/password", json={"new_password": "Carolpass1"})
     assert r2.status_code == 200, r2.text
 
 
 # ── admin user management ─────────────────────────────────────────────────────
+
 
 def test_admin_user_crud(auth_env):
     c = _login("admin", "Adminpass1")
@@ -336,17 +337,24 @@ def test_admin_user_crud(auth_env):
     # Disable
     assert c.put(f"/api/auth/users/{uid}/enabled", json={"enabled": False}).status_code == 200
     # Disabled user cannot log in.
-    assert _client().post(
-        "/api/auth/login", json={"username": "viewer1", "password": "Viewerpass1"}
-    ).status_code == 401
+    assert (
+        _client()
+        .post("/api/auth/login", json={"username": "viewer1", "password": "Viewerpass1"})
+        .status_code
+        == 401
+    )
     # Re-enable + admin reset password
     c.put(f"/api/auth/users/{uid}/enabled", json={"enabled": True})
-    assert c.put(
-        f"/api/auth/users/{uid}/password", json={"new_password": "Resetpass1"}
-    ).status_code == 200
-    assert _client().post(
-        "/api/auth/login", json={"username": "viewer1", "password": "Resetpass1"}
-    ).status_code == 200
+    assert (
+        c.put(f"/api/auth/users/{uid}/password", json={"new_password": "Resetpass1"}).status_code
+        == 200
+    )
+    assert (
+        _client()
+        .post("/api/auth/login", json={"username": "viewer1", "password": "Resetpass1"})
+        .status_code
+        == 200
+    )
     # Delete
     assert c.delete(f"/api/auth/users/{uid}").status_code == 200
     assert {u["username"] for u in c.get("/api/auth/users").json()} == {"admin"}
@@ -382,6 +390,7 @@ def test_create_user_bad_role(auth_env):
 
 # ── last-admin / self guards ──────────────────────────────────────────────────
 
+
 def test_cannot_demote_last_admin(auth_env):
     c = _login("admin", "Adminpass1")
     me_id = c.get("/api/auth/me").json()["user"]["id"]
@@ -408,17 +417,14 @@ def test_cannot_demote_last_admin_via_other(auth_env):
     c2 = _login("admin2", "Admin2pass1")
     admin2_id = c2.get("/api/auth/me").json()["user"]["id"]
     # admin2 demotes admin1 → allowed (admin2 remains an admin).
-    assert c2.put(
-        f"/api/auth/users/{admin1_id}/role", json={"role": "normal"}
-    ).status_code == 200
+    assert c2.put(f"/api/auth/users/{admin1_id}/role", json={"role": "normal"}).status_code == 200
     # admin2 is now the last admin; another admin cannot exist to demote them,
     # and self-demotion is blocked.
-    assert c2.put(
-        f"/api/auth/users/{admin2_id}/role", json={"role": "normal"}
-    ).status_code == 400
+    assert c2.put(f"/api/auth/users/{admin2_id}/role", json={"role": "normal"}).status_code == 400
 
 
 # ── role gate (normal = Viewer-only) ──────────────────────────────────────────
+
 
 def test_normal_role_blocked_from_admin_endpoints(auth_env):
     c = _login("admin", "Adminpass1")
@@ -454,6 +460,7 @@ def test_admin_role_reaches_everything(auth_env):
 
 # ── Throttle key derivation (prompts-045 audit, MAJOR #2) ──────────────────────
 
+
 def test_client_ip_uses_socket_peer_not_forwarded_header():
     """X-Forwarded-For is attacker-controlled and must NOT influence the key."""
     from backend.api.routes_auth import _client_ip
@@ -479,6 +486,7 @@ def test_client_ip_handles_missing_client():
 
 
 # ── Defence-in-depth admin gate (prompts-045 audit MINOR) ─────────────────────
+
 
 @pytest.mark.asyncio
 async def test_require_admin_when_enabled_noop_when_auth_disabled(monkeypatch):

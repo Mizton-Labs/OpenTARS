@@ -9,6 +9,7 @@ engine no longer maintains a private namespace divergent from the rest of the
 system; raw IP / domain / hash synonyms collapse into ``indicator`` with
 ``indicator_type`` auto-emitted based on which synonym matched.
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,7 +17,7 @@ from fnmatch import fnmatchcase
 from functools import lru_cache
 from typing import Any
 
-from backend.db.manager import DATA_DIR, mark_normalized, query_entries
+from backend.db.manager import mark_normalized, query_entries
 from backend.normalizer.config import load_normalizer_config
 from backend.normalizer.consolidated import get_active_consolidated
 from backend.normalizer.db import insert_normalized
@@ -32,97 +33,263 @@ logger = logging.getLogger(__name__)
 # Priority: first match wins within a group.
 
 _SYNONYM_GROUPS: list[tuple[str, set[str]]] = [
-    ("indicator", {
+    (
         "indicator",
-        # ip
-        "ip", "ip_address", "ip_addr", "ipv4", "ipv6",
-        "src_ip", "dst_ip", "source_ip", "destination_ip",
-        # domain
-        "domain", "hostname", "fqdn", "host", "domain_name", "site",
-        # hash
-        "hash", "md5", "sha1", "sha256", "sha512", "file_hash", "checksum",
-        # url
-        "url",
-    }),
-    ("indicator_type", {
-        "indicator_type", "ioc_type", "type_of_indicator",
-    }),
-    ("threat_type", {
-        "threat_type", "category", "kind", "type",
-    }),
-    ("severity", {
-        "severity", "risk", "priority", "threat_level", "criticality",
-    }),
-    ("confidence", {
-        "confidence", "confidence_score", "reliability",
-    }),
-    ("source", {
-        "source", "source_name", "feed", "feed_name", "provider",
-    }),
-    ("source_url", {
-        "source_url", "reference", "url_reference", "ref_url",
-    }),
-    ("title", {
-        "title", "name", "headline",
-    }),
-    ("description", {
-        "description", "summary", "desc",
-    }),
-    ("tags", {
-        "tags", "labels", "categories",
-    }),
-    ("tlp", {
-        "tlp", "traffic_light_protocol",
-    }),
-    ("published_at", {
-        "published_at", "published", "publisheddate", "pub_date",
-        "release_date", "date", "datetime", "event_time", "time",
-        "created_at",
-    }),
-    ("first_seen", {
-        "first_seen", "firstseen",
-    }),
-    ("last_seen", {
-        "last_seen", "lastseen", "updated", "updated_at",
-        "last_modified", "modified",
-    }),
-    ("cve_id", {
-        "cve_id", "cve", "vulnerability", "vuln_id", "cve_number",
-    }),
-    ("cvss_score", {
-        "cvss_score", "cvss", "risk_score", "threat_score", "score",
-    }),
-    ("cvss_vector", {
-        "cvss_vector", "vector_string",
-    }),
-    ("affected_product", {
-        "affected_product", "product", "product_name",
-    }),
-    ("affected_vendor", {
-        "affected_vendor", "vendor", "vendor_name",
-    }),
-    ("patch_available", {
-        "patch_available", "has_patch", "fixed",
-    }),
-    ("mitre_attack_id", {
-        "mitre_attack_id", "attack_id", "technique_id",
-    }),
-    ("malware_family", {
-        "malware_family", "malware", "family",
-    }),
-    ("campaign", {
-        "campaign", "campaign_name",
-    }),
-    ("actor", {
-        "actor", "threat_actor", "attacker", "group", "apt", "adversary",
-        "attribution",
-    }),
-    ("country", {
-        "country", "country_code", "geo_country", "location", "region",
-    }),
-    ("port", {
-        "port", "dst_port", "src_port", "destination_port", "source_port",
-    }),
+        {
+            "indicator",
+            # ip
+            "ip",
+            "ip_address",
+            "ip_addr",
+            "ipv4",
+            "ipv6",
+            "src_ip",
+            "dst_ip",
+            "source_ip",
+            "destination_ip",
+            # domain
+            "domain",
+            "hostname",
+            "fqdn",
+            "host",
+            "domain_name",
+            "site",
+            # hash
+            "hash",
+            "md5",
+            "sha1",
+            "sha256",
+            "sha512",
+            "file_hash",
+            "checksum",
+            # url
+            "url",
+        },
+    ),
+    (
+        "indicator_type",
+        {
+            "indicator_type",
+            "ioc_type",
+            "type_of_indicator",
+        },
+    ),
+    (
+        "threat_type",
+        {
+            "threat_type",
+            "category",
+            "kind",
+            "type",
+        },
+    ),
+    (
+        "severity",
+        {
+            "severity",
+            "risk",
+            "priority",
+            "threat_level",
+            "criticality",
+        },
+    ),
+    (
+        "confidence",
+        {
+            "confidence",
+            "confidence_score",
+            "reliability",
+        },
+    ),
+    (
+        "source",
+        {
+            "source",
+            "source_name",
+            "feed",
+            "feed_name",
+            "provider",
+        },
+    ),
+    (
+        "source_url",
+        {
+            "source_url",
+            "reference",
+            "url_reference",
+            "ref_url",
+        },
+    ),
+    (
+        "title",
+        {
+            "title",
+            "name",
+            "headline",
+        },
+    ),
+    (
+        "description",
+        {
+            "description",
+            "summary",
+            "desc",
+        },
+    ),
+    (
+        "tags",
+        {
+            "tags",
+            "labels",
+            "categories",
+        },
+    ),
+    (
+        "tlp",
+        {
+            "tlp",
+            "traffic_light_protocol",
+        },
+    ),
+    (
+        "published_at",
+        {
+            "published_at",
+            "published",
+            "publisheddate",
+            "pub_date",
+            "release_date",
+            "date",
+            "datetime",
+            "event_time",
+            "time",
+            "created_at",
+        },
+    ),
+    (
+        "first_seen",
+        {
+            "first_seen",
+            "firstseen",
+        },
+    ),
+    (
+        "last_seen",
+        {
+            "last_seen",
+            "lastseen",
+            "updated",
+            "updated_at",
+            "last_modified",
+            "modified",
+        },
+    ),
+    (
+        "cve_id",
+        {
+            "cve_id",
+            "cve",
+            "vulnerability",
+            "vuln_id",
+            "cve_number",
+        },
+    ),
+    (
+        "cvss_score",
+        {
+            "cvss_score",
+            "cvss",
+            "risk_score",
+            "threat_score",
+            "score",
+        },
+    ),
+    (
+        "cvss_vector",
+        {
+            "cvss_vector",
+            "vector_string",
+        },
+    ),
+    (
+        "affected_product",
+        {
+            "affected_product",
+            "product",
+            "product_name",
+        },
+    ),
+    (
+        "affected_vendor",
+        {
+            "affected_vendor",
+            "vendor",
+            "vendor_name",
+        },
+    ),
+    (
+        "patch_available",
+        {
+            "patch_available",
+            "has_patch",
+            "fixed",
+        },
+    ),
+    (
+        "mitre_attack_id",
+        {
+            "mitre_attack_id",
+            "attack_id",
+            "technique_id",
+        },
+    ),
+    (
+        "malware_family",
+        {
+            "malware_family",
+            "malware",
+            "family",
+        },
+    ),
+    (
+        "campaign",
+        {
+            "campaign",
+            "campaign_name",
+        },
+    ),
+    (
+        "actor",
+        {
+            "actor",
+            "threat_actor",
+            "attacker",
+            "group",
+            "apt",
+            "adversary",
+            "attribution",
+        },
+    ),
+    (
+        "country",
+        {
+            "country",
+            "country_code",
+            "geo_country",
+            "location",
+            "region",
+        },
+    ),
+    (
+        "port",
+        {
+            "port",
+            "dst_port",
+            "src_port",
+            "destination_port",
+            "source_port",
+        },
+    ),
 ]
 
 
@@ -131,17 +298,28 @@ _SYNONYM_GROUPS: list[tuple[str, set[str]]] = [
 # canonical, the engine ALSO emits the indicator_type. Raw `indicator` itself
 # is intentionally absent — its type cannot be inferred from the field name.
 _INDICATOR_TYPE_FROM_SYNONYM: dict[str, str] = {
-    "ip": "ip", "ip_address": "ip", "ip_addr": "ip",
-    "ipv4": "ip", "ipv6": "ip",
-    "src_ip": "ip", "dst_ip": "ip",
-    "source_ip": "ip", "destination_ip": "ip",
-    "domain": "domain", "hostname": "domain", "fqdn": "domain",
-    "host": "domain", "domain_name": "domain", "site": "domain",
+    "ip": "ip",
+    "ip_address": "ip",
+    "ip_addr": "ip",
+    "ipv4": "ip",
+    "ipv6": "ip",
+    "src_ip": "ip",
+    "dst_ip": "ip",
+    "source_ip": "ip",
+    "destination_ip": "ip",
+    "domain": "domain",
+    "hostname": "domain",
+    "fqdn": "domain",
+    "host": "domain",
+    "domain_name": "domain",
+    "site": "domain",
     "md5": "hash_md5",
     "sha1": "hash_sha1",
     "sha256": "hash_sha256",
     "sha512": "hash_sha512",
-    "hash": "hash", "file_hash": "hash", "checksum": "hash",
+    "hash": "hash",
+    "file_hash": "hash",
+    "checksum": "hash",
     "url": "url",
 }
 
@@ -304,6 +482,7 @@ def map_entry_auto(raw: dict[str, Any], source_name: str) -> dict[str, Any]:
             extra[key] = value
 
     import json
+
     if extra:
         result["extra_norm"] = json.dumps(extra)
 
@@ -332,6 +511,7 @@ def map_entry_manual(
             extra[key] = value
 
     import json
+
     if extra:
         result["extra_norm"] = json.dumps(extra)
 
@@ -400,15 +580,12 @@ async def run_normalizer(trigger: str = "manual") -> dict[str, Any]:
                     run_proposal_name = prop.get("proposal_name")
         else:
             warning = (
-                "smart mode is selected but no consolidated mapping is active; "
-                "falling back to auto"
+                "smart mode is selected but no consolidated mapping is active; falling back to auto"
             )
             logger.warning(warning)
 
     # Collect un-normalized entries from all source DBs
-    raw_entries = await query_entries(
-        source_name=None, limit=10000, filters={"normalized": 0}
-    )
+    raw_entries = await query_entries(source_name=None, limit=10000, filters={"normalized": 0})
 
     processed = inserted = errors = 0
     by_source: dict[str, list[int]] = {}
@@ -424,7 +601,9 @@ async def run_normalizer(trigger: str = "manual") -> dict[str, Any]:
             row = await get_active_version(src)
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(
-                "mapping_versions lookup failed for source %s: %s", src, exc,
+                "mapping_versions lookup failed for source %s: %s",
+                src,
+                exc,
             )
             row = None
         if row is None:
@@ -446,9 +625,7 @@ async def run_normalizer(trigger: str = "manual") -> dict[str, Any]:
                     mapping_version_id = active_id
                 elif source_name in manual_mappings:
                     # Legacy path: yaml-only config without a mapping_version row.
-                    norm = map_entry_manual(
-                        entry, source_name, manual_mappings[source_name]
-                    )
+                    norm = map_entry_manual(entry, source_name, manual_mappings[source_name])
                 else:
                     norm = map_entry_auto(entry, source_name)
             elif mode == "smart":
@@ -483,7 +660,10 @@ async def run_normalizer(trigger: str = "manual") -> dict[str, Any]:
 
     logger.info(
         "Normalizer run complete: mode=%s processed=%d inserted=%d errors=%d",
-        mode, processed, inserted, errors,
+        mode,
+        processed,
+        inserted,
+        errors,
     )
     # prompts-039: record the run (best-effort; never break a run on a
     # history-write failure).
@@ -507,6 +687,7 @@ async def run_normalizer(trigger: str = "manual") -> dict[str, Any]:
     if inserted:
         try:
             from backend.watchers.engine import run_watchers
+
             await run_watchers("normalize", {"normalized"})
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("watcher evaluation after normalize failed: %s", exc)

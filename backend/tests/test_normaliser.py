@@ -1,6 +1,8 @@
 """Tests for the normaliser module."""
-import pytest
+
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -11,14 +13,15 @@ def _disable_ingest_all_fields(monkeypatch):
         lambda: False,
     )
 
+
 MOCK_FIELDS = {
     "ingest_all_fields": False,
     "core_fields": [
         {"name": "indicator", "enabled": True},
-        {"name": "severity",  "enabled": True},
-        {"name": "source",    "enabled": True},
+        {"name": "severity", "enabled": True},
+        {"name": "source", "enabled": True},
         {"name": "ingest_mode", "enabled": True},
-        {"name": "raw",       "enabled": False},  # disabled — should be excluded
+        {"name": "raw", "enabled": False},  # disabled — should be excluded
     ],
     "custom_fields": [
         {"name": "my_custom"},
@@ -29,6 +32,7 @@ MOCK_FIELDS = {
 @patch("backend.ingestion.normaliser.load_fields", return_value=MOCK_FIELDS)
 def test_keeps_enabled_core_fields(mock_fields):
     from backend.ingestion.normaliser import normalise
+
     raw = {"indicator": "1.2.3.4", "severity": "high", "unknown_field": "drop_me"}
     result = normalise(raw, ingest_mode="push", source_name="test_src")
 
@@ -40,6 +44,7 @@ def test_keeps_enabled_core_fields(mock_fields):
 @patch("backend.ingestion.normaliser.load_fields", return_value=MOCK_FIELDS)
 def test_discards_disabled_core_fields(mock_fields):
     from backend.ingestion.normaliser import normalise
+
     raw = {"indicator": "evil.com", "raw": "should_be_discarded"}
     result = normalise(raw, ingest_mode="push", source_name="test_src")
 
@@ -50,6 +55,7 @@ def test_discards_disabled_core_fields(mock_fields):
 @patch("backend.ingestion.normaliser.load_fields", return_value=MOCK_FIELDS)
 def test_keeps_custom_fields(mock_fields):
     from backend.ingestion.normaliser import normalise
+
     raw = {"indicator": "1.2.3.4", "my_custom": "custom_value"}
     result = normalise(raw, ingest_mode="push", source_name="test_src")
 
@@ -59,6 +65,7 @@ def test_keeps_custom_fields(mock_fields):
 @patch("backend.ingestion.normaliser.load_fields", return_value=MOCK_FIELDS)
 def test_always_sets_ingest_mode_and_source(mock_fields):
     from backend.ingestion.normaliser import normalise
+
     result = normalise({}, ingest_mode="rss_pull", source_name="my_feed")
 
     assert result["ingest_mode"] == "rss_pull"
@@ -68,6 +75,7 @@ def test_always_sets_ingest_mode_and_source(mock_fields):
 @patch("backend.ingestion.normaliser.load_fields", return_value=MOCK_FIELDS)
 def test_empty_input(mock_fields):
     from backend.ingestion.normaliser import normalise
+
     result = normalise({}, ingest_mode="push", source_name="src")
     assert result["ingest_mode"] == "push"
     assert result["source"] == "src"
@@ -77,6 +85,7 @@ def test_empty_input(mock_fields):
 def test_source_fields_override_disables_core_field(mock_fields):
     """Per-source field config can disable a globally-enabled core field."""
     from backend.ingestion.normaliser import normalise
+
     source_fields = {
         "core_fields": [{"name": "severity", "enabled": False}],
         "custom_fields": [],
@@ -91,11 +100,14 @@ def test_source_fields_override_disables_core_field(mock_fields):
 def test_source_fields_adds_custom_field(mock_fields):
     """Per-source custom fields are added on top of global custom fields."""
     from backend.ingestion.normaliser import normalise
+
     source_fields = {
         "core_fields": [],
         "custom_fields": [{"name": "source_specific_field"}],
     }
     raw = {"indicator": "1.2.3.4", "my_custom": "val1", "source_specific_field": "val2"}
-    result = normalise(raw, ingest_mode="remote_json", source_name="src", source_fields=source_fields)
+    result = normalise(
+        raw, ingest_mode="remote_json", source_name="src", source_fields=source_fields
+    )
     assert result["my_custom"] == "val1"
     assert result["source_specific_field"] == "val2"

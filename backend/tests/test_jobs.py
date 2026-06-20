@@ -1,4 +1,5 @@
 """Tests for backend.ingestion.jobs (JobStore)."""
+
 from __future__ import annotations
 
 import time

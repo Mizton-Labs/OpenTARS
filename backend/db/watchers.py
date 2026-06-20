@@ -22,6 +22,7 @@ on every insert batch.
 The connection pattern mirrors the rest of the backend: short-lived
 ``async with aiosqlite.connect(...)`` per operation, no pool.
 """
+
 from __future__ import annotations
 
 import json
@@ -96,6 +97,7 @@ def detect_webhook_format(url: str | None) -> str:
         if needle in host:
             return fmt
     return "generic"
+
 
 VALID_DATASETS: frozenset[str] = frozenset({"all", "raw", "normalized"})
 VALID_SEVERITIES: frozenset[str] = frozenset({"low", "medium", "high", "critical"})
@@ -254,9 +256,7 @@ async def init_watchers_db() -> None:
                 (_WATCHERS_SCHEMA_VERSION,),
             )
         elif current != _WATCHERS_SCHEMA_VERSION:
-            await db.execute(
-                "UPDATE schema_version SET version = ?", (_WATCHERS_SCHEMA_VERSION,)
-            )
+            await db.execute("UPDATE schema_version SET version = ?", (_WATCHERS_SCHEMA_VERSION,))
         await db.commit()
 
 
@@ -284,7 +284,8 @@ async def _migrate(db: aiosqlite.Connection, from_version: int) -> None:
         # DBs we add any that are missing (ALTER ADD COLUMN is idempotent-safe
         # only if guarded, so we check the existing column set first).
         await _add_columns_if_missing(
-            db, "watchers",
+            db,
+            "watchers",
             {
                 "publish_target": "TEXT NOT NULL DEFAULT 'local'",
                 "webhook_url": "TEXT",
@@ -293,7 +294,8 @@ async def _migrate(db: aiosqlite.Connection, from_version: int) -> None:
             },
         )
         await _add_columns_if_missing(
-            db, "watcher_events",
+            db,
+            "watcher_events",
             {
                 "delivery_status": "TEXT",
                 "delivery_error": "TEXT",
@@ -303,11 +305,13 @@ async def _migrate(db: aiosqlite.Connection, from_version: int) -> None:
     if from_version < 4:
         # Webhook formats + rich delivery detail (review_01).
         await _add_columns_if_missing(
-            db, "watchers",
+            db,
+            "watchers",
             {"webhook_format": "TEXT NOT NULL DEFAULT 'generic'"},
         )
         await _add_columns_if_missing(
-            db, "watcher_events",
+            db,
+            "watcher_events",
             {"delivery_detail": "TEXT"},
         )
         # Best-effort backfill: existing webhook watchers stored before formats
@@ -323,14 +327,13 @@ async def _migrate(db: aiosqlite.Connection, from_version: int) -> None:
         for wid, url in rows:
             fmt = detect_webhook_format(url)
             if fmt != "generic":
-                await db.execute(
-                    "UPDATE watchers SET webhook_format = ? WHERE id = ?", (fmt, wid)
-                )
+                await db.execute("UPDATE watchers SET webhook_format = ? WHERE id = ?", (fmt, wid))
     if from_version < 5:
         # Periodic feed retention (issue_local_008): add the cleanup interval
         # column. Existing watchers default to 60s.
         await _add_columns_if_missing(
-            db, "watchers",
+            db,
+            "watchers",
             {"cleanup_interval_sec": "INTEGER NOT NULL DEFAULT 60"},
         )
 
@@ -411,12 +414,14 @@ def normalize_conditions(conditions: Any) -> list[dict[str, Any]]:
                 raise ValueError(
                     f"condition value for '{match_type}' must be numeric, got {value!r}"
                 ) from None
-        out.append({
-            "field": field,
-            "value": value,
-            "match_type": match_type,
-            "case_sensitive": case_sensitive,
-        })
+        out.append(
+            {
+                "field": field,
+                "value": value,
+                "match_type": match_type,
+                "case_sensitive": case_sensitive,
+            }
+        )
     return out
 
 
@@ -472,9 +477,7 @@ def validate_definition(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("max_feed_events must be >= 1")
 
     try:
-        cleanup_interval_sec = int(
-            data.get("cleanup_interval_sec", _CLEANUP_INTERVAL_DEFAULT)
-        )
+        cleanup_interval_sec = int(data.get("cleanup_interval_sec", _CLEANUP_INTERVAL_DEFAULT))
     except (TypeError, ValueError):
         raise ValueError("cleanup_interval_sec must be an integer")
     if not (_CLEANUP_INTERVAL_MIN <= cleanup_interval_sec <= _CLEANUP_INTERVAL_MAX):
@@ -566,16 +569,25 @@ async def create_watcher(data: dict[str, Any]) -> dict[str, Any]:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                wid, fields["name"], fields["severity"], fields["dataset"],
+                wid,
+                fields["name"],
+                fields["severity"],
+                fields["dataset"],
                 json.dumps(fields["feeds"], ensure_ascii=False),
                 json.dumps(fields["conditions"], ensure_ascii=False),
-                fields["mode"], fields["interval_sec"], fields["format"],
-                fields["max_feed_events"], fields["cleanup_interval_sec"],
+                fields["mode"],
+                fields["interval_sec"],
+                fields["format"],
+                fields["max_feed_events"],
+                fields["cleanup_interval_sec"],
                 int(fields["enabled"]),
-                fields["publish_target"], fields["webhook_url"] or None,
+                fields["publish_target"],
+                fields["webhook_url"] or None,
                 fields["webhook_format"],
-                fields["auth_header"] or None, fields["auth_value"] or None,
-                ts, ts,
+                fields["auth_header"] or None,
+                fields["auth_value"] or None,
+                ts,
+                ts,
             ),
         )
         await db.commit()
@@ -601,16 +613,24 @@ async def update_watcher(watcher_id: str, data: dict[str, Any]) -> dict[str, Any
             WHERE id = ?
             """,
             (
-                fields["name"], fields["severity"], fields["dataset"],
+                fields["name"],
+                fields["severity"],
+                fields["dataset"],
                 json.dumps(fields["feeds"], ensure_ascii=False),
                 json.dumps(fields["conditions"], ensure_ascii=False),
-                fields["mode"], fields["interval_sec"], fields["format"],
-                fields["max_feed_events"], fields["cleanup_interval_sec"],
+                fields["mode"],
+                fields["interval_sec"],
+                fields["format"],
+                fields["max_feed_events"],
+                fields["cleanup_interval_sec"],
                 int(fields["enabled"]),
-                fields["publish_target"], fields["webhook_url"] or None,
+                fields["publish_target"],
+                fields["webhook_url"] or None,
                 fields["webhook_format"],
-                fields["auth_header"] or None, fields["auth_value"] or None,
-                ts, watcher_id,
+                fields["auth_header"] or None,
+                fields["auth_value"] or None,
+                ts,
+                watcher_id,
             ),
         )
         await db.commit()
@@ -657,9 +677,7 @@ async def get_watcher(watcher_id: str) -> dict[str, Any] | None:
         cur = await db.execute(
             "SELECT *, "
             "(SELECT MAX(triggered_at) FROM watcher_events e WHERE e.watcher_id = watchers.id) "
-            "AS last_triggered_at, "
-            + _DELIVERY_AGG_SQL +
-            "FROM watchers WHERE id = ?",
+            "AS last_triggered_at, " + _DELIVERY_AGG_SQL + "FROM watchers WHERE id = ?",
             (watcher_id,),
         )
         row = await cur.fetchone()
@@ -676,9 +694,7 @@ async def list_watchers() -> list[dict[str, Any]]:
         async for row in await db.execute(
             "SELECT *, "
             "(SELECT MAX(triggered_at) FROM watcher_events e WHERE e.watcher_id = watchers.id) "
-            "AS last_triggered_at, "
-            + _DELIVERY_AGG_SQL +
-            "FROM watchers ORDER BY created_at DESC"
+            "AS last_triggered_at, " + _DELIVERY_AGG_SQL + "FROM watchers ORDER BY created_at DESC"
         ):
             rows.append(_row_to_watcher(row))
     return rows
@@ -765,9 +781,7 @@ async def get_high_water_map(watcher_id: str, dataset: str) -> dict[str, int]:
     return {str(r[0]): int(r[1]) for r in rows}
 
 
-async def update_high_water_map(
-    watcher_id: str, dataset: str, marks: dict[str, int]
-) -> None:
+async def update_high_water_map(watcher_id: str, dataset: str, marks: dict[str, int]) -> None:
     """Advance per-source high-water marks (never decreases). ``marks`` maps
     ``source_name -> max_id`` observed this pass."""
     if not marks:
@@ -811,9 +825,7 @@ async def update_high_water(
         return
     params.append(watcher_id)
     async with aiosqlite.connect(_WATCHERS_DB_PATH) as db:
-        await db.execute(
-            f"UPDATE watchers SET {', '.join(sets)} WHERE id = ?", params
-        )
+        await db.execute(f"UPDATE watchers SET {', '.join(sets)} WHERE id = ?", params)
         await db.commit()
 
 
@@ -835,9 +847,7 @@ def _decode_event_row(row: aiosqlite.Row) -> dict[str, Any]:  # type: ignore[nam
     return d
 
 
-async def list_events(
-    watcher_id: str, limit: int = 100, offset: int = 0
-) -> list[dict[str, Any]]:
+async def list_events(watcher_id: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     """Return a watcher's triggered events, newest first (parsed event_json)."""
     await init_watchers_db()
     if limit < 1:
@@ -846,8 +856,7 @@ async def list_events(
         db.row_factory = aiosqlite.Row
         rows: list[dict[str, Any]] = []
         async for row in await db.execute(
-            "SELECT * FROM watcher_events WHERE watcher_id = ? "
-            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM watcher_events WHERE watcher_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
             (watcher_id, limit, offset),
         ):
             rows.append(_decode_event_row(row))
@@ -893,7 +902,9 @@ async def cleanup_watcher_events(watcher_id: str, max_feed_events: int) -> int:
     if deleted:
         logger.info(
             "watcher %s cleanup trimmed %d event(s) to max_feed_events=%d",
-            watcher_id, deleted, keep,
+            watcher_id,
+            deleted,
+            keep,
         )
     return deleted
 
@@ -906,9 +917,7 @@ async def run_watcher_cleanup(watcher_id: str) -> int:
     """
     await init_watchers_db()
     async with aiosqlite.connect(_WATCHERS_DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT max_feed_events FROM watchers WHERE id = ?", (watcher_id,)
-        )
+        cur = await db.execute("SELECT max_feed_events FROM watchers WHERE id = ?", (watcher_id,))
         row = await cur.fetchone()
         await cur.close()
     if row is None:
@@ -919,9 +928,7 @@ async def run_watcher_cleanup(watcher_id: str) -> int:
 # ── Delivery (issue_local_007) ──────────────────────────────────────────────
 
 
-async def list_pending_deliveries(
-    watcher_id: str, limit: int = 1000
-) -> list[dict[str, Any]]:
+async def list_pending_deliveries(watcher_id: str, limit: int = 1000) -> list[dict[str, Any]]:
     """Return events for a watcher that have not yet been delivered successfully.
 
     "Pending" means ``delivery_status`` is NULL (never attempted) or ``'error'``
@@ -987,8 +994,7 @@ def list_scheduled_watchers_sync() -> list[dict[str, Any]]:
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
-                "SELECT id, interval_sec FROM watchers "
-                "WHERE enabled = 1 AND mode = 'scheduled'"
+                "SELECT id, interval_sec FROM watchers WHERE enabled = 1 AND mode = 'scheduled'"
             ).fetchall()
         finally:
             conn.close()
@@ -1012,14 +1018,9 @@ def list_watchers_cleanup_sync() -> list[dict[str, Any]]:
         conn = sqlite3.connect(_WATCHERS_DB_PATH)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute(
-                "SELECT id, cleanup_interval_sec FROM watchers"
-            ).fetchall()
+            rows = conn.execute("SELECT id, cleanup_interval_sec FROM watchers").fetchall()
         finally:
             conn.close()
     except sqlite3.OperationalError:
         return []
-    return [
-        {"id": r["id"], "cleanup_interval_sec": int(r["cleanup_interval_sec"])}
-        for r in rows
-    ]
+    return [{"id": r["id"], "cleanup_interval_sec": int(r["cleanup_interval_sec"])} for r in rows]

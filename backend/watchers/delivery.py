@@ -31,6 +31,7 @@ be a well-formed http(s) URL — internal/LAN hosts are intentionally allowed so
 operators can push to private listeners. Do not expose watcher configuration to
 non-admin roles.
 """
+
 from __future__ import annotations
 
 import logging
@@ -62,9 +63,7 @@ _TEAMS_MAX_FACTS = 25
 # Internal/serialization keys that are not real data fields and are skipped when
 # rendering all event fields into a chat message (mirrors the engine's hidden
 # match keys so the chat body shows the same fields a user can match on).
-_INTERNAL_EVENT_KEYS = frozenset(
-    {"dedup_key", "normalized", "extra", "extra_norm", "raw"}
-)
+_INTERNAL_EVENT_KEYS = frozenset({"dedup_key", "normalized", "extra", "extra_norm", "raw"})
 
 
 def _event_lines(event: dict[str, Any]) -> list[tuple[str, str]]:
@@ -105,13 +104,7 @@ def _summarize(watcher: dict[str, Any], event_row: dict[str, Any]) -> str:
     """Build a one-message human summary for chat-style webhook formats."""
     event = event_row.get("event") or {}
     name = watcher.get("name") or watcher.get("id") or "watcher"
-    title = (
-        event.get("title")
-        or event.get("name")
-        or event.get("id")
-        or event.get("cve")
-        or ""
-    )
+    title = event.get("title") or event.get("name") or event.get("id") or event.get("cve") or ""
     parts = [f"[{name}]"]
     if title:
         parts.append(str(title))
@@ -146,10 +139,12 @@ def _build_payload(watcher: dict[str, Any], event_row: dict[str, Any]) -> dict[s
         block = _event_block(event, _DISCORD_EMBED_DESC_MAX - 8)
         payload: dict[str, Any] = {"content": summary[:_DISCORD_CONTENT_MAX]}
         if block:
-            payload["embeds"] = [{
-                "title": (watcher.get("name") or watcher.get("id") or "event")[:256],
-                "description": f"```\n{block}\n```"[:_DISCORD_EMBED_DESC_MAX],
-            }]
+            payload["embeds"] = [
+                {
+                    "title": (watcher.get("name") or watcher.get("id") or "event")[:256],
+                    "description": f"```\n{block}\n```"[:_DISCORD_EMBED_DESC_MAX],
+                }
+            ]
         return payload
     if fmt == "slack":
         # Slack and Mattermost both accept {"text": ...} on incoming webhooks.
@@ -162,10 +157,12 @@ def _build_payload(watcher: dict[str, Any], event_row: dict[str, Any]) -> dict[s
         pairs = _event_lines(event)
         facts = [{"name": k, "value": v} for k, v in pairs[:_TEAMS_MAX_FACTS]]
         if len(pairs) > _TEAMS_MAX_FACTS:
-            facts.append({
-                "name": "…",
-                "value": f"+{len(pairs) - _TEAMS_MAX_FACTS} more field(s)",
-            })
+            facts.append(
+                {
+                    "name": "…",
+                    "value": f"+{len(pairs) - _TEAMS_MAX_FACTS} more field(s)",
+                }
+            )
         card: dict[str, Any] = {
             "@type": "MessageCard",
             "@context": "https://schema.org/extensions",
@@ -232,7 +229,10 @@ async def deliver_pending(watcher: dict[str, Any]) -> dict[str, int]:
                 detail = _error_detail(exc, url)
                 logger.warning(
                     "watcher %s: delivery failed for event %s -> %s: %s",
-                    wid, event_id, url, msg,
+                    wid,
+                    event_id,
+                    url,
+                    msg,
                 )
                 await store.update_delivery_status(event_id, "error", msg, detail)
                 failed += 1
@@ -242,7 +242,11 @@ async def deliver_pending(watcher: dict[str, Any]) -> dict[str, int]:
     if ok or failed:
         logger.info(
             "watcher %s delivery to %s (%s): %d ok, %d failed",
-            wid, url, target, ok, failed,
+            wid,
+            url,
+            target,
+            ok,
+            failed,
         )
     return {"delivered": ok, "failed": failed}
 
@@ -288,4 +292,3 @@ def _error_detail(exc: Exception, url: str) -> dict[str, Any]:
         if body:
             detail["body"] = body[:_DETAIL_BODY_MAX]
     return detail
-

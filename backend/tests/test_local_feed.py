@@ -1,17 +1,20 @@
 """Tests for local feed ingest (JSON, NDJSON, CSV, XML)."""
-import json
-import pytest
 
+import json
+
+import pytest
 
 # ── Legacy JSON behaviour still works ────────────────────────────────────────
 
+
 def test_valid_single_object():
-    from backend.ingestion.local_feed import ingest_local_feed
+    pass
     # Just ensure parse_file is called and doesn't blow up; we mock insert below
 
 
 def test_parse_valid_json():
     from backend.ingestion.parsers import parse_file
+
     data = json.dumps({"indicator": "1.2.3.4"}).encode()
     fmt, rows = parse_file(data)
     assert fmt == "json"
@@ -20,6 +23,7 @@ def test_parse_valid_json():
 
 def test_parse_valid_array():
     from backend.ingestion.parsers import parse_file
+
     data = json.dumps([{"indicator": "a"}, {"indicator": "b"}]).encode()
     fmt, rows = parse_file(data)
     assert fmt == "json"
@@ -28,6 +32,7 @@ def test_parse_valid_array():
 
 def test_parse_invalid_utf8():
     from backend.ingestion.parsers import parse_file
+
     with pytest.raises(ValueError, match="UTF-8"):
         parse_file(b"\xff\xfe invalid bytes")
 
@@ -35,19 +40,22 @@ def test_parse_invalid_utf8():
 def test_parse_invalid_content_treated_as_csv_or_error():
     """A totally unparseable blob should fail gracefully during detection."""
     from backend.ingestion.parsers import parse_file
+
     # All-garbled non-UTF8
     with pytest.raises(ValueError):
         parse_file(b"\xff\xfe bad bytes here")
 
 
 def test_parse_file_too_large():
-    from backend.ingestion.parsers import parse_file, MAX_FILE_SIZE
+    from backend.ingestion.parsers import MAX_FILE_SIZE, parse_file
+
     with pytest.raises(ValueError, match="maximum allowed size"):
         parse_file(b"x" * (MAX_FILE_SIZE + 1))
 
 
 def test_parse_valid_ndjson():
     from backend.ingestion.parsers import parse_file
+
     data = b'{"cidr":"1.10.16.0/20","rir":"apnic"}\n{"cidr":"2.20.0.0/16","rir":"arin"}\n'
     fmt, rows = parse_file(data)
     assert fmt == "ndjson"
@@ -58,6 +66,7 @@ def test_parse_valid_ndjson():
 
 def test_parse_ndjson_with_blank_lines():
     from backend.ingestion.parsers import parse_file
+
     data = b'\n{"a":"1"}\n\n{"b":"2"}\n   \n'
     fmt, rows = parse_file(data)
     assert fmt == "ndjson"
@@ -66,6 +75,7 @@ def test_parse_ndjson_with_blank_lines():
 
 def test_parse_ndjson_partial_invalid():
     from backend.ingestion.parsers import parse_file
+
     data = b'{"a":"1"}\nnot-json\n{"b":"2"}'
     with pytest.raises(ValueError, match="NDJSON"):
         parse_file(data, fmt="ndjson")
@@ -73,8 +83,10 @@ def test_parse_ndjson_partial_invalid():
 
 # ── CSV ───────────────────────────────────────────────────────────────────────
 
+
 def test_parse_csv():
     from backend.ingestion.parsers import parse_file
+
     data = b"indicator,type\n1.2.3.4,ip\nevil.com,domain\n"
     fmt, rows = parse_file(data)
     assert fmt == "csv"
@@ -84,8 +96,10 @@ def test_parse_csv():
 
 # ── XML ───────────────────────────────────────────────────────────────────────
 
+
 def test_parse_xml():
     from backend.ingestion.parsers import parse_file
+
     data = b"<feed><entry><indicator>1.2.3.4</indicator><severity>high</severity></entry></feed>"
     fmt, rows = parse_file(data)
     assert fmt == "xml"
@@ -95,10 +109,12 @@ def test_parse_xml():
 
 # ── Full ingest (mocked DB) ───────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_local_feed_dedup():
     """Re-uploading the same bytes yields 0 inserted on the second call."""
     from unittest.mock import patch
+
     from backend.ingestion.local_feed import ingest_local_feed
 
     inserted_calls = []
@@ -108,8 +124,10 @@ async def test_local_feed_dedup():
 
     data = json.dumps([{"indicator": "1.2.3.4"}, {"indicator": "5.6.7.8"}]).encode()
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result1 = await ingest_local_feed(data, "test_src")
         inserted_calls.append(result1)
         result2 = await ingest_local_feed(data, "test_src")
@@ -121,10 +139,12 @@ async def test_local_feed_dedup():
 
 # ── prompts-015: NVD-shaped JSON and TSV ingest ────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_ingest_nvd_shaped_json_produces_flat_entries():
     """NVD 2.0 envelope + nested cve object must yield N flattened rows."""
     from unittest.mock import patch
+
     from backend.ingestion.local_feed import ingest_local_feed
 
     captured: list[dict] = []
@@ -133,16 +153,20 @@ async def test_ingest_nvd_shaped_json_produces_flat_entries():
         captured.append(entry)
         return "inserted"
 
-    payload = json.dumps({
-        "vulnerabilities": [
-            {"cve": {"id": "CVE-2024-1", "metrics": {"score": 9.8}}},
-            {"cve": {"id": "CVE-2024-2", "metrics": {"score": 5.0}}},
-            {"cve": {"id": "CVE-2024-3", "metrics": {"score": 1.1}}},
-        ]
-    }).encode()
+    payload = json.dumps(
+        {
+            "vulnerabilities": [
+                {"cve": {"id": "CVE-2024-1", "metrics": {"score": 9.8}}},
+                {"cve": {"id": "CVE-2024-2", "metrics": {"score": 5.0}}},
+                {"cve": {"id": "CVE-2024-3", "metrics": {"score": 1.1}}},
+            ]
+        }
+    ).encode()
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(payload, "nvd_test")
 
     assert result["total_read"] == 3
@@ -156,6 +180,7 @@ async def test_ingest_nvd_shaped_json_produces_flat_entries():
 async def test_ingest_tab_separated_csv():
     """Tab-delimited CSV must split into multiple columns, not one."""
     from unittest.mock import patch
+
     from backend.ingestion.local_feed import ingest_local_feed
 
     captured: list[dict] = []
@@ -166,8 +191,10 @@ async def test_ingest_tab_separated_csv():
 
     data = b"c2_ip\tprotocol\tport\n1.2.3.4\tHTTPS\t443\n5.6.7.8\tHTTP\t80\n"
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(data, "cobalt_test")
 
     assert result["total_read"] == 2
@@ -179,12 +206,14 @@ async def test_ingest_tab_separated_csv():
 
 # ── prompts-016: real-DB e2e — distinct rows must not collapse via dedup ──────
 
+
 @pytest.mark.anyio
 async def test_e2e_tsv_five_distinct_rows_all_inserted(tmp_path, monkeypatch):
     """Real ingestion of a TSV file with 5 distinct rows -> inserted=5."""
     from unittest.mock import patch
-    from backend.ingestion.local_feed import ingest_local_feed
+
     from backend.db import manager as dbm
+    from backend.ingestion.local_feed import ingest_local_feed
 
     monkeypatch.setattr(dbm, "DATA_DIR", tmp_path)
 
@@ -208,18 +237,21 @@ async def test_e2e_tsv_five_distinct_rows_all_inserted(tmp_path, monkeypatch):
 async def test_e2e_nvd_three_cves_all_inserted(tmp_path, monkeypatch):
     """Real ingestion of an NVD-shape JSON with 3 vulns -> inserted=3."""
     from unittest.mock import patch
-    from backend.ingestion.local_feed import ingest_local_feed
+
     from backend.db import manager as dbm
+    from backend.ingestion.local_feed import ingest_local_feed
 
     monkeypatch.setattr(dbm, "DATA_DIR", tmp_path)
 
-    payload = json.dumps({
-        "vulnerabilities": [
-            {"cve": {"id": "CVE-2024-1", "metrics": {"score": 9.8}}},
-            {"cve": {"id": "CVE-2024-2", "metrics": {"score": 5.0}}},
-            {"cve": {"id": "CVE-2024-3", "metrics": {"score": 1.1}}},
-        ]
-    }).encode()
+    payload = json.dumps(
+        {
+            "vulnerabilities": [
+                {"cve": {"id": "CVE-2024-1", "metrics": {"score": 9.8}}},
+                {"cve": {"id": "CVE-2024-2", "metrics": {"score": 5.0}}},
+                {"cve": {"id": "CVE-2024-3", "metrics": {"score": 1.1}}},
+            ]
+        }
+    ).encode()
 
     with patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
         result = await ingest_local_feed(payload, "e2e_nvd")
@@ -233,8 +265,9 @@ async def test_e2e_nvd_three_cves_all_inserted(tmp_path, monkeypatch):
 async def test_e2e_reingest_is_idempotent(tmp_path, monkeypatch):
     """Re-ingesting the exact same file produces 0 new inserts, all duplicates."""
     from unittest.mock import patch
-    from backend.ingestion.local_feed import ingest_local_feed
+
     from backend.db import manager as dbm
+    from backend.ingestion.local_feed import ingest_local_feed
 
     monkeypatch.setattr(dbm, "DATA_DIR", tmp_path)
 
@@ -252,11 +285,13 @@ async def test_e2e_reingest_is_idempotent(tmp_path, monkeypatch):
 
 # ── prompts-021B: compressed-upload integration ────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_ingest_gz_upload_round_trips_json():
     """A .gz upload of JSON entries is transparently decompressed and ingested."""
     import gzip
     from unittest.mock import patch
+
     from backend.ingestion.local_feed import ingest_local_feed
 
     inner = json.dumps([{"indicator": "1.1.1.1"}, {"indicator": "2.2.2.2"}]).encode()
@@ -265,8 +300,10 @@ async def test_ingest_gz_upload_round_trips_json():
     async def fake_insert(source_name, entry):
         return "inserted"
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(body, "gz_src", filename="feed.json.gz")
 
     assert result["inserted"] == 2
@@ -279,6 +316,7 @@ async def test_ingest_zip_upload_round_trips_csv():
     import io
     import zipfile
     from unittest.mock import patch
+
     from backend.ingestion.local_feed import ingest_local_feed
 
     csv_bytes = b"indicator,severity\n1.1.1.1,high\n2.2.2.2,low\n"
@@ -290,8 +328,10 @@ async def test_ingest_zip_upload_round_trips_csv():
     async def fake_insert(source_name, entry):
         return "inserted"
 
-    with patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.local_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.local_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         result = await ingest_local_feed(body, "zip_src", filename="bundle.zip")
 
     assert result["inserted"] == 2

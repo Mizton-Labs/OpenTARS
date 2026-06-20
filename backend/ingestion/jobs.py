@@ -16,14 +16,15 @@ Threading note: FastAPI's BackgroundTasks run in the same asyncio loop
 as the request handler (when the task is a coroutine), so plain dict
 mutation is safe here.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from typing import Any, Literal, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +58,9 @@ class Job:
     counters: dict[str, int] = field(default_factory=dict)
     first_ingest: bool = False
     started_at: float = field(default_factory=time.time)
-    finished_at: Optional[float] = None
-    expires_at: Optional[float] = None
-    error_msg: Optional[str] = None
+    finished_at: float | None = None
+    expires_at: float | None = None
+    error_msg: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -81,11 +82,12 @@ class JobStore:
         job_id = str(uuid.uuid4())
         job = Job(id=job_id, source=source, kind=kind, first_ingest=first_ingest)
         self._jobs[job_id] = job
-        logger.debug("job_created id=%s source=%s kind=%s first=%s",
-                     job_id, source, kind, first_ingest)
+        logger.debug(
+            "job_created id=%s source=%s kind=%s first=%s", job_id, source, kind, first_ingest
+        )
         return job
 
-    def get(self, job_id: str) -> Optional[Job]:
+    def get(self, job_id: str) -> Job | None:
         self._evict()
         return self._jobs.get(job_id)
 
@@ -202,9 +204,7 @@ class JobStore:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(
-            scheduler_mod.submit_smart_job(job.source, reason="on_new_feed")
-        )
+        loop.create_task(scheduler_mod.submit_smart_job(job.source, reason="on_new_feed"))
 
     # ── Watcher trigger (issue_local_006) ────────────────────────────────────
 
@@ -227,8 +227,7 @@ class JobStore:
     def _evict(self) -> None:
         now = time.time()
         expired = [
-            jid for jid, j in self._jobs.items()
-            if j.expires_at is not None and j.expires_at < now
+            jid for jid, j in self._jobs.items() if j.expires_at is not None and j.expires_at < now
         ]
         for jid in expired:
             del self._jobs[jid]

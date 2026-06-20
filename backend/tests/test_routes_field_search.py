@@ -10,6 +10,7 @@ stubbing of the query layer) to prove that ``?field=name=value``:
 - silently drops unknown / injection-shaped column names instead of letting
   them reach SQL.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,27 +36,45 @@ def field_env(tmp_path, monkeypatch):
 
     async def _seed():
         # Raw store: one critical, one low.
-        await mgr.insert_entry("feed-raw", {
-            "source": "feed-raw", "indicator": "10.0.0.1",
-            "indicator_type": "ipv4", "severity": "critical",
-            "ingest_mode": "push",
-        })
-        await mgr.insert_entry("feed-raw", {
-            "source": "feed-raw", "indicator": "10.0.0.2",
-            "indicator_type": "ipv4", "severity": "low",
-            "ingest_mode": "push",
-        })
+        await mgr.insert_entry(
+            "feed-raw",
+            {
+                "source": "feed-raw",
+                "indicator": "10.0.0.1",
+                "indicator_type": "ipv4",
+                "severity": "critical",
+                "ingest_mode": "push",
+            },
+        )
+        await mgr.insert_entry(
+            "feed-raw",
+            {
+                "source": "feed-raw",
+                "indicator": "10.0.0.2",
+                "indicator_type": "ipv4",
+                "severity": "low",
+                "ingest_mode": "push",
+            },
+        )
         # Normalized store: different indicators, same severity values.
-        await ndb.insert_normalized({
-            "source_entry_id": 1, "source_name": "feed-norm",
-            "indicator": "192.168.1.1", "indicator_type": "ipv4",
-            "severity": "critical",
-        })
-        await ndb.insert_normalized({
-            "source_entry_id": 2, "source_name": "feed-norm",
-            "indicator": "192.168.1.2", "indicator_type": "ipv4",
-            "severity": "low",
-        })
+        await ndb.insert_normalized(
+            {
+                "source_entry_id": 1,
+                "source_name": "feed-norm",
+                "indicator": "192.168.1.1",
+                "indicator_type": "ipv4",
+                "severity": "critical",
+            }
+        )
+        await ndb.insert_normalized(
+            {
+                "source_entry_id": 2,
+                "source_name": "feed-norm",
+                "indicator": "192.168.1.2",
+                "indicator_type": "ipv4",
+                "severity": "low",
+            }
+        )
 
     asyncio.run(_seed())
     yield
@@ -72,7 +91,8 @@ def test_raw_field_search_filters_exact_column(field_env):
 def test_normalized_field_search_filters_exact_column(field_env):
     with TestClient(app) as client:
         resp = client.get(
-            "/api/normalizer/entries", params={"field": "severity=critical"},
+            "/api/normalizer/entries",
+            params={"field": "severity=critical"},
         )
     assert resp.status_code == 200, resp.text
     rows = resp.json()
@@ -84,10 +104,12 @@ def test_raw_and_normalized_field_search_hit_independent_stores(field_env):
     and the normalized store's rows from the normalizer route."""
     with TestClient(app) as client:
         raw = client.get(
-            "/api/viewer/entries", params={"field": "severity=critical"},
+            "/api/viewer/entries",
+            params={"field": "severity=critical"},
         ).json()
         norm = client.get(
-            "/api/normalizer/entries", params={"field": "severity=critical"},
+            "/api/normalizer/entries",
+            params={"field": "severity=critical"},
         ).json()
 
     raw_indicators = {r["indicator"] for r in raw}

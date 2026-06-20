@@ -8,6 +8,7 @@ touch the real ``data/`` directory. Tests that assert on history (e.g.
 ``test_run_history.py``) override ``_RUN_DB_PATH`` themselves — applied last,
 their fixture wins.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,5 @@ from backend.normalizer import run_history as run_history_mod
 
 @pytest.fixture(autouse=True)
 def _isolate_run_history_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        run_history_mod, "_RUN_DB_PATH", tmp_path / "run_history.db"
-    )
+    monkeypatch.setattr(run_history_mod, "_RUN_DB_PATH", tmp_path / "run_history.db")
     yield

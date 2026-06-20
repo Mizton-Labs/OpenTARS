@@ -19,13 +19,15 @@ Triggering is invoked from three places (see callers):
   * normalizer run completion → normalized dataset (trigger="normalize")
   * APScheduler interval      → both, per watcher  (trigger="schedule")
 """
+
 from __future__ import annotations
 
 import asyncio
 import fnmatch
 import logging
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from backend.config.loader import load_watcher_max_events
 from backend.db import watchers as store
@@ -43,9 +45,7 @@ _ANY_FIELD_TOKENS = frozenset({"", "*", "all", "any"})
 # serialized event, so matching them would make any-field match almost anything.
 # Mirrors ``routes_watchers._FIELD_HIDDEN`` so the wizard's offered fields and
 # the engine's any-field scan agree.
-_HIDDEN_MATCH_KEYS = frozenset(
-    {"id", "dedup_key", "normalized", "extra", "extra_norm", "raw"}
-)
+_HIDDEN_MATCH_KEYS = frozenset({"id", "dedup_key", "normalized", "extra", "extra_norm", "raw"})
 
 # Hard ceiling on a regex/value length we will attempt to match, as a cheap
 # guard against pathological patterns.
@@ -221,12 +221,14 @@ async def evaluate_watcher(
         fresh, new_marks = _new_rows_by_source(rows, hw_map)
         for row in fresh:
             if row_matches(row, watcher):
-                triggers.append({
-                    "dataset": ds,
-                    "source_entry_id": int(row.get("id", 0)),
-                    "source_name": _row_source(row),
-                    "event": row,
-                })
+                triggers.append(
+                    {
+                        "dataset": ds,
+                        "source_entry_id": int(row.get("id", 0)),
+                        "source_name": _row_source(row),
+                        "event": row,
+                    }
+                )
         marks_by_ds[ds] = new_marks
 
     inserted = 0
@@ -326,4 +328,3 @@ def schedule_realtime_ingest_eval(inserted: int) -> None:
     except RuntimeError:
         return
     loop.create_task(run_watchers("ingest", {"raw"}))
-

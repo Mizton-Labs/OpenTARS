@@ -9,9 +9,9 @@ Source preview — two-step add-source flow for pull-type sources.
 
 Single-process tool — in-memory store with TTL, no Redis.
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -47,6 +47,7 @@ def _evict() -> None:
 
 
 # ── Fetch + parse (no DB writes) ────────────────────────────────────────────
+
 
 async def _fetch_and_parse_api(source: dict[str, Any]) -> tuple[str, list[dict]]:
     url = source["url"]
@@ -97,6 +98,7 @@ _INGEST_MODE_MAP = {
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
+
 async def build_source_preview(source: dict[str, Any], kind: SourceKind) -> PreviewResponse:
     """Fetch + parse + normalise the source, cache, return sample of 10."""
     _evict()
@@ -134,7 +136,10 @@ async def build_source_preview(source: dict[str, Any], kind: SourceKind) -> Prev
     }
     audit.info(
         "source_preview_built kind=%s name=%s url=%s total=%d",
-        kind, name, source.get("url"), len(normalised),
+        kind,
+        name,
+        source.get("url"),
+        len(normalised),
     )
     return PreviewResponse(
         preview_id=preview_id,
@@ -146,7 +151,9 @@ async def build_source_preview(source: dict[str, Any], kind: SourceKind) -> Prev
     )
 
 
-async def confirm_source_preview(preview_id: str, job_id: str | None = None) -> dict[str, Any] | None:
+async def confirm_source_preview(
+    preview_id: str, job_id: str | None = None
+) -> dict[str, Any] | None:
     """Persist source to sources.yaml and insert cached entries.
 
     Returns the 4-counter ingest summary, or None if the preview is unknown/expired.
@@ -174,9 +181,12 @@ async def confirm_source_preview(preview_id: str, job_id: str | None = None) -> 
     if any(s.get("name") == name for s in bucket):
         # Name collision after the preview was built — caller must handle.
         return {
-            "inserted": 0, "skipped": 0,
+            "inserted": 0,
+            "skipped": 0,
             "errors": [f"Source name '{name}' already exists"],
-            "total_read": len(entries), "duplicates": 0, "discarded": len(entries),
+            "total_read": len(entries),
+            "duplicates": 0,
+            "discarded": len(entries),
             "format": stored["fmt"],
         }
     if kind == "remote_json_pull":
@@ -214,7 +224,12 @@ async def confirm_source_preview(preview_id: str, job_id: str | None = None) -> 
 
     audit.info(
         "source_preview_confirmed kind=%s name=%s total_read=%d inserted=%d duplicates=%d discarded=%d",
-        kind, name, total_read, inserted, duplicates, discarded,
+        kind,
+        name,
+        total_read,
+        inserted,
+        duplicates,
+        discarded,
     )
     return {
         "inserted": inserted,

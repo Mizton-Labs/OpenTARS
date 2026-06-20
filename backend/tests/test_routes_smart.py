@@ -1,14 +1,12 @@
 """Tests for backend.api.routes_smart (021E-1)."""
-from __future__ import annotations
 
-from unittest.mock import patch
+from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import routes_smart as routes_smart_mod
 from backend.llm import config as llm_cfg_mod
-from backend.llm.errors import LLMDisabledError
 from backend.main import app
 from backend.normalizer import config as norm_cfg_mod
 from backend.normalizer import consolidated as consolidated_mod
@@ -21,34 +19,47 @@ from backend.normalizer import smart as smart_mod
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_cfg_mod, "_LLM_CONFIG_PATH", tmp_path / "llm-providers.yaml")
     monkeypatch.setattr(proposals_mod, "_PROPOSALS_DB_PATH", tmp_path / "proposals.db")
-    monkeypatch.setattr(norm_cfg_mod, "_NORMALIZER_CONFIG_PATH", tmp_path / "normalizer-config.yaml")
+    monkeypatch.setattr(
+        norm_cfg_mod, "_NORMALIZER_CONFIG_PATH", tmp_path / "normalizer-config.yaml"
+    )
     # prompts-021F: isolate mapping_versions.db so approve doesn't pollute
     # the real data/ directory.
     monkeypatch.setattr(mappings_mod, "_MAPPINGS_DB_PATH", tmp_path / "mapping_versions.db")
     # prompts-032 Phase D: isolate the consolidated_versions DB too.
     monkeypatch.setattr(
-        consolidated_mod, "_CONSOLIDATED_DB_PATH", tmp_path / "consolidated.db",
+        consolidated_mod,
+        "_CONSOLIDATED_DB_PATH",
+        tmp_path / "consolidated.db",
     )
     # And isolate the per-source dirty-flag reset to a clean DATA_DIR so
     # approve_proposal_core doesn't touch real source DBs.
     import backend.db.manager as mgr
+
     monkeypatch.setattr(mgr, "DATA_DIR", tmp_path)
     # prompts-038: consolidated approve now clears normalized output for the
     # mapping's feeds — isolate normalized.db so it never touches real data/.
     import backend.normalizer.db as norm_db_mod
+
     monkeypatch.setattr(norm_db_mod, "_NORM_DB_PATH", tmp_path / "normalized.db")
     yield
 
 
 def _enable_llm():
-    llm_cfg_mod.save_llm_config({
-        "enabled": True,
-        "default_provider": "p",
-        "providers": [{
-            "name": "p", "kind": "openai", "base_url": "https://x",
-            "model": "m", "api_key": "sk-real",
-        }],
-    })
+    llm_cfg_mod.save_llm_config(
+        {
+            "enabled": True,
+            "default_provider": "p",
+            "providers": [
+                {
+                    "name": "p",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk-real",
+                }
+            ],
+        }
+    )
 
 
 # ── dry-run ────────────────────────────────────────────────────────────────
@@ -219,9 +230,15 @@ def test_get_job_404():
 @pytest.mark.asyncio
 async def test_list_proposals_returns_rows():
     await proposals_mod.insert_proposal(
-        source_name="s", provider_name="p", model="m", sample_size=1,
-        raw_fields=["a"], mapping={"a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name="p",
+        model="m",
+        sample_size=1,
+        raw_fields=["a"],
+        mapping={"a": "title"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     r = client.get("/api/smart-mappings/proposals?source=s")
@@ -240,17 +257,24 @@ def test_get_proposal_404():
 @pytest.mark.asyncio
 async def test_approve_merges_and_existing_wins():
     # Pre-existing manual mapping for raw_field "a" → "url".
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "manual",
-        "enabled": True,
-        "interval_minutes": 10,
-        "manual_mappings": {"s": {"a": "url"}},
-    })
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "manual",
+            "enabled": True,
+            "interval_minutes": 10,
+            "manual_mappings": {"s": {"a": "url"}},
+        }
+    )
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name="p", model="m", sample_size=1,
+        source_name="s",
+        provider_name="p",
+        model="m",
+        sample_size=1,
         raw_fields=["a", "b"],
         mapping={"a": "title", "b": "indicator"},  # "a" should be skipped
-        prompt_system="", prompt_user="", llm_response_raw="",
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     r = client.post(f"/api/smart-mappings/proposals/{pid}/approve", json={})
@@ -267,16 +291,24 @@ async def test_approve_merges_and_existing_wins():
 
 @pytest.mark.asyncio
 async def test_approve_in_auto_mode_returns_hint():
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "auto",
-        "enabled": True,
-        "interval_minutes": 10,
-        "manual_mappings": {},
-    })
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "auto",
+            "enabled": True,
+            "interval_minutes": 10,
+            "manual_mappings": {},
+        }
+    )
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name="p", model="m", sample_size=1,
-        raw_fields=["a"], mapping={"a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name="p",
+        model="m",
+        sample_size=1,
+        raw_fields=["a"],
+        mapping={"a": "title"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     r = client.post(f"/api/smart-mappings/proposals/{pid}/approve", json={})
@@ -286,16 +318,24 @@ async def test_approve_in_auto_mode_returns_hint():
 
 @pytest.mark.asyncio
 async def test_approve_with_set_mode_manual_flips_mode():
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "auto",
-        "enabled": True,
-        "interval_minutes": 10,
-        "manual_mappings": {},
-    })
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "auto",
+            "enabled": True,
+            "interval_minutes": 10,
+            "manual_mappings": {},
+        }
+    )
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name="p", model="m", sample_size=1,
-        raw_fields=["a"], mapping={"a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name="p",
+        model="m",
+        sample_size=1,
+        raw_fields=["a"],
+        mapping={"a": "title"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     r = client.post(
@@ -313,9 +353,15 @@ async def test_approve_with_set_mode_manual_flips_mode():
 @pytest.mark.asyncio
 async def test_approve_already_decided_returns_409():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
         status="approved",
     )
     client = TestClient(app)
@@ -326,9 +372,15 @@ async def test_approve_already_decided_returns_409():
 @pytest.mark.asyncio
 async def test_reject_marks_rejected_with_note():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     r = client.post(
@@ -353,9 +405,15 @@ def test_reject_404():
 @pytest.mark.asyncio
 async def test_archive_hides_from_default_list():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
     client = TestClient(app)
     # Visible in the default (active) list before archiving.
@@ -376,13 +434,9 @@ async def test_archive_hides_from_default_list():
     # Hidden from the default list, visible with archived=only / all.
     after = client.get("/api/smart-mappings/proposals?source=s&outcome=all")
     assert all(p["id"] != pid for p in after.json())
-    only = client.get(
-        "/api/smart-mappings/proposals?source=s&outcome=all&archived=only"
-    )
+    only = client.get("/api/smart-mappings/proposals?source=s&outcome=all&archived=only")
     assert any(p["id"] == pid for p in only.json())
-    allv = client.get(
-        "/api/smart-mappings/proposals?source=s&outcome=all&archived=all"
-    )
+    allv = client.get("/api/smart-mappings/proposals?source=s&outcome=all&archived=all")
     assert any(p["id"] == pid for p in allv.json())
 
 
@@ -406,16 +460,24 @@ async def test_approve_creates_active_mapping_version(tmp_path):
     """Approving a proposal must create a new active mapping_version row
     (origin='proposal', source_proposal_id set) and regenerate the yaml
     snapshot to reflect it."""
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "manual",
-        "enabled": True,
-        "interval_minutes": 10,
-        "manual_mappings": {},
-    })
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "manual",
+            "enabled": True,
+            "interval_minutes": 10,
+            "manual_mappings": {},
+        }
+    )
     pid = await proposals_mod.insert_proposal(
-        source_name="feed-x", provider_name="p", model="m", sample_size=5,
-        raw_fields=["raw_ip"], mapping={"raw_ip": "indicator"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="feed-x",
+        provider_name="p",
+        model="m",
+        sample_size=5,
+        raw_fields=["raw_ip"],
+        mapping={"raw_ip": "indicator"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
 
     client = TestClient(app)
@@ -443,14 +505,16 @@ async def test_approve_creates_active_mapping_version(tmp_path):
 async def test_approve_uses_active_version_not_yaml_for_existing(tmp_path):
     """When an active mapping_version exists, its mapping is the 'existing'
     side of the existing-wins merge — not the yaml block."""
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "manual",
-        "enabled": True,
-        "interval_minutes": 10,
-        # Yaml claims raw_a → severity, but the active version says title.
-        # The merge must respect the active version.
-        "manual_mappings": {"feed-y": {"raw_a": "severity"}},
-    })
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "manual",
+            "enabled": True,
+            "interval_minutes": 10,
+            # Yaml claims raw_a → severity, but the active version says title.
+            # The merge must respect the active version.
+            "manual_mappings": {"feed-y": {"raw_a": "severity"}},
+        }
+    )
     v1 = await mappings_mod.create_version(
         source_name="feed-y",
         mapping={"raw_a": "title"},
@@ -461,10 +525,15 @@ async def test_approve_uses_active_version_not_yaml_for_existing(tmp_path):
     # Proposal tries raw_a → indicator (conflict with active v1's title)
     # and adds raw_b → published_at.
     pid = await proposals_mod.insert_proposal(
-        source_name="feed-y", provider_name="p", model="m", sample_size=5,
+        source_name="feed-y",
+        provider_name="p",
+        model="m",
+        sample_size=5,
         raw_fields=["raw_a", "raw_b"],
         mapping={"raw_a": "indicator", "raw_b": "published_at"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
 
     client = TestClient(app)
@@ -492,25 +561,34 @@ async def test_approve_marks_source_dirty_for_renormalization(tmp_path):
     """approve_proposal_core must reset normalized=0 for the source so the
     scheduler re-runs the normalizer."""
     import sqlite3
-    norm_cfg_mod.save_normalizer_config({
-        "mode": "manual", "enabled": True, "interval_minutes": 10,
-        "manual_mappings": {},
-    })
+
+    norm_cfg_mod.save_normalizer_config(
+        {
+            "mode": "manual",
+            "enabled": True,
+            "interval_minutes": 10,
+            "manual_mappings": {},
+        }
+    )
 
     # Seed a fake source DB with 2 normalized=1 rows.
     src_db = tmp_path / "feed-z.db"
     with sqlite3.connect(src_db) as con:
-        con.execute(
-            "CREATE TABLE entries (id INTEGER PRIMARY KEY, normalized INTEGER NOT NULL)"
-        )
+        con.execute("CREATE TABLE entries (id INTEGER PRIMARY KEY, normalized INTEGER NOT NULL)")
         con.execute("INSERT INTO entries (normalized) VALUES (1)")
         con.execute("INSERT INTO entries (normalized) VALUES (1)")
         con.commit()
 
     pid = await proposals_mod.insert_proposal(
-        source_name="feed-z", provider_name="p", model="m", sample_size=5,
-        raw_fields=["raw_a"], mapping={"raw_a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="feed-z",
+        provider_name="p",
+        model="m",
+        sample_size=5,
+        raw_fields=["raw_a"],
+        mapping={"raw_a": "title"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
     )
 
     client = TestClient(app)
@@ -527,17 +605,25 @@ async def test_approve_marks_source_dirty_for_renormalization(tmp_path):
 
 
 async def _insert_consolidated_proposal(
-    *, status: str = "pending", outcome: str = "pending_review",
-    mapping: dict[str, str] | None = None, sources: list[str] | None = None,
+    *,
+    status: str = "pending",
+    outcome: str = "pending_review",
+    mapping: dict[str, str] | None = None,
+    sources: list[str] | None = None,
     field_scope: str = "all",
 ) -> int:
     return await proposals_mod.insert_proposal(
         source_name=proposals_mod.CONSOLIDATED_SENTINEL,
-        provider_name="p", model="m", sample_size=6,
+        provider_name="p",
+        model="m",
+        sample_size=6,
         raw_fields=list((mapping or {"raw_a": "title"}).keys()),
         mapping=mapping or {"raw_a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
-        status=status, outcome=outcome,
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        status=status,
+        outcome=outcome,
         sources=sources or ["feed-a", "feed-b"],
         field_scope=field_scope,
     )
@@ -546,14 +632,22 @@ async def _insert_consolidated_proposal(
 @pytest.mark.asyncio
 async def test_reenable_rejected_operator_proposal_returns_to_pending():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
-        status="rejected", outcome="rejected",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        status="rejected",
+        outcome="rejected",
     )
     client = TestClient(app)
     r = client.post(
-        f"/api/smart-mappings/proposals/{pid}/reenable", json={"note": "retry"},
+        f"/api/smart-mappings/proposals/{pid}/reenable",
+        json={"note": "retry"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "pending"
@@ -566,10 +660,17 @@ async def test_reenable_rejected_operator_proposal_returns_to_pending():
 @pytest.mark.asyncio
 async def test_reenable_discarded_proposal_returns_409():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=8,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
-        status="rejected", outcome="discarded_below_threshold",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=8,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        status="rejected",
+        outcome="discarded_below_threshold",
     )
     client = TestClient(app)
     r = client.post(f"/api/smart-mappings/proposals/{pid}/reenable", json={})
@@ -581,9 +682,15 @@ async def test_reenable_discarded_proposal_returns_409():
 @pytest.mark.asyncio
 async def test_reenable_non_rejected_proposal_returns_409():
     pid = await proposals_mod.insert_proposal(
-        source_name="s", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={},
-        prompt_system="", prompt_user="", llm_response_raw="",
+        source_name="s",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
         status="pending",
     )
     client = TestClient(app)
@@ -609,7 +716,8 @@ async def test_active_returns_null_when_no_consolidated_version():
 async def test_approve_consolidated_creates_and_activates_version():
     pid = await _insert_consolidated_proposal(
         mapping={"raw_a": "title", "raw_b": "indicator"},
-        sources=["feed-a", "feed-b"], field_scope="configured",
+        sources=["feed-a", "feed-b"],
+        field_scope="configured",
     )
     client = TestClient(app)
     r = client.post(f"/api/smart-mappings/proposals/{pid}/approve", json={})
@@ -651,6 +759,7 @@ async def test_approve_consolidated_clears_and_resets_sources(tmp_path):
     normalizer run re-applies the new mapping instead of reporting
     processed=0/inserted=0."""
     import sqlite3
+
     import backend.normalizer.db as norm_db_mod
 
     # Two feeds, each with raw rows already marked normalized=1.
@@ -671,7 +780,8 @@ async def test_approve_consolidated_clears_and_resets_sources(tmp_path):
         )
 
     pid = await _insert_consolidated_proposal(
-        mapping={"raw_a": "title"}, sources=["feed-a", "feed-b"],
+        mapping={"raw_a": "title"},
+        sources=["feed-a", "feed-b"],
     )
     client = TestClient(app)
     r = client.post(f"/api/smart-mappings/proposals/{pid}/approve", json={})
@@ -684,10 +794,7 @@ async def test_approve_consolidated_clears_and_resets_sources(tmp_path):
             assert cur.fetchone()[0] == 2
 
     # Normalized output cleared for the mapping's feeds only; others untouched.
-    remaining = {
-        row["source_name"]
-        for row in await norm_db_mod.query_normalized(limit=100)
-    }
+    remaining = {row["source_name"] for row in await norm_db_mod.query_normalized(limit=100)}
     assert remaining == {"feed-other"}
 
 
@@ -728,12 +835,17 @@ async def test_approve_consolidated_already_decided_returns_409():
 @pytest.mark.asyncio
 async def test_active_includes_proposal_name():
     pid = await _insert_consolidated_proposal(
-        mapping={"raw_a": "title"}, sources=["feed-a"],
+        mapping={"raw_a": "title"},
+        sources=["feed-a"],
     )
     client = TestClient(app)
-    assert client.post(
-        f"/api/smart-mappings/proposals/{pid}/approve", json={},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/smart-mappings/proposals/{pid}/approve",
+            json={},
+        ).status_code
+        == 200
+    )
     card = client.get("/api/smart-mappings/active").json()["active"]
     assert card["proposal_name"]
     assert card["proposal_name"].startswith("Proposal-")
@@ -757,12 +869,17 @@ async def test_run_active_reapplies_and_returns_counters(monkeypatch):
     monkeypatch.setattr(engine_mod, "run_normalizer", fake_run)
 
     pid = await _insert_consolidated_proposal(
-        mapping={"raw_a": "title"}, sources=["feed-a", "feed-b"],
+        mapping={"raw_a": "title"},
+        sources=["feed-a", "feed-b"],
     )
     client = TestClient(app)
-    assert client.post(
-        f"/api/smart-mappings/proposals/{pid}/approve", json={},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/smart-mappings/proposals/{pid}/approve",
+            json={},
+        ).status_code
+        == 200
+    )
 
     r = client.post("/api/smart-mappings/active/run")
     assert r.status_code == 200, r.text
@@ -771,4 +888,3 @@ async def test_run_active_reapplies_and_returns_counters(monkeypatch):
     assert body["inserted"] == 4
     assert body["errors"] == 0
     assert "reset_rows" in body
-

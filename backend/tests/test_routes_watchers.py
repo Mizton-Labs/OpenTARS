@@ -5,15 +5,16 @@ real-data init) does not run; the watcher store initializes itself lazily and is
 redirected to a tmp DB. Covers CRUD via the API, the public feed in all three
 formats, public reachability (no /api auth), and admin-gating when auth is on.
 """
+
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.main import app
-from backend.db import watchers as store
-from backend.api import routes_watchers
 import backend.main as main_mod
+from backend.api import routes_watchers
+from backend.db import watchers as store
+from backend.main import app
 
 
 @pytest.fixture
@@ -110,7 +111,14 @@ def test_list_includes_last_triggered_at(client):
     async def _seed():
         await store.record_triggers(
             "critical-cves",
-            [{"dataset": "normalized", "source_entry_id": 1, "source_name": "a", "event": {"id": 1}}],
+            [
+                {
+                    "dataset": "normalized",
+                    "source_entry_id": 1,
+                    "source_name": "a",
+                    "event": {"id": 1},
+                }
+            ],
             max_events=100,
         )
 
@@ -140,9 +148,7 @@ def test_meta_fields_feed_aware_samples_custom_fields(client, monkeypatch):
     monkeypatch.setattr(routes_watchers, "query_entries", _fake_entries)
     monkeypatch.setattr(routes_watchers, "query_normalized", _fake_norm)
 
-    r = client.get(
-        "/api/watchers/meta/fields", params={"dataset": "raw", "feeds": ["feed-a"]}
-    )
+    r = client.get("/api/watchers/meta/fields", params={"dataset": "raw", "feeds": ["feed-a"]})
     assert r.status_code == 200
     fields = r.json()["fields"]
     assert "custom_threat_score" in fields
@@ -208,8 +214,14 @@ def test_events_endpoint_returns_triggers(client):
     async def _seed():
         await store.record_triggers(
             "critical-cves",
-            [{"dataset": "normalized", "source_entry_id": 1, "source_name": "a",
-              "event": {"id": 1, "cve_id": "CVE-2024-1"}}],
+            [
+                {
+                    "dataset": "normalized",
+                    "source_entry_id": 1,
+                    "source_name": "a",
+                    "event": {"id": 1, "cve_id": "CVE-2024-1"},
+                }
+            ],
             max_events=100,
         )
 
@@ -223,6 +235,7 @@ def test_events_endpoint_returns_triggers(client):
 
 # ── Public feed ─────────────────────────────────────────────────────────────
 
+
 def _seed_events(fmt: str):
     import anyio
 
@@ -231,10 +244,18 @@ def _seed_events(fmt: str):
         await store.record_triggers(
             "critical-cves",
             [
-                {"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a",
-                 "event": {"id": 1, "cve_id": "CVE-2024-1", "indicator": "1.2.3.4"}},
-                {"dataset": "normalized", "source_entry_id": 2, "source_name": "feed-a",
-                 "event": {"id": 2, "cve_id": "CVE-2024-2", "indicator": "5.6.7.8"}},
+                {
+                    "dataset": "normalized",
+                    "source_entry_id": 1,
+                    "source_name": "feed-a",
+                    "event": {"id": 1, "cve_id": "CVE-2024-1", "indicator": "1.2.3.4"},
+                },
+                {
+                    "dataset": "normalized",
+                    "source_entry_id": 2,
+                    "source_name": "feed-a",
+                    "event": {"id": 2, "cve_id": "CVE-2024-2", "indicator": "5.6.7.8"},
+                },
             ],
             max_events=100,
         )
@@ -293,8 +314,12 @@ def test_public_feed_serves_beyond_max_feed_events_until_cleanup(client):
         await store.record_triggers(
             "critical-cves",
             [
-                {"dataset": "normalized", "source_entry_id": i, "source_name": "feed-a",
-                 "event": {"id": i, "cve_id": f"CVE-2024-{i}"}}
+                {
+                    "dataset": "normalized",
+                    "source_entry_id": i,
+                    "source_name": "feed-a",
+                    "event": {"id": i, "cve_id": f"CVE-2024-{i}"},
+                }
                 for i in range(1, 4)
             ],
             max_events=1000,

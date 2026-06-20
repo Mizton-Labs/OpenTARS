@@ -7,6 +7,7 @@ encoding, so ``response.content`` is already plaintext JSON — the decompressio
 layer must NOT try to re-decompress it (which previously raised a spurious
 MagicMismatchError and discarded the whole feed, yielding inserted=0).
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,7 @@ class _FakeAsyncClient:
     def __init__(self, response: _FakeResponse):
         self._response = response
 
-    async def __aenter__(self) -> "_FakeAsyncClient":
+    async def __aenter__(self) -> _FakeAsyncClient:
         return self
 
     async def __aexit__(self, *exc) -> bool:
@@ -55,9 +56,11 @@ async def _run(payload: bytes, headers: dict[str, str]) -> dict:
     async def fake_insert(source_name, entry):
         return "inserted"
 
-    with patch("backend.ingestion.remote_feed.httpx.AsyncClient", _client_factory(response)), \
-         patch("backend.ingestion.remote_feed.insert_entry", side_effect=fake_insert), \
-         patch("backend.ingestion.remote_feed.normalise", side_effect=lambda r, **kw: r):
+    with (
+        patch("backend.ingestion.remote_feed.httpx.AsyncClient", _client_factory(response)),
+        patch("backend.ingestion.remote_feed.insert_entry", side_effect=fake_insert),
+        patch("backend.ingestion.remote_feed.normalise", side_effect=lambda r, **kw: r),
+    ):
         return await ingest_remote_feed("https://example.test/feed.json", "src")
 
 
@@ -78,9 +81,7 @@ async def test_content_encoding_gzip_already_decoded_ingests_cisa_kev_shape():
 
 async def test_content_encoding_gzip_already_decoded_ingests_nvd_shape():
     # NVD: {"vulnerabilities": [ {"cve": {...}} ]}
-    payload = json.dumps(
-        {"vulnerabilities": [{"cve": {"id": "CVE-2024-1000"}}]}
-    ).encode("utf-8")
+    payload = json.dumps({"vulnerabilities": [{"cve": {"id": "CVE-2024-1000"}}]}).encode("utf-8")
     result = await _run(
         payload,
         {"content-type": "application/json", "content-encoding": "gzip"},

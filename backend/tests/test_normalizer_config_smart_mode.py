@@ -1,4 +1,5 @@
 """Tests for the smart-mode block in normalizer-config (021E-3)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,11 +63,13 @@ def test_partial_nested_override_deep_merges(_isolate_config: Path):
 def test_operator_sources_list_is_authoritative(_isolate_config: Path):
     """Lists are replaced wholesale; defaults' empty list does not append."""
     _isolate_config.write_text(
-        yaml.dump({
-            "smart_mode": {
-                "sources": [{"name": "feed-a", "enabled": True}],
-            },
-        }),
+        yaml.dump(
+            {
+                "smart_mode": {
+                    "sources": [{"name": "feed-a", "enabled": True}],
+                },
+            }
+        ),
         encoding="utf-8",
     )
     cfg = cfg_mod.load_normalizer_config()

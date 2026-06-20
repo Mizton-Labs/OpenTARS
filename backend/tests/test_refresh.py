@@ -4,9 +4,8 @@ Covers `refresh_source` dispatch and `run_tracked_pull`, the job-wrapped
 background pull that drives the per-feed "pulling…" / "ready" / "error"
 status markers.
 """
-from __future__ import annotations
 
-import asyncio
+from __future__ import annotations
 
 import pytest
 

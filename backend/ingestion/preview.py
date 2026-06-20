@@ -5,6 +5,7 @@ Preview — two-step ingest flow.
 
 In-memory store uses a 5-minute TTL (single-process tool; no Redis needed).
 """
+
 from __future__ import annotations
 
 import time
@@ -59,8 +60,11 @@ async def build_preview(
     # ── Decompress if needed (prompts-021B) ────────────────────────────────
     try:
         from backend.config.loader import load_max_decompressed_bytes
+
         _inner_name, file_bytes = decompress_if_needed(
-            filename, file_bytes, max_bytes=load_max_decompressed_bytes(),
+            filename,
+            file_bytes,
+            max_bytes=load_max_decompressed_bytes(),
         )
     except DecompressionError:
         # Re-raise as-is; DecompressionError is a ValueError subclass so

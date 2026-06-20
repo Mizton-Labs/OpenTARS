@@ -3,6 +3,7 @@
 LLMConfigError inherits ValueError so existing FastAPI 400-translation
 patterns work without explicit catching.
 """
+
 from __future__ import annotations
 
 

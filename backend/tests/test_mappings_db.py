@@ -4,6 +4,7 @@ Covers: init idempotency, CRUD, activate atomicity (incl. partial unique
 index race protection), idempotent yaml migration, yaml snapshot
 regeneration, diff helper.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,6 +47,7 @@ def _isolate_yaml(tmp_path, monkeypatch):
 # init / schema
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_init_creates_schema_and_is_idempotent():
     await init_mappings_db()
@@ -53,8 +55,7 @@ async def test_init_creates_schema_and_is_idempotent():
     # Verify partial unique index exists (the race-safety net).
     with sqlite3.connect(mappings_mod._MAPPINGS_DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' "
-            "AND name='idx_mv_active_per_source'"
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_mv_active_per_source'"
         ).fetchall()
     assert rows, "partial unique index must exist after init"
 
@@ -62,6 +63,7 @@ async def test_init_creates_schema_and_is_idempotent():
 # ---------------------------------------------------------------------------
 # create / list / get
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_and_get_roundtrip():
@@ -114,6 +116,7 @@ async def test_create_rejects_non_dict_mapping():
 # ---------------------------------------------------------------------------
 # activate
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_activate_promotes_and_demotes():
@@ -178,7 +181,7 @@ async def test_concurrent_activate_serialises():
 
 @pytest.mark.asyncio
 async def test_get_all_active_mappings_returns_active_only():
-    v1 = await create_version(source_name="s1", mapping={"a": "title"}, origin="manual")
+    await create_version(source_name="s1", mapping={"a": "title"}, origin="manual")
     v2 = await create_version(source_name="s1", mapping={"b": "title"}, origin="manual")
     v3 = await create_version(source_name="s2", mapping={"c": "title"}, origin="manual")
     await activate_version(v2)
@@ -191,14 +194,11 @@ async def test_get_all_active_mappings_returns_active_only():
 # migration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_migrate_yaml_seeds_one_active_per_source(_isolate_yaml):
     _isolate_yaml.write_text(
-        "manual_mappings:\n"
-        "  src-a:\n"
-        "    raw_title: title\n"
-        "  src-b:\n"
-        "    raw_ts: published_at\n",
+        "manual_mappings:\n  src-a:\n    raw_title: title\n  src-b:\n    raw_ts: published_at\n",
         encoding="utf-8",
     )
     created = await migrate_yaml_manual_mappings_once()
@@ -236,11 +236,10 @@ async def test_migrate_yaml_no_op_when_empty(_isolate_yaml):
 # snapshot regeneration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_regenerate_yaml_snapshot_writes_active_mappings(_isolate_yaml):
-    _isolate_yaml.write_text(
-        "manual_mappings: {}\nenabled: true\n", encoding="utf-8"
-    )
+    _isolate_yaml.write_text("manual_mappings: {}\nenabled: true\n", encoding="utf-8")
     v1 = await create_version(source_name="src-a", mapping={"a": "title"}, origin="manual")
     await activate_version(v1)
     v2 = await create_version(source_name="src-b", mapping={"b": "title"}, origin="proposal")
@@ -259,15 +258,16 @@ async def test_regenerate_yaml_snapshot_writes_active_mappings(_isolate_yaml):
 # diff helper
 # ---------------------------------------------------------------------------
 
+
 def test_diff_added_removed_changed():
     out = diff_mappings(
         {"keep": "title", "drop": "summary", "mut": "title"},
         {"keep": "title", "mut": "subject", "new": "published_at"},
     )
     assert out == {
-        "added":   [{"raw_field": "new",  "canonical": "published_at"}],
+        "added": [{"raw_field": "new", "canonical": "published_at"}],
         "removed": [{"raw_field": "drop", "canonical": "summary"}],
-        "changed": [{"raw_field": "mut",  "from": "title", "to": "subject"}],
+        "changed": [{"raw_field": "mut", "from": "title", "to": "subject"}],
     }
 
 

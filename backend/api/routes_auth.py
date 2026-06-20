@@ -18,12 +18,13 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/password
   DELETE /api/auth/users/{user_id}
 """
+
 from __future__ import annotations
 
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from backend.auth import db
 from backend.auth.dependencies import (
@@ -65,6 +66,7 @@ def _password_class_count(password: str) -> int:
 
 # ── Request models ────────────────────────────────────────────────────────────
 
+
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -94,6 +96,7 @@ class AdminPasswordBody(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _client_ip(request: Request) -> str:
     """Client IP used to key the login brute-force throttle.
@@ -155,6 +158,7 @@ def _public_user(user: dict) -> dict:
 
 # ── Public ────────────────────────────────────────────────────────────────────
 
+
 @router.get("/status")
 async def auth_status() -> dict:
     """Report whether authentication enforcement is active (public).
@@ -177,13 +181,12 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
         # the password was wrong, the account is disabled, or it was throttled.
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = await create_session_for_user(user["id"])
-    set_session_cookie(
-        request, response, token, max_age=int(SESSION_TTL.total_seconds())
-    )
+    set_session_cookie(request, response, token, max_age=int(SESSION_TTL.total_seconds()))
     return {"user": _public_user(user)}
 
 
 # ── Authenticated (any role) ──────────────────────────────────────────────────
+
 
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict:
@@ -221,13 +224,12 @@ async def change_own_password(
     # any other live cookie) but keep the caller's current session alive.
     token = request.cookies.get(SESSION_COOKIE_NAME)
     keep = hash_token(token) if token else None
-    await db.set_password(
-        user["id"], hash_password(body.new_password), keep_token_hash=keep
-    )
+    await db.set_password(user["id"], hash_password(body.new_password), keep_token_hash=keep)
     return {"status": "password_changed"}
 
 
 # ── Admin: user management ────────────────────────────────────────────────────
+
 
 @router.get("/users")
 async def list_users(admin: dict = Depends(require_admin)) -> list[dict]:
@@ -235,26 +237,20 @@ async def list_users(admin: dict = Depends(require_admin)) -> list[dict]:
 
 
 @router.post("/users")
-async def create_user(
-    body: CreateUserBody, admin: dict = Depends(require_admin)
-) -> dict:
+async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)) -> dict:
     _validate_username(body.username)
     _validate_password(body.password)
     if body.role not in db.VALID_ROLES:
         raise HTTPException(status_code=400, detail="role must be 'admin', 'normal', or 'sender'")
     if await db.get_user_by_username(body.username) is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
-    uid = await db.create_user(
-        body.username, hash_password(body.password), role=body.role
-    )
+    uid = await db.create_user(body.username, hash_password(body.password), role=body.role)
     created = await db.get_user_by_id(uid)
     return _public_user(created)
 
 
 @router.put("/users/{user_id}/role")
-async def set_user_role(
-    user_id: int, body: RoleBody, admin: dict = Depends(require_admin)
-) -> dict:
+async def set_user_role(user_id: int, body: RoleBody, admin: dict = Depends(require_admin)) -> dict:
     if body.role not in db.VALID_ROLES:
         raise HTTPException(status_code=400, detail="role must be 'admin', 'normal', or 'sender'")
     target = await _require_user(user_id)
@@ -295,9 +291,7 @@ async def admin_reset_password(
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(
-    user_id: int, admin: dict = Depends(require_admin)
-) -> dict:
+async def delete_user(user_id: int, admin: dict = Depends(require_admin)) -> dict:
     target = await _require_user(user_id)
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")

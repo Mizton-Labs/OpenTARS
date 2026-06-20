@@ -1,6 +1,7 @@
 """
 Fields routes — read and update feed-fields.yaml (core toggles + custom CRUD).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -8,9 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from backend.config.loader import (
-    load_fields, save_fields,
-    load_ingest_all_fields, save_ingest_all_fields,
-    load_flatten_max_depth, save_flatten_max_depth,
+    load_fields,
+    load_flatten_max_depth,
+    load_ingest_all_fields,
+    save_fields,
+    save_flatten_max_depth,
+    save_ingest_all_fields,
 )
 
 router = APIRouter(prefix="/api/fields", tags=["fields"])
@@ -84,7 +88,9 @@ async def add_custom_field(field: dict[str, Any]) -> dict[str, Any]:
     data = load_fields()
     custom: list = data.setdefault("custom_fields", [])
     if any(f["name"] == field["name"] for f in custom):
-        raise HTTPException(status_code=409, detail=f"Custom field '{field['name']}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"Custom field '{field['name']}' already exists"
+        )
     # Also check against core field names
     core_names = {f["name"] for f in data.get("core_fields", [])}
     if field["name"] in core_names:

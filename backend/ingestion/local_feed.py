@@ -4,6 +4,7 @@ Supports JSON, NDJSON, CSV, and XML formats (auto-detected or explicit).
 Also transparently decompresses .gz and single-member .zip uploads
 (prompts-021B); see backend.ingestion.decompression.
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,21 +51,34 @@ async def ingest_local_feed(
     # ── Decompress if needed (prompts-021B) ────────────────────────────────
     try:
         from backend.config.loader import load_max_decompressed_bytes
+
         _inner_name, file_bytes = decompress_if_needed(
-            filename, file_bytes, max_bytes=load_max_decompressed_bytes(),
+            filename,
+            file_bytes,
+            max_bytes=load_max_decompressed_bytes(),
         )
     except DecompressionError as exc:
         return {
-            "inserted": 0, "skipped": 0, "errors": [str(exc)], "format": fmt or "unknown",
-            "total_read": 0, "duplicates": 0, "discarded": 0,
+            "inserted": 0,
+            "skipped": 0,
+            "errors": [str(exc)],
+            "format": fmt or "unknown",
+            "total_read": 0,
+            "duplicates": 0,
+            "discarded": 0,
         }
 
     try:
         detected_fmt, entries = parse_file(file_bytes, fmt=fmt)
     except ValueError as exc:
         return {
-            "inserted": 0, "skipped": 0, "errors": [str(exc)], "format": fmt or "unknown",
-            "total_read": 0, "duplicates": 0, "discarded": 0,
+            "inserted": 0,
+            "skipped": 0,
+            "errors": [str(exc)],
+            "format": fmt or "unknown",
+            "total_read": 0,
+            "duplicates": 0,
+            "discarded": 0,
         }
 
     inserted = duplicates = discarded = 0
@@ -110,7 +124,13 @@ async def ingest_local_feed(
     )
     audit.info(
         "ingest source=%s mode=local_feed fmt=%s total_read=%d inserted=%d duplicates=%d discarded=%d errors=%d",
-        source_name, detected_fmt, total_read, inserted, duplicates, discarded, len(errors),
+        source_name,
+        detected_fmt,
+        total_read,
+        inserted,
+        duplicates,
+        discarded,
+        len(errors),
     )
     return {
         "inserted": inserted,

@@ -1,4 +1,5 @@
 """Tests for backend.query.nl — NL→filter translation + execution (prompts-064)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,12 +19,14 @@ from backend.query.nl import (
     validate_nl_filter,
 )
 
-
 # ── build_nl_prompt ─────────────────────────────────────────────────────────
+
 
 def test_build_nl_prompt_includes_question_and_allowed_keys():
     sys, usr = build_nl_prompt(
-        "find critical CVEs", default_dataset="normalized", known_sources=["feedA"],
+        "find critical CVEs",
+        default_dataset="normalized",
+        known_sources=["feedA"],
     )
     assert "find critical CVEs" in usr
     assert "feedA" in usr
@@ -41,9 +44,11 @@ def test_build_nl_prompt_handles_no_sources():
 
 # ── parse_nl_filter ─────────────────────────────────────────────────────────
 
+
 def test_parse_nl_filter_plain_json():
     assert parse_nl_filter('{"dataset": "raw", "search": "npm"}') == {
-        "dataset": "raw", "search": "npm",
+        "dataset": "raw",
+        "search": "npm",
     }
 
 
@@ -59,6 +64,7 @@ def test_parse_nl_filter_raises_on_garbage():
 
 # ── validate_nl_filter ──────────────────────────────────────────────────────
 
+
 def test_validate_drops_unknown_keys():
     sq = validate_nl_filter({"search": "x", "evil": "DROP TABLE", "sql": "..."})
     assert sq.search == "x"
@@ -67,7 +73,9 @@ def test_validate_drops_unknown_keys():
 
 def test_validate_dataset_default_and_override():
     assert validate_nl_filter({}, default_dataset="raw").dataset == "raw"
-    assert validate_nl_filter({"dataset": "normalized"}, default_dataset="raw").dataset == "normalized"
+    assert (
+        validate_nl_filter({"dataset": "normalized"}, default_dataset="raw").dataset == "normalized"
+    )
     # invalid dataset falls back to the default
     assert validate_nl_filter({"dataset": "bogus"}, default_dataset="raw").dataset == "raw"
 
@@ -78,7 +86,8 @@ def test_validate_unknown_default_dataset_falls_back():
 
 def test_validate_source_must_be_known():
     sq = validate_nl_filter(
-        {"source": "../users"}, known_sources=["feedA", "feedB"],
+        {"source": "../users"},
+        known_sources=["feedA", "feedB"],
     )
     assert sq.source is None  # unknown source dropped (path-traversal guard)
     sq2 = validate_nl_filter({"source": "feedA"}, known_sources=["feedA"])
@@ -111,6 +120,7 @@ def test_interpreted_filter_round_trip():
 
 # ── execute_structured_query ────────────────────────────────────────────────
 
+
 def test_execute_raw_passes_filters(monkeypatch):
     captured = {}
 
@@ -119,8 +129,9 @@ def test_execute_raw_passes_filters(monkeypatch):
         return [{"indicator": "1.2.3.4"}]
 
     monkeypatch.setattr(nl, "query_entries", _fake_query_entries)
-    sq = StructuredQuery(dataset="raw", source="feedA", search="npm",
-                         limit=10, column_filters={"severity": "high"})
+    sq = StructuredQuery(
+        dataset="raw", source="feedA", search="npm", limit=10, column_filters={"severity": "high"}
+    )
     rows = asyncio.run(execute_structured_query(sq))
     assert rows == [{"indicator": "1.2.3.4"}]
     assert captured["source_name"] == "feedA"
@@ -153,8 +164,7 @@ def test_execute_normalized_post_filters_and_truncates(monkeypatch):
         ]
 
     monkeypatch.setattr(nl, "query_normalized", _fake_query_normalized)
-    sq = StructuredQuery(dataset="normalized", limit=2,
-                         column_filters={"severity": "critical"})
+    sq = StructuredQuery(dataset="normalized", limit=2, column_filters={"severity": "critical"})
     rows = asyncio.run(execute_structured_query(sq))
     # 3 match 'critical', truncated to limit=2
     assert len(rows) == 2
@@ -164,11 +174,11 @@ def test_execute_normalized_post_filters_and_truncates(monkeypatch):
 def test_execute_normalized_ignores_absent_filter_column(monkeypatch):
     """A filter column not present in any normalized row is ignored rather than
     emptying the result set."""
+
     async def _fake_query_normalized(**kwargs):
         return [{"indicator": "a"}, {"indicator": "b"}]
 
     monkeypatch.setattr(nl, "query_normalized", _fake_query_normalized)
-    sq = StructuredQuery(dataset="normalized", limit=10,
-                         column_filters={"severity": "critical"})
+    sq = StructuredQuery(dataset="normalized", limit=10, column_filters={"severity": "critical"})
     rows = asyncio.run(execute_structured_query(sq))
     assert len(rows) == 2  # severity absent → filter skipped

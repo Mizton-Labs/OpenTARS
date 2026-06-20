@@ -15,6 +15,7 @@ Schema:
     last_job_state      TEXT  -- 'done' | 'error'
     last_job_kind       TEXT
 """
+
 from __future__ import annotations
 
 import logging
@@ -78,16 +79,19 @@ async def record_ingest(
     ts = (when or datetime.now(timezone.utc)).isoformat()
     try:
         async with aiosqlite.connect(META_DB) as db:
-            await db.execute(_UPSERT, (
-                source,
-                ts,
-                int(counters.get("total_read", 0)),
-                int(counters.get("inserted", 0)),
-                int(counters.get("duplicates", 0)),
-                int(counters.get("discarded", 0)),
-                state,
-                kind,
-            ))
+            await db.execute(
+                _UPSERT,
+                (
+                    source,
+                    ts,
+                    int(counters.get("total_read", 0)),
+                    int(counters.get("inserted", 0)),
+                    int(counters.get("duplicates", 0)),
+                    int(counters.get("discarded", 0)),
+                    state,
+                    kind,
+                ),
+            )
             await db.commit()
     except sqlite3.OperationalError as exc:
         logger.warning("meta.record_ingest failed for source=%s: %s", source, exc)

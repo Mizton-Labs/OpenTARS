@@ -1,12 +1,13 @@
 """Tests for /api/fields/flatten-depth (prompts-015)."""
+
 from __future__ import annotations
 
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from backend.main import app
 from backend.config import loader
+from backend.main import app
 
 
 @pytest.fixture
@@ -14,12 +15,14 @@ def client(tmp_path, monkeypatch):
     """Redirect FIELDS_PATH to a tmp file seeded with the current defaults."""
     fake = tmp_path / "feed-fields.yaml"
     fake.write_text(
-        yaml.safe_dump({
-            "ingest_all_fields": True,
-            "flatten_max_depth": 5,
-            "core_fields": [],
-            "custom_fields": [],
-        }),
+        yaml.safe_dump(
+            {
+                "ingest_all_fields": True,
+                "flatten_max_depth": 5,
+                "core_fields": [],
+                "custom_fields": [],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(loader, "FIELDS_PATH", fake)

@@ -3,6 +3,7 @@
 Covers: init idempotency, record/list round-trip, newest-first ordering,
 sources JSON round-trip, and the 500-row retention cap.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -31,8 +32,7 @@ async def test_init_creates_schema_and_is_idempotent():
     await init_run_history_db()  # second call must not error
     with sqlite3.connect(run_history_mod._RUN_DB_PATH) as conn:
         tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='run_history'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='run_history'"
         ).fetchall()
         ver = conn.execute("SELECT version FROM schema_version").fetchone()
     assert tables, "run_history table must exist after init"

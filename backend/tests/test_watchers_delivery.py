@@ -5,6 +5,7 @@ target (webhook envelope vs bare listener JSON), success/failure recording,
 auth-header injection, and the local/no-URL no-op. The httpx client is replaced
 with a fake so no network is touched.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,7 +51,9 @@ class _FakeResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise httpx.HTTPStatusError(
-                f"HTTP {self.status_code}", request=self.request, response=self  # type: ignore[arg-type]
+                f"HTTP {self.status_code}",
+                request=self.request,
+                response=self,  # type: ignore[arg-type]
             )
 
 
@@ -71,7 +74,7 @@ class _FakeClient:
         self.headers = headers
         self.calls: list[dict[str, Any]] = []
 
-    async def __aenter__(self) -> "_FakeClient":
+    async def __aenter__(self) -> _FakeClient:
         return self
 
     async def __aexit__(self, *exc) -> bool:
@@ -93,8 +96,12 @@ def _patch_client(fake: _FakeClient):
 
 async def _seed(wid: str, n: int = 1) -> None:
     triggers = [
-        {"dataset": "normalized", "source_entry_id": i, "source_name": "feed-a",
-         "event": {"id": i, "cve_id": f"CVE-2024-{i}"}}
+        {
+            "dataset": "normalized",
+            "source_entry_id": i,
+            "source_name": "feed-a",
+            "event": {"id": i, "cve_id": f"CVE-2024-{i}"},
+        }
         for i in range(1, n + 1)
     ]
     await store.record_triggers(wid, triggers, max_events=100)
@@ -150,8 +157,13 @@ async def test_http_target_sends_bare_event():
 @pytest.mark.asyncio
 async def test_auth_header_is_injected():
     w = await store.create_watcher(
-        _defn(name="Auth W", publish_target="webhook", webhook_url="https://x.example/in",
-              auth_header="Authorization", auth_value="Bearer secret")
+        _defn(
+            name="Auth W",
+            publish_target="webhook",
+            webhook_url="https://x.example/in",
+            auth_header="Authorization",
+            auth_value="Bearer secret",
+        )
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(status_code=200)
@@ -216,8 +228,12 @@ async def test_mixed_batch_counts_both_outcomes():
 @pytest.mark.asyncio
 async def test_discord_format_sends_content():
     w = await store.create_watcher(
-        _defn(name="Disc W", publish_target="webhook", webhook_format="discord",
-              webhook_url="https://discord.com/api/webhooks/1/abc")
+        _defn(
+            name="Disc W",
+            publish_target="webhook",
+            webhook_format="discord",
+            webhook_url="https://discord.com/api/webhooks/1/abc",
+        )
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(status_code=204)
@@ -236,13 +252,23 @@ async def test_discord_format_sends_content():
 @pytest.mark.asyncio
 async def test_slack_format_includes_all_event_fields():
     w = await store.create_watcher(
-        _defn(name="Slack F", publish_target="webhook", webhook_format="slack",
-              webhook_url="https://hooks.slack.com/services/x")
+        _defn(
+            name="Slack F",
+            publish_target="webhook",
+            webhook_format="slack",
+            webhook_url="https://hooks.slack.com/services/x",
+        )
     )
     await store.record_triggers(
         w["id"],
-        [{"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a",
-          "event": {"id": 1, "cve_id": "CVE-2024-9", "severity": "high"}}],
+        [
+            {
+                "dataset": "normalized",
+                "source_entry_id": 1,
+                "source_name": "feed-a",
+                "event": {"id": 1, "cve_id": "CVE-2024-9", "severity": "high"},
+            }
+        ],
         max_events=100,
     )
     fake = _FakeClient(status_code=200)
@@ -256,13 +282,23 @@ async def test_slack_format_includes_all_event_fields():
 @pytest.mark.asyncio
 async def test_teams_format_lists_event_fields_as_facts():
     w = await store.create_watcher(
-        _defn(name="Teams F", publish_target="webhook", webhook_format="teams",
-              webhook_url="https://acme.webhook.office.com/x")
+        _defn(
+            name="Teams F",
+            publish_target="webhook",
+            webhook_format="teams",
+            webhook_url="https://acme.webhook.office.com/x",
+        )
     )
     await store.record_triggers(
         w["id"],
-        [{"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a",
-          "event": {"id": 1, "cve_id": "CVE-2024-7"}}],
+        [
+            {
+                "dataset": "normalized",
+                "source_entry_id": 1,
+                "source_name": "feed-a",
+                "event": {"id": 1, "cve_id": "CVE-2024-7"},
+            }
+        ],
         max_events=100,
     )
     fake = _FakeClient(status_code=200)
@@ -276,8 +312,12 @@ async def test_teams_format_lists_event_fields_as_facts():
 @pytest.mark.asyncio
 async def test_slack_format_sends_text():
     w = await store.create_watcher(
-        _defn(name="Slack W", publish_target="webhook", webhook_format="slack",
-              webhook_url="https://hooks.slack.com/services/x")
+        _defn(
+            name="Slack W",
+            publish_target="webhook",
+            webhook_format="slack",
+            webhook_url="https://hooks.slack.com/services/x",
+        )
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(status_code=200)
@@ -291,8 +331,12 @@ async def test_slack_format_sends_text():
 @pytest.mark.asyncio
 async def test_teams_format_sends_messagecard():
     w = await store.create_watcher(
-        _defn(name="Teams W", publish_target="webhook", webhook_format="teams",
-              webhook_url="https://acme.webhook.office.com/x")
+        _defn(
+            name="Teams W",
+            publish_target="webhook",
+            webhook_format="teams",
+            webhook_url="https://acme.webhook.office.com/x",
+        )
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(status_code=200)
@@ -307,13 +351,23 @@ async def test_teams_format_sends_messagecard():
 async def test_discord_content_is_truncated():
     long_title = "X" * 5000
     w = await store.create_watcher(
-        _defn(name="Long W", publish_target="webhook", webhook_format="discord",
-              webhook_url="https://discord.com/api/webhooks/1/abc")
+        _defn(
+            name="Long W",
+            publish_target="webhook",
+            webhook_format="discord",
+            webhook_url="https://discord.com/api/webhooks/1/abc",
+        )
     )
     await store.record_triggers(
         w["id"],
-        [{"dataset": "normalized", "source_entry_id": 1, "source_name": "feed-a",
-          "event": {"id": 1, "title": long_title}}],
+        [
+            {
+                "dataset": "normalized",
+                "source_entry_id": 1,
+                "source_name": "feed-a",
+                "event": {"id": 1, "title": long_title},
+            }
+        ],
         max_events=100,
     )
     fake = _FakeClient(status_code=204)
@@ -325,8 +379,12 @@ async def test_discord_content_is_truncated():
 @pytest.mark.asyncio
 async def test_http_error_records_rich_detail():
     w = await store.create_watcher(
-        _defn(name="Detail W", publish_target="webhook", webhook_format="discord",
-              webhook_url="https://discord.com/api/webhooks/1/abc")
+        _defn(
+            name="Detail W",
+            publish_target="webhook",
+            webhook_format="discord",
+            webhook_url="https://discord.com/api/webhooks/1/abc",
+        )
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(
@@ -350,8 +408,7 @@ async def test_http_error_records_rich_detail():
 @pytest.mark.asyncio
 async def test_connection_error_records_detail_without_response():
     w = await store.create_watcher(
-        _defn(name="ConnD W", publish_target="webhook",
-              webhook_url="https://x.example/in")
+        _defn(name="ConnD W", publish_target="webhook", webhook_url="https://x.example/in")
     )
     await _seed(w["id"], n=1)
     fake = _FakeClient(raise_exc=httpx.ConnectError("refused"))
@@ -367,8 +424,7 @@ async def test_connection_error_records_detail_without_response():
 @pytest.mark.asyncio
 async def test_success_clears_prior_error_detail():
     w = await store.create_watcher(
-        _defn(name="Clear W", publish_target="webhook",
-              webhook_url="https://x.example/in")
+        _defn(name="Clear W", publish_target="webhook", webhook_url="https://x.example/in")
     )
     await _seed(w["id"], n=1)
     with _patch_client(_FakeClient(status_code=500, text="boom")):

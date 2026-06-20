@@ -13,6 +13,7 @@ SQLite-backed registry of LLM-generated mapping proposals at
   * status                — pending | approved | rejected | error
   * created_at, decided_at, decided_by_note
 """
+
 from __future__ import annotations
 
 import json
@@ -43,14 +44,16 @@ _VALID_FIELD_SCOPES = frozenset({"all", "configured"})
 CONSOLIDATED_SENTINEL = "__consolidated__"
 # prompts-021E-4: outcome enum for proposal audit. Distinct from `status`
 # (which remains the operator-facing pending/approved/rejected/error label).
-_VALID_OUTCOMES = frozenset({
-    "pending_review",
-    "auto_applied",
-    "discarded_below_threshold",
-    "approved",
-    "rejected",
-    "error",
-})
+_VALID_OUTCOMES = frozenset(
+    {
+        "pending_review",
+        "auto_applied",
+        "discarded_below_threshold",
+        "approved",
+        "rejected",
+        "error",
+    }
+)
 
 
 CREATE_PROPOSALS_TABLE = """
@@ -160,16 +163,13 @@ async def _migrate_proposals_schema(db: aiosqlite.Connection) -> None:
     # prompts-021E-4: backfill outcome for legacy rows so the new
     # outcome-filter API returns sensible results. Idempotent: only touches
     # NULL outcomes (new rows are explicitly populated by insert_proposal).
-    await db.execute(
-        "UPDATE proposals SET outcome = 'pending_review' WHERE outcome IS NULL"
-    )
+    await db.execute("UPDATE proposals SET outcome = 'pending_review' WHERE outcome IS NULL")
 
     # prompts-034: backfill a stable name for legacy rows so every proposal
     # has a human-facing label. Idempotent: only touches NULL names (new rows
     # are populated explicitly by insert_proposal).
     await db.execute(
-        "UPDATE proposals SET proposal_name = 'Proposal-' || created_at "
-        "WHERE proposal_name IS NULL"
+        "UPDATE proposals SET proposal_name = 'Proposal-' || created_at WHERE proposal_name IS NULL"
     )
 
 
@@ -244,9 +244,7 @@ async def insert_proposal(
     # timestamp (ISO-8601, microsecond precision → unique per insert).
     proposal_name = f"Proposal-{created_at}"
     breakdown_json = (
-        json.dumps(score_breakdown, ensure_ascii=False)
-        if score_breakdown is not None
-        else None
+        json.dumps(score_breakdown, ensure_ascii=False) if score_breakdown is not None else None
     )
     async with aiosqlite.connect(_PROPOSALS_DB_PATH) as db:
         cur = await db.execute(
@@ -326,9 +324,7 @@ async def get_proposal(proposal_id: int) -> dict[str, Any] | None:
     await init_proposals_db()
     async with aiosqlite.connect(_PROPOSALS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM proposals WHERE id = ?", (proposal_id,)
-        )
+        cur = await db.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,))
         row = await cur.fetchone()
         await cur.close()
     if row is None:
@@ -382,10 +378,7 @@ async def list_proposals(
         where.append("archived = ?")
         params.append(1 if archived else 0)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    sql = (
-        f"SELECT * FROM proposals {where_sql} "
-        f"ORDER BY created_at DESC LIMIT ?"
-    )
+    sql = f"SELECT * FROM proposals {where_sql} ORDER BY created_at DESC LIMIT ?"
     params.append(int(limit))
     async with aiosqlite.connect(_PROPOSALS_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -462,10 +455,7 @@ async def archive_proposal(proposal_id: int, note: str | None = None) -> bool:
     params: list[Any] = []
     if note:
         # Append rather than overwrite: keep any prior approve/reject note.
-        sets.append(
-            "decided_by_note = "
-            "TRIM(COALESCE(decided_by_note, '') || ' ' || ?)"
-        )
+        sets.append("decided_by_note = TRIM(COALESCE(decided_by_note, '') || ' ' || ?)")
         params.append(f"[archived] {note}")
     sql = f"UPDATE proposals SET {', '.join(sets)} WHERE id = ?"
     params.append(proposal_id)

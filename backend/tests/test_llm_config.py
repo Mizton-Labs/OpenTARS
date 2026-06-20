@@ -1,4 +1,5 @@
 """Tests for backend.llm.config (prompts-021D)."""
+
 from __future__ import annotations
 
 import pytest
@@ -26,7 +27,7 @@ def test_partial_yaml_merges_defaults():
     cfg_mod._LLM_CONFIG_PATH.write_text("enabled: false\n")
     result = cfg_mod.load_llm_config()
     assert result["enabled"] is False
-    assert result["providers"] == []          # default preserved
+    assert result["providers"] == []  # default preserved
     assert result["default_provider"] is None  # default preserved
 
 
@@ -148,7 +149,8 @@ def test_validate_new_provider_name_rejects_non_string():
 def test_validate_new_provider_name_rejects_duplicate():
     with pytest.raises(LLMConfigError, match="already exists"):
         cfg_mod.validate_new_provider_name(
-            "openai-prod", existing_names={"openai-prod", "ollama-local"},
+            "openai-prod",
+            existing_names={"openai-prod", "ollama-local"},
         )
 
 
@@ -157,17 +159,20 @@ def test_existing_legacy_names_are_grandfathered_by_save_llm_config():
     a dot) must round-trip through save_llm_config without being rejected;
     validate_new_provider_name is only enforced on new additions."""
     legacy_name = "legacy.with.dots"
-    cfg_mod.save_llm_config({
-        "enabled": False,
-        "default_provider": None,
-        "providers": [{"name": legacy_name, "kind": "openai"}],
-    })
+    cfg_mod.save_llm_config(
+        {
+            "enabled": False,
+            "default_provider": None,
+            "providers": [{"name": legacy_name, "kind": "openai"}],
+        }
+    )
     reloaded = cfg_mod.load_llm_config()
     assert reloaded["providers"][0]["name"] == legacy_name
     # But adding a new one with the same broken format must still fail.
     with pytest.raises(LLMConfigError, match="match"):
         cfg_mod.validate_new_provider_name(
-            "another.bad.name", existing_names={legacy_name},
+            "another.bad.name",
+            existing_names={legacy_name},
         )
 
 
@@ -175,49 +180,61 @@ def test_existing_legacy_names_are_grandfathered_by_save_llm_config():
 
 
 def test_validate_accepts_optional_available_models():
-    cfg_mod.save_llm_config({
-        "enabled": False,
-        "providers": [
-            {
-                "name": "p1",
-                "kind": "openai",
-                "base_url": "https://x",
-                "model": "m",
-                "api_key": "sk",
-                "available_models": ["m1", "m2"],
-            },
-        ],
-    })
+    cfg_mod.save_llm_config(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                    "available_models": ["m1", "m2"],
+                },
+            ],
+        }
+    )
     loaded = cfg_mod.load_llm_config()
     assert loaded["providers"][0]["available_models"] == ["m1", "m2"]
 
 
 def test_validate_rejects_non_list_available_models():
     with pytest.raises(LLMConfigError, match="available_models"):
-        cfg_mod.save_llm_config({
-            "enabled": False,
-            "providers": [
-                {
-                    "name": "p1", "kind": "openai", "base_url": "https://x",
-                    "model": "m", "api_key": "sk",
-                    "available_models": "not-a-list",
-                },
-            ],
-        })
+        cfg_mod.save_llm_config(
+            {
+                "enabled": False,
+                "providers": [
+                    {
+                        "name": "p1",
+                        "kind": "openai",
+                        "base_url": "https://x",
+                        "model": "m",
+                        "api_key": "sk",
+                        "available_models": "not-a-list",
+                    },
+                ],
+            }
+        )
 
 
 def test_validate_rejects_empty_strings_in_available_models():
     with pytest.raises(LLMConfigError, match="available_models"):
-        cfg_mod.save_llm_config({
-            "enabled": False,
-            "providers": [
-                {
-                    "name": "p1", "kind": "openai", "base_url": "https://x",
-                    "model": "m", "api_key": "sk",
-                    "available_models": ["ok", ""],
-                },
-            ],
-        })
+        cfg_mod.save_llm_config(
+            {
+                "enabled": False,
+                "providers": [
+                    {
+                        "name": "p1",
+                        "kind": "openai",
+                        "base_url": "https://x",
+                        "model": "m",
+                        "api_key": "sk",
+                        "available_models": ["ok", ""],
+                    },
+                ],
+            }
+        )
 
 
 def test_redact_config_does_not_touch_available_models():
@@ -226,8 +243,11 @@ def test_redact_config_does_not_touch_available_models():
         "enabled": False,
         "providers": [
             {
-                "name": "p1", "kind": "openai", "base_url": "https://x",
-                "model": "m", "api_key": "sk-real",
+                "name": "p1",
+                "kind": "openai",
+                "base_url": "https://x",
+                "model": "m",
+                "api_key": "sk-real",
                 "available_models": ["m1"],
             },
         ],
@@ -241,15 +261,21 @@ def test_redact_config_does_not_touch_available_models():
 
 
 def _save_provider(name: str = "p1", **extra):
-    cfg_mod.save_llm_config({
-        "enabled": False,
-        "providers": [
-            {
-                "name": name, "kind": "openai", "base_url": "https://x",
-                "model": "m", "api_key": "sk", **extra,
-            },
-        ],
-    })
+    cfg_mod.save_llm_config(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": name,
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                    **extra,
+                },
+            ],
+        }
+    )
 
 
 def test_validate_accepts_optional_tested_models():
@@ -275,12 +301,14 @@ def test_record_tested_model_appends_and_dedupes():
     # Second distinct model appends; order preserved.
     assert cfg_mod.record_tested_model("p1", "gpt-y") is True
     assert cfg_mod.load_llm_config()["providers"][0]["tested_models"] == [
-        "gpt-x", "gpt-y",
+        "gpt-x",
+        "gpt-y",
     ]
     # Duplicate is a no-op.
     assert cfg_mod.record_tested_model("p1", "gpt-x") is False
     assert cfg_mod.load_llm_config()["providers"][0]["tested_models"] == [
-        "gpt-x", "gpt-y",
+        "gpt-x",
+        "gpt-y",
     ]
 
 
@@ -309,4 +337,3 @@ def test_validate_rejects_non_dict_extra_body():
 def test_validate_rejects_extra_body_non_string_keys():
     with pytest.raises(LLMConfigError, match="extra_body"):
         _save_provider(extra_body={"": "blank-key"})
-

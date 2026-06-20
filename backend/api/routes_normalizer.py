@@ -1,6 +1,7 @@
 """
 Normalizer API routes — configuration, manual trigger, and results viewer.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -33,8 +34,7 @@ async def update_normalizer_config(body: dict[str, Any]) -> dict[str, Any]:
     if "mode" in body and body["mode"] not in VALID_MODES:
         raise HTTPException(
             status_code=400,
-            detail=f"invalid mode {body['mode']!r}; must be one of "
-            f"{sorted(VALID_MODES)}",
+            detail=f"invalid mode {body['mode']!r}; must be one of {sorted(VALID_MODES)}",
         )
     cfg = load_normalizer_config()
     cfg.update(body)
@@ -57,9 +57,7 @@ async def trigger_normalizer_run() -> dict[str, Any]:
     if cfg.get("enabled", True) and cfg.get("mode") == "smart":
         active = await get_active_consolidated()
         if active is not None:
-            reset_rows = await reapply_consolidated_to_sources(
-                active.get("sources") or []
-            )
+            reset_rows = await reapply_consolidated_to_sources(active.get("sources") or [])
     result = await run_normalizer(trigger="manual")
     if reset_rows:
         return {"reset_rows": reset_rows, **result}

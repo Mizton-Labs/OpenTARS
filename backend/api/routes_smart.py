@@ -18,6 +18,7 @@ Approval semantics:
   * The normalizer mode is NOT auto-switched. Body flag
     ``set_mode_manual=true`` opts in to flipping ``mode: auto`` → ``manual``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,29 +31,23 @@ from backend.ingestion.jobs import job_store
 from backend.llm.errors import (
     LLMConfigError,
     LLMDisabledError,
-    LLMProviderError,
-    LLMTransportError,
 )
 from backend.llm.registry import get_client
-from backend.normalizer.config import load_normalizer_config, save_normalizer_config
 from backend.normalizer.consolidated import get_active_consolidated
 from backend.normalizer.proposals import (
     CONSOLIDATED_SENTINEL,
     archive_proposal,
     get_proposal,
-    insert_proposal,
     list_proposals,
     update_proposal_status,
 )
 from backend.normalizer.smart import (
-    SmartModeError,
     _DEFAULT_SAMPLE_SIZE,
+    SmartModeError,
     _canonical_field_names,
     build_prompt,
     discover_raw_field_names,
-    parse_llm_response,
     sample_raw_entries,
-    validate_proposal,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +94,8 @@ def _require_sources(body: dict[str, Any]) -> list[str]:
     raw = body.get("sources")
     if not isinstance(raw, list) or not raw:
         raise HTTPException(
-            status_code=400, detail="'sources' must be a non-empty list",
+            status_code=400,
+            detail="'sources' must be a non-empty list",
         )
     sources: list[str] = []
     seen: set[str] = set()
@@ -179,6 +175,7 @@ async def _run_consolidated_job(
     scheduler) at module import time.
     """
     from backend.normalizer.smart_runner import run_consolidated_smart_job
+
     await run_consolidated_smart_job(
         job_id=job_id,
         sources=sources,
@@ -283,18 +280,22 @@ async def get_proposals(
     effective_outcome = outcome if outcome is not None else "pending_review"
     # prompts-034 default: hide archived rows unless explicitly requested.
     archived_map: dict[str, bool | None] = {
-        "active": False, "all": None, "only": True,
+        "active": False,
+        "all": None,
+        "only": True,
     }
     if archived not in archived_map:
         raise HTTPException(
             status_code=400,
-            detail=f"invalid archived filter: {archived!r} "
-                   "(expected active|all|only)",
+            detail=f"invalid archived filter: {archived!r} (expected active|all|only)",
         )
     try:
         return await list_proposals(
-            source=source, status=status, outcome=effective_outcome,
-            limit=limit, archived=archived_map[archived],
+            source=source,
+            status=status,
+            outcome=effective_outcome,
+            limit=limit,
+            archived=archived_map[archived],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -316,6 +317,7 @@ def _merge_with_existing_wins(
     ``backend.normalizer.smart_runner`` so the auto-apply code path can
     share it. Kept here so any external import (tests) does not break."""
     from backend.normalizer import smart_runner as _sr
+
     return _sr._merge_with_existing_wins(existing, proposal_mapping)
 
 
@@ -328,6 +330,7 @@ async def approve_proposal(proposal_id: int, body: dict[str, Any] | None = None)
     round-trip.
     """
     from backend.normalizer.smart_runner import approve_proposal_core
+
     body = body or {}
     note = body.get("note")
     set_mode_manual = bool(body.get("set_mode_manual", False))
@@ -374,9 +377,7 @@ async def archive_proposal_route(
     note = body.get("note")
     proposal = await get_proposal(proposal_id)
     if proposal is None:
-        raise HTTPException(
-            status_code=404, detail=f"Proposal {proposal_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
     # prompts-039: the proposal backing the active consolidated mapping is
     # locked — archiving it would orphan the live mapping. Deactivate first.
     active = await get_active_consolidated()
@@ -393,9 +394,7 @@ async def archive_proposal_route(
 
 
 @router.post("/proposals/{proposal_id}/reenable")
-async def reenable_proposal(
-    proposal_id: int, body: dict[str, Any] | None = None
-) -> dict[str, Any]:
+async def reenable_proposal(proposal_id: int, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return an operator-rejected proposal to the review queue (prompts-032 D).
 
     Transition: ``rejected → pending`` (outcome ``rejected → pending_review``)
@@ -431,7 +430,10 @@ async def reenable_proposal(
             ),
         )
     await update_proposal_status(
-        proposal_id, "pending", note=note, outcome="pending_review",
+        proposal_id,
+        "pending",
+        note=note,
+        outcome="pending_review",
     )
     return {"proposal_id": proposal_id, "status": "pending"}
 
@@ -488,13 +490,17 @@ async def run_active_consolidated_route() -> dict[str, Any]:
     active = await get_active_consolidated()
     if active is None:
         raise HTTPException(
-            status_code=409, detail="No active consolidated mapping to run",
+            status_code=409,
+            detail="No active consolidated mapping to run",
         )
     sources = active.get("sources") or []
     reset_rows = await reapply_consolidated_to_sources(sources)
     result = await run_normalizer(trigger="reapply")
     logger.info(
         "active consolidated run: version=%s sources=%s reset_rows=%d result=%s",
-        active.get("id"), sources, reset_rows, result,
+        active.get("id"),
+        sources,
+        reset_rows,
+        result,
     )
     return {"reset_rows": reset_rows, **result}

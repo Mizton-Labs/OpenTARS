@@ -8,6 +8,7 @@ the operator-visible field list in lockstep. ``normalized.db`` is regenerable
 data: on any ``_NORM_SCHEMA_VERSION`` bump the file is dropped, recreated,
 and the next normalizer run rebuilds its rows. Raw source DBs are untouched.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,12 +51,19 @@ _HOUSEKEEPING_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 # Yaml fields that must always be a numeric SQL type when present.
-_REAL_COLUMNS: frozenset[str] = frozenset({
-    "cvss_score", "confidence", "geo_lat", "geo_lon",
-})
-_INTEGER_COLUMNS: frozenset[str] = frozenset({
-    "port",
-})
+_REAL_COLUMNS: frozenset[str] = frozenset(
+    {
+        "cvss_score",
+        "confidence",
+        "geo_lat",
+        "geo_lon",
+    }
+)
+_INTEGER_COLUMNS: frozenset[str] = frozenset(
+    {
+        "port",
+    }
+)
 
 
 def _yaml_field_names() -> list[str]:
@@ -166,7 +174,8 @@ async def check_and_handle_schema_bump() -> bool:
             logger.warning(
                 "Normalized DB schema version %s < required %s — "
                 "dropping data/normalized.db and resetting source normalized flags",
-                current, _NORM_SCHEMA_VERSION,
+                current,
+                _NORM_SCHEMA_VERSION,
             )
             _NORM_DB_PATH.unlink()
 
@@ -174,6 +183,7 @@ async def check_and_handle_schema_bump() -> bool:
         # Reset normalized=0 on all source DBs so the next run rebuilds.
         # Local import to avoid an import cycle at module load time.
         from backend.db.manager import reset_normalized_flag_for_all_sources
+
         touched = await reset_normalized_flag_for_all_sources()
         logger.info("Reset normalized=0 on %d source rows after schema bump", touched)
 
@@ -236,7 +246,8 @@ async def delete_normalized_for_sources(sources: list[str]) -> int:
         deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
     logger.info(
         "delete_normalized_for_sources: removed %d rows for sources=%s",
-        deleted, sources,
+        deleted,
+        sources,
     )
     return deleted
 
@@ -280,8 +291,15 @@ async def query_normalized(
         # in the yaml-derived schema; if a column was removed from yaml it will
         # be silently absent from the WHERE clause.
         candidate_cols = [
-            "indicator", "title", "description", "actor", "cve_id",
-            "country", "source_name", "campaign", "malware_family",
+            "indicator",
+            "title",
+            "description",
+            "actor",
+            "cve_id",
+            "country",
+            "source_name",
+            "campaign",
+            "malware_family",
         ]
         allowed = _allowed_columns()
         search_cols = [c for c in candidate_cols if c in allowed]
@@ -292,8 +310,7 @@ async def query_normalized(
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     sql = (
-        f"SELECT * FROM normalized_entries {where_sql} "
-        f"ORDER BY normalized_at DESC LIMIT ? OFFSET ?"
+        f"SELECT * FROM normalized_entries {where_sql} ORDER BY normalized_at DESC LIMIT ? OFFSET ?"
     )
     params.extend([limit, offset])
 

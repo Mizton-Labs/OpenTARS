@@ -11,19 +11,20 @@ real proposals.db:
     (no scoring, no auto-apply);
   * feeds with no entries are skipped (not fatal); all-empty fails the job.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
+from backend.ingestion import jobs as jobs_mod
 from backend.llm import config as llm_cfg_mod
 from backend.normalizer import config as norm_cfg_mod
 from backend.normalizer import proposals as proposals_mod
 from backend.normalizer import smart as smart_mod
 from backend.normalizer import smart_runner as smart_runner_mod
 from backend.normalizer.proposals import CONSOLIDATED_SENTINEL
-from backend.ingestion import jobs as jobs_mod
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,9 @@ def _isolate(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(llm_cfg_mod, "_LLM_CONFIG_PATH", tmp_path / "llm-providers.yaml")
     monkeypatch.setattr(proposals_mod, "_PROPOSALS_DB_PATH", tmp_path / "proposals.db")
     monkeypatch.setattr(
-        norm_cfg_mod, "_NORMALIZER_CONFIG_PATH", tmp_path / "normalizer-config.yaml",
+        norm_cfg_mod,
+        "_NORMALIZER_CONFIG_PATH",
+        tmp_path / "normalizer-config.yaml",
     )
     jobs_mod.job_store.reset()
     yield
@@ -44,14 +47,21 @@ class _FakeLLMClient:
     def __init__(self, response_text: str):
         self._text = response_text
 
-    def complete(self, _prompt: str, *, system: str = "", max_tokens: int = 0,
-                 temperature: float = 0.0, timeout: float | None = None,
-                 model: str | None = None) -> str:
+    def complete(
+        self,
+        _prompt: str,
+        *,
+        system: str = "",
+        max_tokens: int = 0,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> str:
         return self._text
 
     def last_exchange_raw(self, error: Exception | None = None) -> tuple[str, str]:
         body = getattr(error, "body", None) if error is not None else None
-        return ("POST https://fake/v1/chat\n\n{}", body or "{\"resp\": true}")
+        return ("POST https://fake/v1/chat\n\n{}", body or '{"resp": true}')
 
 
 def _seed_canonical_fields_yaml(monkeypatch):
@@ -60,6 +70,7 @@ def _seed_canonical_fields_yaml(monkeypatch):
             "core_fields": [{"name": "title"}, {"name": "indicator"}, {"name": "severity"}],
             "custom_fields": [],
         }
+
     monkeypatch.setattr(smart_mod, "load_fields", fake_loader)
 
 
@@ -68,11 +79,13 @@ def _mock_per_source_samples(monkeypatch, mapping: dict[str, list[dict]]):
 
     ``mapping`` maps a source name to its rows; an absent source raises
     SmartModeError (mirroring an empty feed)."""
+
     async def fake(source_name, sample_size=20):
         rows = mapping.get(source_name)
         if rows is None:
             raise smart_mod.SmartModeError(f"source {source_name!r} has no entries")
         return rows
+
     monkeypatch.setattr(smart_mod, "sample_raw_entries", fake)
 
 
@@ -81,13 +94,17 @@ def _mock_per_source_samples(monkeypatch, mapping: dict[str, list[dict]]):
 
 @pytest.mark.asyncio
 async def test_sample_consolidated_unions_and_skips_empty(monkeypatch):
-    _mock_per_source_samples(monkeypatch, {
-        "feed-a": [{"a": "1", "b": "2"}],
-        "feed-b": [{"b": "x", "c": "y"}],
-        # feed-empty absent → skipped
-    })
+    _mock_per_source_samples(
+        monkeypatch,
+        {
+            "feed-a": [{"a": "1", "b": "2"}],
+            "feed-b": [{"b": "x", "c": "y"}],
+            # feed-empty absent → skipped
+        },
+    )
     samples, contributing = await smart_mod.sample_consolidated_entries(
-        ["feed-a", "feed-empty", "feed-b"], sample_size=5,
+        ["feed-a", "feed-empty", "feed-b"],
+        sample_size=5,
     )
     assert contributing == ["feed-a", "feed-b"]
     assert len(samples) == 2
@@ -107,16 +124,19 @@ async def test_sample_consolidated_all_empty_raises(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_consolidated_persists_single_proposal(monkeypatch):
     _seed_canonical_fields_yaml(monkeypatch)
-    _mock_per_source_samples(monkeypatch, {
-        "feed-a": [{"a": "1", "b": "2"}] * 3,
-        "feed-b": [{"b": "x", "c": "y"}] * 3,
-    })
+    _mock_per_source_samples(
+        monkeypatch,
+        {
+            "feed-a": [{"a": "1", "b": "2"}] * 3,
+            "feed-b": [{"b": "x", "c": "y"}] * 3,
+        },
+    )
     # LLM maps a/b/c plus one unknown canonical (dropped) and one skip.
     monkeypatch.setattr(
-        smart_runner_mod, "get_client",
+        smart_runner_mod,
+        "get_client",
         lambda name=None: _FakeLLMClient(
-            '{"a": "title", "b": "indicator", "c": "severity", '
-            '"z": "nope", "b_extra": "__skip__"}'
+            '{"a": "title", "b": "indicator", "c": "severity", "z": "nope", "b_extra": "__skip__"}'
         ),
     )
     job = jobs_mod.job_store.create(CONSOLIDATED_SENTINEL, "smart_proposal")
@@ -153,7 +173,8 @@ async def test_run_consolidated_all_empty_fails_job(monkeypatch):
     _seed_canonical_fields_yaml(monkeypatch)
     _mock_per_source_samples(monkeypatch, {})
     monkeypatch.setattr(
-        smart_runner_mod, "get_client",
+        smart_runner_mod,
+        "get_client",
         lambda name=None: _FakeLLMClient("{}"),
     )
     job = jobs_mod.job_store.create(CONSOLIDATED_SENTINEL, "smart_proposal")

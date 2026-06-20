@@ -2,6 +2,7 @@
 DB manager — per-source SQLite file management using aiosqlite.
 Each source gets its own file: data/<source_name>.db
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -40,15 +41,43 @@ InsertResult = Literal["inserted", "duplicate", "error"]
 # filter column name is interpolated into SQL, so anything not in this set MUST
 # be rejected to prevent SQL-identifier injection. ``id``/``dedup_key`` are
 # real columns too and safe to filter on.
-CORE_COLUMNS: frozenset[str] = frozenset({
-    "indicator", "indicator_type", "threat_type", "severity", "confidence",
-    "source", "source_url", "title", "description", "tags", "tlp",
-    "published_at", "first_seen", "last_seen", "ingested_at",
-    "cve_id", "cvss_score", "cvss_vector", "affected_product", "affected_vendor",
-    "patch_available", "mitre_attack_id", "malware_family", "campaign", "actor",
-    "country", "autonomous_system", "port", "protocol", "geo_lat", "geo_lon",
-    "ingest_mode", "raw",
-})
+CORE_COLUMNS: frozenset[str] = frozenset(
+    {
+        "indicator",
+        "indicator_type",
+        "threat_type",
+        "severity",
+        "confidence",
+        "source",
+        "source_url",
+        "title",
+        "description",
+        "tags",
+        "tlp",
+        "published_at",
+        "first_seen",
+        "last_seen",
+        "ingested_at",
+        "cve_id",
+        "cvss_score",
+        "cvss_vector",
+        "affected_product",
+        "affected_vendor",
+        "patch_available",
+        "mitre_attack_id",
+        "malware_family",
+        "campaign",
+        "actor",
+        "country",
+        "autonomous_system",
+        "port",
+        "protocol",
+        "geo_lat",
+        "geo_lon",
+        "ingest_mode",
+        "raw",
+    }
+)
 
 # Columns that are valid filter targets but are NOT packed from a pushed entry
 # (system-managed). Kept separate from CORE_COLUMNS so add_entry's split logic
@@ -62,10 +91,17 @@ FILTERABLE_COLUMNS: frozenset[str] = CORE_COLUMNS | _FILTERABLE_EXTRA_COLUMNS
 # issue_local_009 (review_01): fields excluded from the Raw-table default-column
 # derivation. Internal/ID/blob columns carry no display value, and source +
 # ingested_at are always shown by the table so they never compete for a slot.
-_FIELD_PRESENCE_IGNORE: frozenset[str] = frozenset({
-    "id", "dedup_key", "normalized", "extra", "raw", "source", "ingested_at",
-})
-
+_FIELD_PRESENCE_IGNORE: frozenset[str] = frozenset(
+    {
+        "id",
+        "dedup_key",
+        "normalized",
+        "extra",
+        "raw",
+        "source",
+        "ingested_at",
+    }
+)
 
 
 def _db_path(source_name: str) -> Path:
@@ -77,9 +113,16 @@ def _db_path(source_name: str) -> Path:
 # they change between ingests of the same logical record (ingested_at) or are
 # meta/internal (id, dedup_key, normalized) or are redundant with the explicit
 # `source` argument we mix in separately.
-_DEDUP_VOLATILE_KEYS: frozenset[str] = frozenset({
-    "ingested_at", "ingest_mode", "source", "dedup_key", "id", "normalized",
-})
+_DEDUP_VOLATILE_KEYS: frozenset[str] = frozenset(
+    {
+        "ingested_at",
+        "ingest_mode",
+        "source",
+        "dedup_key",
+        "id",
+        "normalized",
+    }
+)
 
 
 def _compute_dedup_key(source: str, entry: dict[str, Any]) -> str:
@@ -105,7 +148,7 @@ def _compute_dedup_key(source: str, entry: dict[str, Any]) -> str:
             continue
         stable[key] = value
     payload = json.dumps(stable, sort_keys=True, default=str, ensure_ascii=False)
-    return hashlib.sha256(f"{source or ''}\x1f{payload}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{source or ''}\x1f{payload}".encode()).hexdigest()
 
 
 async def init_db(source_name: str) -> None:
@@ -275,7 +318,9 @@ async def query_entries(
                     params.extend([f"%{search}%"] * len(search_cols))
 
                 where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-                sql = f"SELECT * FROM entries {where_sql} ORDER BY ingested_at DESC LIMIT ? OFFSET ?"
+                sql = (
+                    f"SELECT * FROM entries {where_sql} ORDER BY ingested_at DESC LIMIT ? OFFSET ?"
+                )
                 params.extend([limit, offset])
 
                 async for row in await db.execute(sql, params):
@@ -344,11 +389,11 @@ async def get_summary() -> list[dict[str, Any]]:
                 m = meta_by_source.get(src)
                 if m:
                     entry["last_ingested_at"] = m.get("last_ingested_at")
-                    entry["last_total_read"]  = m.get("last_total_read")
-                    entry["last_inserted"]    = m.get("last_inserted")
-                    entry["last_duplicates"]  = m.get("last_duplicates")
-                    entry["last_discarded"]   = m.get("last_discarded")
-                    entry["last_job_state"]   = m.get("last_job_state")
+                    entry["last_total_read"] = m.get("last_total_read")
+                    entry["last_inserted"] = m.get("last_inserted")
+                    entry["last_duplicates"] = m.get("last_duplicates")
+                    entry["last_discarded"] = m.get("last_discarded")
+                    entry["last_job_state"] = m.get("last_job_state")
                 summary.append(entry)
                 total += count
         except sqlite3.OperationalError as exc:
@@ -384,9 +429,7 @@ def reset_db(source_name: str | None = None) -> list[str]:
     if source_name:
         targets = [_db_path(source_name)]
     else:
-        targets = [
-            p for p in DATA_DIR.glob("*.db") if p.stem != "users"
-        ]
+        targets = [p for p in DATA_DIR.glob("*.db") if p.stem != "users"]
     for path in targets:
         if path.exists():
             path.unlink()
@@ -398,10 +441,7 @@ def _get_all_sources() -> list[str]:
     """Return all source names based on existing DB files (system DBs excluded)."""
     if not DATA_DIR.exists():
         return []
-    return [
-        p.stem for p in sorted(DATA_DIR.glob("*.db"))
-        if p.stem not in _SYSTEM_DB_STEMS
-    ]
+    return [p.stem for p in sorted(DATA_DIR.glob("*.db")) if p.stem not in _SYSTEM_DB_STEMS]
 
 
 async def reset_normalized_flag_for_all_sources() -> int:
@@ -420,15 +460,15 @@ async def reset_normalized_flag_for_all_sources() -> int:
             continue
         try:
             async with aiosqlite.connect(path) as db:
-                cursor = await db.execute(
-                    "UPDATE entries SET normalized=0 WHERE normalized=1"
-                )
+                cursor = await db.execute("UPDATE entries SET normalized=0 WHERE normalized=1")
                 await db.commit()
                 total += cursor.rowcount or 0
                 await cursor.close()
         except sqlite3.OperationalError as exc:
             logger.warning(
-                "reset_normalized_flag: skipping source %s: %s", src, exc,
+                "reset_normalized_flag: skipping source %s: %s",
+                src,
+                exc,
             )
             continue
     return total
@@ -469,9 +509,7 @@ async def reset_normalized_flag_for_source(source_name: str) -> int:
         return 0
     try:
         async with aiosqlite.connect(path) as db:
-            cursor = await db.execute(
-                "UPDATE entries SET normalized=0 WHERE normalized=1"
-            )
+            cursor = await db.execute("UPDATE entries SET normalized=0 WHERE normalized=1")
             await db.commit()
             count = cursor.rowcount or 0
             await cursor.close()
@@ -479,6 +517,7 @@ async def reset_normalized_flag_for_source(source_name: str) -> int:
     except sqlite3.OperationalError as exc:
         logger.warning(
             "reset_normalized_flag_for_source: skipping %s: %s",
-            source_name, exc,
+            source_name,
+            exc,
         )
         return 0

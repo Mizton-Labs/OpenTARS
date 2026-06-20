@@ -14,6 +14,7 @@ JSON-encoded before reaching the prompt body. The LLM response is validated
 against the closed yaml-derived canonical set; unknown canonicals are
 silently dropped. The operator's manual approval is the final defence.
 """
+
 from __future__ import annotations
 
 import ast
@@ -112,11 +113,7 @@ def _sanitise_row(row: dict[str, Any]) -> dict[str, Any]:
     offered to the LLM for mapping.
     """
     skip_keys = {"id", "ingested_at", "ingest_mode", "dedup_key", "normalized", "raw", "extra"}
-    return {
-        k: _sanitise_value(v)
-        for k, v in row.items()
-        if k not in skip_keys
-    }
+    return {k: _sanitise_value(v) for k, v in row.items() if k not in skip_keys}
 
 
 async def sample_raw_entries(
@@ -137,18 +134,14 @@ async def sample_raw_entries(
         raise SmartModeError("sample_size must be > 0")
     capped = min(sample_size, _MAX_SAMPLE_SIZE)
 
-    rows = await query_entries(
-        source_name=source_name, limit=capped, filters={"normalized": 0}
-    )
+    rows = await query_entries(source_name=source_name, limit=capped, filters={"normalized": 0})
     if not rows:
         rows = await query_entries(source_name=source_name, limit=capped)
     if not rows:
         # Last resort — normalized DB. May still be empty.
         rows = await query_normalized(source_name=source_name, limit=capped)
     if not rows:
-        raise SmartModeError(
-            f"source {source_name!r} has no entries to sample"
-        )
+        raise SmartModeError(f"source {source_name!r} has no entries to sample")
     return [_sanitise_row(r) for r in rows]
 
 
@@ -240,9 +233,7 @@ def _norm_token(value: str) -> str:
     return _NON_ALNUM_RE.sub("", value.lower())
 
 
-def _is_self_describing(
-    field_name: str, canonical_norms: set[str]
-) -> bool:
+def _is_self_describing(field_name: str, canonical_norms: set[str]) -> bool:
     """True when a field's leaf name already matches a canonical name.
 
     Such fields need no example values — the name alone tells the LLM where the
@@ -271,9 +262,7 @@ def _example_values_for(
         if value is None or value == "" or value == [] or value == {}:
             continue
         rendered = (
-            value
-            if isinstance(value, str)
-            else json.dumps(value, ensure_ascii=False, default=str)
+            value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
         )
         if rendered in seen_set:
             continue
@@ -306,13 +295,9 @@ def _field_section(
     budget = _SAMPLE_BUDGET_CHARS
     for field in emitted:
         if budget > 0 and not _is_self_describing(field, canonical_norms):
-            examples = _example_values_for(
-                field, samples, _MAX_EXAMPLES_PER_FIELD
-            )
+            examples = _example_values_for(field, samples, _MAX_EXAMPLES_PER_FIELD)
             if examples:
-                rendered = ", ".join(
-                    json.dumps(e, ensure_ascii=False) for e in examples
-                )
+                rendered = ", ".join(json.dumps(e, ensure_ascii=False) for e in examples)
                 suffix = f"  e.g. {rendered}"
                 if len(suffix) <= budget:
                     budget -= len(suffix)
@@ -357,22 +342,22 @@ def build_prompt(
         "Your job is to map raw feed field names to a fixed canonical schema. "
         "You MUST respond with a single JSON object and nothing else. "
         "The JSON object MUST map each raw field name to either one of the "
-        "listed canonical names or the literal string \"__skip__\". "
+        'listed canonical names or the literal string "__skip__". '
         "You MUST NOT invent canonical names. "
         "You MUST NOT include any prose, explanation, or markdown."
     )
 
     user_prompt = (
         f"Source name: {source_name}\n\n"
-        f"Canonical fields (closed set; use exact name or \"__skip__\"):\n"
+        f'Canonical fields (closed set; use exact name or "__skip__"):\n'
         f"{canon_list}\n\n"
         f"Raw fields to map — map EACH field below to a canonical name or "
-        f"\"__skip__\". The field name is the primary signal; some fields show "
-        f"example values (\"e.g. …\") only where the name alone is ambiguous:\n"
+        f'"__skip__". The field name is the primary signal; some fields show '
+        f'example values ("e.g. …") only where the name alone is ambiguous:\n'
         f"{field_block}\n\n"
         f"Return a JSON object whose keys are EXACTLY the field names listed "
         f"above and whose values are the corresponding canonical name or "
-        f"\"__skip__\"."
+        f'"__skip__".'
     )
     return system_prompt, user_prompt
 
@@ -405,23 +390,23 @@ def build_consolidated_prompt(
         "them. "
         "You MUST respond with a single JSON object and nothing else. "
         "The JSON object MUST map each raw field name to either one of the "
-        "listed canonical names or the literal string \"__skip__\". "
+        'listed canonical names or the literal string "__skip__". '
         "You MUST NOT invent canonical names. "
         "You MUST NOT include any prose, explanation, or markdown."
     )
 
     user_prompt = (
         f"Source feeds ({len(sources)}): {label}\n\n"
-        f"Canonical fields (closed set; use exact name or \"__skip__\"):\n"
+        f'Canonical fields (closed set; use exact name or "__skip__"):\n'
         f"{canon_list}\n\n"
         f"Raw fields to map (union across all feeds) — map EACH field below to "
-        f"a canonical name or \"__skip__\". The field name is the primary "
-        f"signal; some fields show example values (\"e.g. …\") only where the "
+        f'a canonical name or "__skip__". The field name is the primary '
+        f'signal; some fields show example values ("e.g. …") only where the '
         f"name alone is ambiguous:\n"
         f"{field_block}\n\n"
         f"Return a JSON object whose keys are EXACTLY the field names listed "
         f"above and whose values are the corresponding canonical name or "
-        f"\"__skip__\"."
+        f'"__skip__".'
     )
     return system_prompt, user_prompt
 
@@ -460,7 +445,7 @@ def _strip_harmony(text: str) -> str:
         return text
     finals = list(_HARMONY_FINAL_RE.finditer(text))
     if finals:
-        text = text[finals[-1].end():]
+        text = text[finals[-1].end() :]
     return _HARMONY_TOKEN_RE.sub("", text)
 
 
@@ -567,8 +552,7 @@ def parse_llm_response(text: str) -> dict[str, str]:
     end = cleaned.rfind("}")
     if start < 0 or end <= start:
         raise SmartModeError(
-            "LLM response does not contain a JSON object "
-            f"(response starts with: {cleaned[:80]!r})"
+            f"LLM response does not contain a JSON object (response starts with: {cleaned[:80]!r})"
         )
     # prompts-035: strip JS-style comments some models embed inside the object
     # (e.g. gpt-oss) before the tolerant JSON load.
@@ -627,7 +611,10 @@ def validate_proposal(
         logger.info(
             "smart-mode validation: kept=%d dropped_unknown_keys=%d "
             "dropped_unknown_canonicals=%d explicit_skip=%d",
-            len(cleaned), dropped_keys, dropped_values, skipped,
+            len(cleaned),
+            dropped_keys,
+            dropped_values,
+            skipped,
         )
     return cleaned
 

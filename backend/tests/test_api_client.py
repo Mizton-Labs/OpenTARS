@@ -4,10 +4,10 @@ Unit tests for the standalone API client (scripts/api_client.py, prompts-053).
 The script is imported by file path (it lives outside the backend package) and
 its pure helpers are exercised with urlopen monkeypatched — no network.
 """
+
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
 import ssl
 import urllib.request
@@ -87,10 +87,18 @@ def test_cmd_send_posts_to_listener(monkeypatch, capsys):
         return {"inserted": 1}
 
     monkeypatch.setattr(client, "http_post_json", fake_post)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "file": None, "data": '{"indicator": "x"}',
-        "username": None, "password": None, "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "file": None,
+            "data": '{"indicator": "x"}',
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     rc = client.cmd_send(ns)
     assert rc == 0
     assert posted["url"] == "http://h:8000/api/ingest/listener"
@@ -119,9 +127,15 @@ def test_maybe_login_calls_login_with_credentials(monkeypatch):
         return {"user": {"username": username}}
 
     monkeypatch.setattr(client, "login", fake_login)
-    ns = type("NS", (), {
-        "username": "test", "password": "secret", "url": "http://h:8001",
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "username": "test",
+            "password": "secret",
+            "url": "http://h:8001",
+        },
+    )()
     client._maybe_login(object(), ns)
     assert captured == {"base": "http://h:8001", "username": "test", "password": "secret"}
 
@@ -130,7 +144,8 @@ def test_maybe_login_prompts_when_password_omitted(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(client.getpass, "getpass", lambda prompt="": "prompted-pw")
     monkeypatch.setattr(
-        client, "login",
+        client,
+        "login",
         lambda opener, base, username, password: captured.update(password=password),
     )
     ns = type("NS", (), {"username": "test", "password": None, "url": "http://h:8001"})()
@@ -155,7 +170,8 @@ def test_login_posts_credentials_to_login_endpoint(monkeypatch):
 def test_cmd_get_raw_logs_in_before_fetch(monkeypatch, capsys):
     order: list[str] = []
     monkeypatch.setattr(
-        client, "login",
+        client,
+        "login",
         lambda opener, base, username, password: order.append("login"),
     )
 
@@ -164,10 +180,19 @@ def test_cmd_get_raw_logs_in_before_fetch(monkeypatch, capsys):
         return [{"id": 1}]
 
     monkeypatch.setattr(client, "fetch_events", fake_fetch)
-    ns = type("NS", (), {
-        "url": "http://h:8001", "feeds": [], "max": 10, "field": None,
-        "username": "test", "password": "pw", "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8001",
+            "feeds": [],
+            "max": 10,
+            "field": None,
+            "username": "test",
+            "password": "pw",
+            "insecure": False,
+        },
+    )()
     rc = client.cmd_get_raw(ns)
     assert rc == 0
     assert order == ["login", "fetch"]
@@ -207,7 +232,12 @@ def test_fetch_events_forwards_search_term_all_feeds(monkeypatch):
 
     monkeypatch.setattr(client, "http_get_json", fake_get)
     rows = client.fetch_events(
-        object(), "http://h:8000", "/api/viewer/entries", [], 50, search="npm",
+        object(),
+        "http://h:8000",
+        "/api/viewer/entries",
+        [],
+        50,
+        search="npm",
     )
     assert rows == [{"id": 1}]
     assert len(calls) == 1
@@ -224,7 +254,12 @@ def test_fetch_events_forwards_search_term_per_feed(monkeypatch):
 
     monkeypatch.setattr(client, "http_get_json", fake_get)
     client.fetch_events(
-        object(), "http://h:8000", "/api/viewer/entries", ["a", "b"], 10, search="npm",
+        object(),
+        "http://h:8000",
+        "/api/viewer/entries",
+        ["a", "b"],
+        10,
+        search="npm",
     )
     assert len(calls) == 2
     assert all("search=npm" in url for url in calls)
@@ -236,7 +271,8 @@ def test_fetch_events_forwards_search_term_per_feed(monkeypatch):
 
 def test_build_url_serialises_repeated_field_params():
     url = client.build_url(
-        "http://h:8000", "/api/viewer/entries",
+        "http://h:8000",
+        "/api/viewer/entries",
         {"field": ["severity=critical", "indicator_type=ipv4"]},
     )
     assert "field=severity%3Dcritical" in url
@@ -257,7 +293,11 @@ def test_fetch_events_forwards_field_filters_all_feeds(monkeypatch):
 
     monkeypatch.setattr(client, "http_get_json", fake_get)
     client.fetch_events(
-        object(), "http://h:8000", "/api/normalizer/entries", [], 50,
+        object(),
+        "http://h:8000",
+        "/api/normalizer/entries",
+        [],
+        50,
         fields=["cve_id=CVE-2026-0001"],
     )
     assert len(calls) == 1
@@ -273,7 +313,11 @@ def test_fetch_events_forwards_field_filters_per_feed(monkeypatch):
 
     monkeypatch.setattr(client, "http_get_json", fake_get)
     client.fetch_events(
-        object(), "http://h:8000", "/api/viewer/entries", ["a", "b"], 10,
+        object(),
+        "http://h:8000",
+        "/api/viewer/entries",
+        ["a", "b"],
+        10,
         fields=["severity=critical"],
     )
     assert len(calls) == 2
@@ -302,11 +346,21 @@ def test_cmd_search_raw_hits_viewer_entries(monkeypatch, capsys):
         return [{"id": 7}]
 
     monkeypatch.setattr(client, "fetch_events", fake_fetch)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "feeds": [], "max": 20, "type": "raw",
-        "query": "npm", "field": None, "username": None, "password": None,
-        "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "feeds": [],
+            "max": 20,
+            "type": "raw",
+            "query": "npm",
+            "field": None,
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     rc = client.cmd_search(ns)
     assert rc == 0
     assert captured["path"] == "/api/viewer/entries"
@@ -323,11 +377,21 @@ def test_cmd_search_normalized_hits_normalizer_entries(monkeypatch, capsys):
         return []
 
     monkeypatch.setattr(client, "fetch_events", fake_fetch)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "feeds": [], "max": 1000, "type": "normalized",
-        "query": "npm", "field": None, "username": None, "password": None,
-        "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "feeds": [],
+            "max": 1000,
+            "type": "normalized",
+            "query": "npm",
+            "field": None,
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     assert client.cmd_search(ns) == 0
     assert captured["path"] == "/api/normalizer/entries"
 
@@ -340,10 +404,17 @@ def test_cmd_list_feeds_hits_summary(monkeypatch, capsys):
         return [{"source": "a", "count": 3}]
 
     monkeypatch.setattr(client, "http_get_json", fake_get)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "type": "raw", "username": None, "password": None,
-        "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "type": "raw",
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     rc = client.cmd_list_feeds(ns)
     assert rc == 0
     assert captured["url"] == "http://h:8000/api/viewer/summary"
@@ -353,13 +424,21 @@ def test_cmd_list_feeds_hits_summary(monkeypatch, capsys):
 def test_cmd_list_feeds_normalized_summary(monkeypatch, capsys):
     captured: dict = {}
     monkeypatch.setattr(
-        client, "http_get_json",
+        client,
+        "http_get_json",
         lambda opener, url: captured.update(url=url) or [],
     )
-    ns = type("NS", (), {
-        "url": "http://h:8000", "type": "normalized", "username": None, "password": None,
-        "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "type": "normalized",
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     assert client.cmd_list_feeds(ns) == 0
     assert captured["url"] == "http://h:8000/api/normalizer/summary"
 
@@ -394,9 +473,18 @@ def test_parser_query_defaults():
 
 def test_parser_query_overrides():
     parser = client.build_parser()
-    args = parser.parse_args([
-        "query", "log4j hits", "--type", "raw", "--source", "feedA", "--max", "7",
-    ])
+    args = parser.parse_args(
+        [
+            "query",
+            "log4j hits",
+            "--type",
+            "raw",
+            "--source",
+            "feedA",
+            "--max",
+            "7",
+        ]
+    )
     assert args.type == "raw"
     assert args.source == "feedA"
     assert args.max == 7
@@ -411,16 +499,28 @@ def test_cmd_query_posts_to_nl_endpoint(monkeypatch, capsys):
         return {"count": 0, "results": [], "dataset": "raw"}
 
     monkeypatch.setattr(client, "http_post_json", fake_post)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "question": "any log4j?",
-        "type": "raw", "source": "feedA", "max": 5,
-        "username": None, "password": None, "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "question": "any log4j?",
+            "type": "raw",
+            "source": "feedA",
+            "max": 5,
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     rc = client.cmd_query(ns)
     assert rc == 0
     assert posted["url"] == "http://h:8000/api/query/nl"
     assert posted["payload"] == {
-        "question": "any log4j?", "dataset": "raw", "source": "feedA", "limit": 5,
+        "question": "any log4j?",
+        "dataset": "raw",
+        "source": "feedA",
+        "limit": 5,
     }
     assert json.loads(capsys.readouterr().out)["dataset"] == "raw"
 
@@ -433,16 +533,26 @@ def test_cmd_query_omits_unset_optionals(monkeypatch):
         return {"count": 0, "results": []}
 
     monkeypatch.setattr(client, "http_post_json", fake_post)
-    ns = type("NS", (), {
-        "url": "http://h:8000", "question": "q",
-        "type": None, "source": None, "max": None,
-        "username": None, "password": None, "insecure": False,
-    })()
+    ns = type(
+        "NS",
+        (),
+        {
+            "url": "http://h:8000",
+            "question": "q",
+            "type": None,
+            "source": None,
+            "max": None,
+            "username": None,
+            "password": None,
+            "insecure": False,
+        },
+    )()
     assert client.cmd_query(ns) == 0
     assert posted["payload"] == {"question": "q"}
 
 
 # ── TLS verification skip (issue_local_003) ──────────────────────────────────
+
 
 def test_parser_insecure_defaults_false():
     parser = client.build_parser()
@@ -490,6 +600,7 @@ def test_build_opener_insecure_disables_tls_verification():
 
 
 # ── --url normalization / validation (issue_local_005) ───────────────────────
+
 
 def test_normalize_url_strips_surrounding_whitespace():
     assert client.normalize_url("  https://h/alias  ") == "https://h/alias"

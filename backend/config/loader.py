@@ -2,6 +2,7 @@
 Config loader — reads feed-fields.yaml and sources.yaml.
 All other modules import from here; never read YAML files directly.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,7 +27,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         logger.warning("Config file missing at %s; returning empty dict", path)
         return {}
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
 
@@ -159,9 +160,7 @@ def load_default_sources() -> list[dict[str, Any]]:
     data = _read_yaml(DEFAULT_SOURCES_PATH)
     items = data.get("threat_intel_sources", [])
     if not isinstance(items, list):
-        logger.warning(
-            "threat_intel_sources in %s is not a list; ignoring", DEFAULT_SOURCES_PATH
-        )
+        logger.warning("threat_intel_sources in %s is not a list; ignoring", DEFAULT_SOURCES_PATH)
         return []
     return [item for item in items if isinstance(item, dict)]
 
@@ -221,12 +220,16 @@ def load_app_base_prefix() -> str:
             return ""
         if _is_valid_app_prefix(env_raw):
             logger.info(
-                "app_base_prefix overridden by %s=%r", _APP_PREFIX_ENV, env_raw,
+                "app_base_prefix overridden by %s=%r",
+                _APP_PREFIX_ENV,
+                env_raw,
             )
             return env_raw
         logger.warning(
             "%s=%r is invalid; falling back to %s",
-            _APP_PREFIX_ENV, env_raw, APP_CONFIG_PATH,
+            _APP_PREFIX_ENV,
+            env_raw,
+            APP_CONFIG_PATH,
         )
 
     raw = load_app_config().get("app_base_prefix", _APP_PREFIX_DEFAULT)
@@ -237,7 +240,8 @@ def load_app_base_prefix() -> str:
     if not _is_valid_app_prefix(raw):
         logger.warning(
             "app_base_prefix in %s is invalid (%r); ignoring and using empty prefix",
-            APP_CONFIG_PATH, raw,
+            APP_CONFIG_PATH,
+            raw,
         )
         return _APP_PREFIX_DEFAULT
     return raw
@@ -252,9 +256,7 @@ def save_app_base_prefix(value: str) -> None:
     if not isinstance(value, str):
         raise ValueError("app_base_prefix must be a string")
     if len(value) > _APP_PREFIX_MAX_LEN:
-        raise ValueError(
-            f"app_base_prefix exceeds maximum length of {_APP_PREFIX_MAX_LEN}"
-        )
+        raise ValueError(f"app_base_prefix exceeds maximum length of {_APP_PREFIX_MAX_LEN}")
     if "//" in value:
         raise ValueError("app_base_prefix must not contain '//'")
     if not _APP_PREFIX_RE.match(value):
@@ -289,13 +291,18 @@ def load_app_pagination_max() -> int:
     except (TypeError, ValueError):
         logger.warning(
             "pagination_max in %s is not an integer (%r); using default %d",
-            APP_CONFIG_PATH, raw, _PAGINATION_MAX_DEFAULT,
+            APP_CONFIG_PATH,
+            raw,
+            _PAGINATION_MAX_DEFAULT,
         )
         return _PAGINATION_MAX_DEFAULT
     if n < _PAGINATION_MAX_MIN or n > _PAGINATION_MAX_MAX:
         logger.warning(
             "pagination_max=%d is out of range [%d, %d]; using default %d",
-            n, _PAGINATION_MAX_MIN, _PAGINATION_MAX_MAX, _PAGINATION_MAX_DEFAULT,
+            n,
+            _PAGINATION_MAX_MIN,
+            _PAGINATION_MAX_MAX,
+            _PAGINATION_MAX_DEFAULT,
         )
         return _PAGINATION_MAX_DEFAULT
     return n
@@ -311,8 +318,7 @@ def save_app_pagination_max(value: int) -> None:
         raise ValueError("pagination_max must be an integer")
     if value < _PAGINATION_MAX_MIN or value > _PAGINATION_MAX_MAX:
         raise ValueError(
-            f"pagination_max must be between {_PAGINATION_MAX_MIN} "
-            f"and {_PAGINATION_MAX_MAX}"
+            f"pagination_max must be between {_PAGINATION_MAX_MIN} and {_PAGINATION_MAX_MAX}"
         )
     data = load_app_config()
     data["pagination_max"] = value
@@ -340,13 +346,17 @@ def load_watcher_max_events() -> int:
     except (TypeError, ValueError):
         logger.warning(
             "watcher_max_events in %s is not an integer (%r); using default %d",
-            APP_CONFIG_PATH, raw, _WATCHER_MAX_EVENTS_DEFAULT,
+            APP_CONFIG_PATH,
+            raw,
+            _WATCHER_MAX_EVENTS_DEFAULT,
         )
         return _WATCHER_MAX_EVENTS_DEFAULT
     if n < _WATCHER_MAX_EVENTS_MIN or n > _WATCHER_MAX_EVENTS_MAX:
         logger.warning(
             "watcher_max_events=%d is out of range [%d, %d]; using default %d",
-            n, _WATCHER_MAX_EVENTS_MIN, _WATCHER_MAX_EVENTS_MAX,
+            n,
+            _WATCHER_MAX_EVENTS_MIN,
+            _WATCHER_MAX_EVENTS_MAX,
             _WATCHER_MAX_EVENTS_DEFAULT,
         )
         return _WATCHER_MAX_EVENTS_DEFAULT
@@ -395,7 +405,9 @@ def load_auth_enabled() -> bool:
         enabled = env_raw.strip().lower() in _TRUTHY
         logger.info(
             "auth_enabled overridden by %s=%r → %s",
-            _AUTH_ENABLED_ENV, env_raw, enabled,
+            _AUTH_ENABLED_ENV,
+            env_raw,
+            enabled,
         )
         return enabled
     return bool(load_app_config().get("auth_enabled", False))
@@ -492,12 +504,12 @@ def save_logo_path(value: str) -> None:
 # the minimum always has byte headroom for some multi-byte characters and the
 # policy can never become effectively unsatisfiable for non-ASCII input.
 _PASSWORD_MIN_LEN_DEFAULT = 8
-_PASSWORD_MIN_LEN_FLOOR = 8        # never allow a weaker minimum than 8
-_PASSWORD_MIN_LEN_CEIL = 64        # leaves byte headroom under the 72-byte cap
+_PASSWORD_MIN_LEN_FLOOR = 8  # never allow a weaker minimum than 8
+_PASSWORD_MIN_LEN_CEIL = 64  # leaves byte headroom under the 72-byte cap
 _PASSWORD_CLASSES_DEFAULT = 3
 _PASSWORD_CLASSES_MIN = 1
 _PASSWORD_CLASSES_MAX = 4
-_PASSWORD_MAX_BYTES = 72           # bcrypt hard limit (fixed)
+_PASSWORD_MAX_BYTES = 72  # bcrypt hard limit (fixed)
 
 
 def _clamp_int(raw: Any, default: int, lo: int, hi: int, label: str) -> int:
@@ -506,14 +518,21 @@ def _clamp_int(raw: Any, default: int, lo: int, hi: int, label: str) -> int:
     except (TypeError, ValueError):
         logger.warning(
             "%s in %s is not an integer (%r); using default %d",
-            label, APP_CONFIG_PATH, raw, default,
+            label,
+            APP_CONFIG_PATH,
+            raw,
+            default,
         )
         return default
     if n < lo or n > hi:
         clamped = min(max(n, lo), hi)
         logger.warning(
             "%s=%d is out of range [%d, %d]; clamping to %d",
-            label, n, lo, hi, clamped,
+            label,
+            n,
+            lo,
+            hi,
+            clamped,
         )
         return clamped
     return n
@@ -537,7 +556,8 @@ def load_password_policy() -> dict[str, int]:
     except (yaml.YAMLError, OSError, TypeError) as exc:
         logger.warning(
             "Could not read password policy from %s (%s); using defaults",
-            APP_CONFIG_PATH, exc,
+            APP_CONFIG_PATH,
+            exc,
         )
         cfg = {}
     min_length = _clamp_int(
@@ -564,7 +584,7 @@ def load_password_policy() -> dict[str, int]:
 # ── Decompression size cap (prompts-021B) ────────────────────────────────────
 
 _MAX_DECOMPRESSED_DEFAULT = 100 * 1024 * 1024  # 100 MiB
-_MAX_DECOMPRESSED_MIN = 1024                   # 1 KiB lower bound (sanity)
+_MAX_DECOMPRESSED_MIN = 1024  # 1 KiB lower bound (sanity)
 
 
 def load_max_decompressed_bytes() -> int:
@@ -582,13 +602,16 @@ def load_max_decompressed_bytes() -> int:
     except (TypeError, ValueError):
         logger.warning(
             "max_decompressed_bytes in %s is not an integer (%r); using default %d",
-            APP_CONFIG_PATH, raw, _MAX_DECOMPRESSED_DEFAULT,
+            APP_CONFIG_PATH,
+            raw,
+            _MAX_DECOMPRESSED_DEFAULT,
         )
         return _MAX_DECOMPRESSED_DEFAULT
     if n < _MAX_DECOMPRESSED_MIN:
         logger.warning(
             "max_decompressed_bytes=%d is below floor %d; coercing up",
-            n, _MAX_DECOMPRESSED_MIN,
+            n,
+            _MAX_DECOMPRESSED_MIN,
         )
         return _MAX_DECOMPRESSED_MIN
     return n

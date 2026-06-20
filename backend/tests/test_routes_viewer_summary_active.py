@@ -1,12 +1,13 @@
 """Tests for GET /api/viewer/summary?include_active=true."""
+
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.main import app
 from backend.db.manager import insert_entry
 from backend.ingestion.jobs import job_store
+from backend.main import app
 
 
 @pytest.fixture
@@ -33,13 +34,19 @@ def test_summary_default_has_no_active_jobs_field(client):
 async def test_summary_include_active_attaches_running_jobs(tmp_path, monkeypatch):
     # Redirect DATA_DIR so the source DB lands in tmp
     from backend.db import manager as mgr
+
     monkeypatch.setattr(mgr, "DATA_DIR", tmp_path)
 
     # Seed an entry so the source shows up in the summary listing
-    await insert_entry("active_src", {
-        "source": "active_src", "indicator": "1.1.1.1",
-        "published_at": "2024-01-01", "ingest_mode": "push",
-    })
+    await insert_entry(
+        "active_src",
+        {
+            "source": "active_src",
+            "indicator": "1.1.1.1",
+            "published_at": "2024-01-01",
+            "ingest_mode": "push",
+        },
+    )
 
     job = job_store.create(source="active_src", kind="local_feed")
     job_store.update_step(job.id, "inserting", total=100)

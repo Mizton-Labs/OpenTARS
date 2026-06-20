@@ -2,6 +2,7 @@
 DB schema — defines the entries table.
 One SQLite database file per source stored in data/<source_name>.db.
 """
+
 from __future__ import annotations
 
 # DDL for the entries table.

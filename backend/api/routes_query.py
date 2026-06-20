@@ -8,11 +8,12 @@ local raw/normalized store via the existing parameterized query layer.
 Reader-gated: admins and the ``normal`` (viewer) role may call it; the
 push-only ``sender`` role may not (see backend/main.py role allowlist).
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -47,11 +48,9 @@ _NL_MAX_TOKENS = 512
 
 class NLQueryRequest(BaseModel):
     question: str = Field(..., min_length=1, description="Natural-language question")
-    dataset: Optional[str] = Field(
-        None, description='Override dataset ("raw" | "normalized")'
-    )
-    source: Optional[str] = Field(None, description="Restrict to a single feed")
-    limit: Optional[int] = Field(None, ge=1, le=2000)
+    dataset: str | None = Field(None, description='Override dataset ("raw" | "normalized")')
+    source: str | None = Field(None, description="Restrict to a single feed")
+    limit: int | None = Field(None, ge=1, le=2000)
 
 
 class NLQueryResponse(BaseModel):

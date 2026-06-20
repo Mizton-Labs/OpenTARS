@@ -3,6 +3,7 @@
 Maps a provider name (from config) to a concrete :class:`LLMClient`
 instance. Refuses to construct anything when LLM is globally disabled.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -88,24 +89,26 @@ def list_provider_names() -> list[dict[str, Any]]:
     for p in cfg.get("providers", []):
         if not isinstance(p, dict):
             continue
-        out.append({
-            "name": p.get("name"),
-            "kind": p.get("kind"),
-            "model": p.get("model"),
-            "has_api_key": bool(p.get("api_key")),
-            "skip_tls_verify": bool(p.get("skip_tls_verify", False)),
-            # prompts-034: surface the persisted tested-models list so the
-            # Smart Mapping model dropdown can offer "provider · model" without
-            # a second round-trip. Public ids, never a secret.
-            # prompts-036: tested_models is retained (still recorded on a green
-            # probe) but is no longer the dropdown source.
-            "tested_models": list(p.get("tested_models") or []),
-            # prompts-036: surface the discovered model catalog so the Smart
-            # Mapping proposal dropdown can be populated from discovered models
-            # (no green Test required). Public ids, never a secret; [] when the
-            # provider has not been discovered yet.
-            "available_models": list(p.get("available_models") or []),
-        })
+        out.append(
+            {
+                "name": p.get("name"),
+                "kind": p.get("kind"),
+                "model": p.get("model"),
+                "has_api_key": bool(p.get("api_key")),
+                "skip_tls_verify": bool(p.get("skip_tls_verify", False)),
+                # prompts-034: surface the persisted tested-models list so the
+                # Smart Mapping model dropdown can offer "provider · model" without
+                # a second round-trip. Public ids, never a secret.
+                # prompts-036: tested_models is retained (still recorded on a green
+                # probe) but is no longer the dropdown source.
+                "tested_models": list(p.get("tested_models") or []),
+                # prompts-036: surface the discovered model catalog so the Smart
+                # Mapping proposal dropdown can be populated from discovered models
+                # (no green Test required). Public ids, never a secret; [] when the
+                # provider has not been discovered yet.
+                "available_models": list(p.get("available_models") or []),
+            }
+        )
     return out
 
 
@@ -135,8 +138,7 @@ def build_client_from_payload(payload: dict[str, Any]) -> LLMClient:
     cls = _CLIENT_KINDS.get(kind)
     if cls is None:
         raise LLMConfigError(
-            f"unsupported provider kind: {kind!r}; expected one of "
-            f"{sorted(_CLIENT_KINDS)}"
+            f"unsupported provider kind: {kind!r}; expected one of {sorted(_CLIENT_KINDS)}"
         )
 
     base_url = payload.get("base_url") or _DEFAULT_BASE_URLS.get(kind, "")
@@ -158,8 +160,6 @@ def build_client_from_payload(payload: dict[str, Any]) -> LLMClient:
         max_retries=int(payload.get("max_retries", 2)),
         skip_tls_verify=bool(payload.get("skip_tls_verify", False)),
         extra_body=(
-            payload.get("extra_body")
-            if isinstance(payload.get("extra_body"), dict)
-            else None
+            payload.get("extra_body") if isinstance(payload.get("extra_body"), dict) else None
         ),
     )

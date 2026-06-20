@@ -1,4 +1,5 @@
 """Tests for source CRUD routes — focus on auto-ingest on add."""
+
 from __future__ import annotations
 
 import asyncio
@@ -107,6 +108,7 @@ async def test_add_api_pull_skips_when_disabled(tmp_path, monkeypatch):
 # prompts-013 item 3 — preview / confirm / cancel flow for pull sources
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_preview_returns_sample(tmp_path, monkeypatch):
     """POST /api/sources/preview/api-pull returns sample of normalised entries
@@ -166,6 +168,7 @@ async def test_confirm_preview_persists_and_ingests(tmp_path, monkeypatch):
     preview = await rs.preview_pull_source("api-pull", src)
 
     from fastapi import BackgroundTasks
+
     result = await rs.confirm_preview_source(preview["preview_id"], BackgroundTasks())
     assert result["inserted"] == 2
     assert result["total_read"] == 2
@@ -198,6 +201,7 @@ async def test_cancel_preview_evicts(tmp_path, monkeypatch):
 
     # Confirming a cancelled preview should 404
     from fastapi import BackgroundTasks, HTTPException
+
     with pytest.raises(HTTPException) as exc:
         await rs.confirm_preview_source(pid, BackgroundTasks())
     assert exc.value.status_code == 404
@@ -284,8 +288,14 @@ async def test_threat_intel_save_disable_removes_entry(monkeypatch):
 
     yaml_state: dict = {
         "remote_json_pull": [
-            {"name": "cisa_kev", "enabled": True, "url": "https://example.com/kev.json",
-             "continuous": True, "interval_minutes": 120, "source_origin": "threat_intel_catalog"}
+            {
+                "name": "cisa_kev",
+                "enabled": True,
+                "url": "https://example.com/kev.json",
+                "continuous": True,
+                "interval_minutes": 120,
+                "source_origin": "threat_intel_catalog",
+            }
         ]
     }
     monkeypatch.setattr(rs, "load_default_sources", lambda: _FAKE_CATALOG)
@@ -316,8 +326,9 @@ async def test_threat_intel_save_invalid_interval_uses_default(monkeypatch):
 @pytest.mark.asyncio
 async def test_threat_intel_save_unknown_name_404(monkeypatch):
     """Saving an unknown catalogue name raises 404."""
-    import backend.api.routes_sources as rs
     from fastapi import HTTPException
+
+    import backend.api.routes_sources as rs
 
     yaml_state: dict = {}
     monkeypatch.setattr(rs, "load_default_sources", lambda: _FAKE_CATALOG)
@@ -399,9 +410,7 @@ async def test_update_api_pull_rotates_new_header_value(monkeypatch):
     import backend.api.routes_sources as rs
 
     yaml_state = {
-        "api_pull": [
-            {"name": "src", "url": "http://x", "headers": {"Authorization": "Bearer OLD"}}
-        ]
+        "api_pull": [{"name": "src", "url": "http://x", "headers": {"Authorization": "Bearer OLD"}}]
     }
     monkeypatch.setattr(rs, "load_sources", lambda: yaml_state)
     monkeypatch.setattr(rs, "save_sources", lambda d: yaml_state.update(d))
@@ -510,9 +519,7 @@ async def test_threat_intel_enable_triggers_immediate_pull(monkeypatch):
     monkeypatch.setattr(rs, "save_sources", lambda d: yaml_state.update(d))
     calls = _capture_kickoffs(rs, monkeypatch)
 
-    await rs.save_threat_intel_sources(
-        [rs.ThreatIntelToggle(name="cisa_kev", enabled=True)]
-    )
+    await rs.save_threat_intel_sources([rs.ThreatIntelToggle(name="cisa_kev", enabled=True)])
 
     assert [k for k, _ in calls] == ["remote_json_pull"]
     assert calls[0][1]["name"] == "cisa_kev"
@@ -525,9 +532,14 @@ async def test_threat_intel_resave_enabled_does_not_trigger(monkeypatch):
 
     yaml_state: dict = {
         "remote_json_pull": [
-            {"name": "cisa_kev", "enabled": True, "url": "https://example.com/kev.json",
-             "continuous": True, "interval_minutes": 120,
-             "source_origin": "threat_intel_catalog"}
+            {
+                "name": "cisa_kev",
+                "enabled": True,
+                "url": "https://example.com/kev.json",
+                "continuous": True,
+                "interval_minutes": 120,
+                "source_origin": "threat_intel_catalog",
+            }
         ]
     }
     monkeypatch.setattr(rs, "load_default_sources", lambda: _FAKE_CATALOG)
@@ -535,9 +547,7 @@ async def test_threat_intel_resave_enabled_does_not_trigger(monkeypatch):
     monkeypatch.setattr(rs, "save_sources", lambda d: yaml_state.update(d))
     calls = _capture_kickoffs(rs, monkeypatch)
 
-    await rs.save_threat_intel_sources(
-        [rs.ThreatIntelToggle(name="cisa_kev", enabled=True)]
-    )
+    await rs.save_threat_intel_sources([rs.ThreatIntelToggle(name="cisa_kev", enabled=True)])
 
     assert calls == []
 
@@ -549,9 +559,14 @@ async def test_threat_intel_disable_does_not_trigger(monkeypatch):
 
     yaml_state: dict = {
         "remote_json_pull": [
-            {"name": "cisa_kev", "enabled": True, "url": "https://example.com/kev.json",
-             "continuous": True, "interval_minutes": 120,
-             "source_origin": "threat_intel_catalog"}
+            {
+                "name": "cisa_kev",
+                "enabled": True,
+                "url": "https://example.com/kev.json",
+                "continuous": True,
+                "interval_minutes": 120,
+                "source_origin": "threat_intel_catalog",
+            }
         ]
     }
     monkeypatch.setattr(rs, "load_default_sources", lambda: _FAKE_CATALOG)
@@ -559,8 +574,6 @@ async def test_threat_intel_disable_does_not_trigger(monkeypatch):
     monkeypatch.setattr(rs, "save_sources", lambda d: yaml_state.update(d))
     calls = _capture_kickoffs(rs, monkeypatch)
 
-    await rs.save_threat_intel_sources(
-        [rs.ThreatIntelToggle(name="cisa_kev", enabled=False)]
-    )
+    await rs.save_threat_intel_sources([rs.ThreatIntelToggle(name="cisa_kev", enabled=False)])
 
     assert calls == []

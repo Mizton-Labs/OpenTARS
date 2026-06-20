@@ -1,7 +1,7 @@
 """Integration tests for background ingest paths (?background=true)."""
+
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 
@@ -32,8 +32,11 @@ async def test_push_background_returns_job_id(monkeypatch):
             job_store.update_progress(job_id, 1)
         captured.append((source_name, payload, job_id))
         return {
-            "inserted": 1, "skipped": 0, "total_read": 1,
-            "duplicates": 0, "discarded": 0,
+            "inserted": 1,
+            "skipped": 0,
+            "total_read": 1,
+            "duplicates": 0,
+            "discarded": 0,
         }
 
     monkeypatch.setattr(ri, "process_push", fake_process_push)
@@ -68,8 +71,11 @@ async def test_push_sync_still_returns_ingest_response(monkeypatch):
 
     async def fake_process_push(payload, source_name, job_id=None):
         return {
-            "inserted": 2, "skipped": 0, "total_read": 2,
-            "duplicates": 0, "discarded": 0,
+            "inserted": 2,
+            "skipped": 0,
+            "total_read": 2,
+            "duplicates": 0,
+            "discarded": 0,
         }
 
     monkeypatch.setattr(ri, "process_push", fake_process_push)
@@ -105,8 +111,9 @@ async def test_sync_push_triggers_realtime_watchers(monkeypatch):
 async def test_sync_listener_triggers_realtime_watchers(monkeypatch):
     """The generic /listener push (used by the api_client `send` command) also
     fires realtime watchers synchronously."""
-    import backend.watchers.engine as wengine
     from fastapi import Request
+
+    import backend.watchers.engine as wengine
 
     seen: list[int] = []
     monkeypatch.setattr(wengine, "schedule_realtime_ingest_eval", lambda n: seen.append(n))
@@ -130,6 +137,7 @@ async def test_confirm_local_preview_background(monkeypatch):
     # Seed an entry in the preview cache directly
     import time as _t
     import uuid as _uuid
+
     pid = str(_uuid.uuid4())
     pv._store[pid] = {
         "entries": [{"indicator": "x", "source": "s1"}],
@@ -145,6 +153,7 @@ async def test_confirm_local_preview_background(monkeypatch):
 
     async def fake_first_ingest(name):
         return True
+
     monkeypatch.setattr(ri, "_first_ingest", fake_first_ingest)
 
     bg = BackgroundTasks()
@@ -161,6 +170,7 @@ async def test_confirm_local_preview_background(monkeypatch):
 @pytest.mark.asyncio
 async def test_confirm_local_preview_background_404_for_unknown_id():
     from fastapi import HTTPException
+
     bg = BackgroundTasks()
     with pytest.raises(HTTPException) as exc:
         await ri.confirm_local_preview("does-not-exist", bg, background=True)
@@ -169,8 +179,10 @@ async def test_confirm_local_preview_background_404_for_unknown_id():
 
 # ── prompts-021B: compressed-preview integration ───────────────────────────────
 
+
 class _FakeUpload:
     """Minimal UploadFile stand-in: only filename + read() are used."""
+
     def __init__(self, filename: str, body: bytes) -> None:
         self.filename = filename
         self._body = body
@@ -184,6 +196,7 @@ async def test_preview_local_feed_accepts_gz_upload(monkeypatch):
     """A .gz upload to /preview/local/{src} returns a preview whose records
     were produced from the decompressed payload."""
     import gzip
+
     inner = json.dumps([{"indicator": "9.9.9.9"}, {"indicator": "8.8.8.8"}]).encode()
     body = gzip.compress(inner)
 
@@ -200,7 +213,6 @@ async def test_preview_local_feed_accepts_gz_upload(monkeypatch):
 @pytest.mark.asyncio
 async def test_preview_local_feed_accepts_zip_upload(monkeypatch):
     """A single-member .zip upload to /preview/local/{src} returns a preview."""
-    import io
     import zipfile
 
     csv_bytes = b"indicator,severity\n10.0.0.1,high\n10.0.0.2,low\n"

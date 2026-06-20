@@ -1,14 +1,17 @@
 """Tests for the normalizer engine (auto and manual mapping modes)."""
+
 from __future__ import annotations
 
 import json
-import pytest
 
+import pytest
 
 # ── map_entry_auto ─────────────────────────────────────────────────────────────
 
+
 def test_auto_maps_ip_field():
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"ip": "1.2.3.4", "severity": "high"}, "test")
     assert result["indicator"] == "1.2.3.4"
     assert result["indicator_type"] == "ip"
@@ -20,6 +23,7 @@ def test_auto_maps_indicator_canonical_passthrough():
     """Raw `indicator` (the canonical itself) passes through but does NOT
     auto-set indicator_type — the field name does not reveal the type."""
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"indicator": "evil.com"}, "test")
     assert result["indicator"] == "evil.com"
     assert "indicator_type" not in result
@@ -27,6 +31,7 @@ def test_auto_maps_indicator_canonical_passthrough():
 
 def test_auto_maps_cve():
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"cve_id": "CVE-2023-1234", "actor": "APT28"}, "test")
     assert result["cve_id"] == "CVE-2023-1234"
     assert result["actor"] == "APT28"
@@ -34,6 +39,7 @@ def test_auto_maps_cve():
 
 def test_auto_places_unknown_in_extra_norm():
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"foo_bar": "baz", "ip": "1.2.3.4"}, "test")
     assert "foo_bar" not in result
     extra = json.loads(result.get("extra_norm", "{}"))
@@ -42,6 +48,7 @@ def test_auto_places_unknown_in_extra_norm():
 
 def test_auto_skips_empty_values():
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"ip": "", "domain": None, "severity": "low"}, "test")
     assert "indicator" not in result
     assert result["severity"] == "low"
@@ -50,6 +57,7 @@ def test_auto_skips_empty_values():
 def test_auto_no_duplicate_canonical():
     """If two raw fields map to the same canonical, first one wins."""
     from backend.normalizer.engine import map_entry_auto
+
     result = map_entry_auto({"ip": "1.2.3.4", "ip_address": "9.9.9.9"}, "test")
     # both → `indicator`; whichever Python iterates first wins, second goes to extra
     assert result["indicator"] in ("1.2.3.4", "9.9.9.9")
@@ -57,14 +65,17 @@ def test_auto_no_duplicate_canonical():
 
 # ── wildcard synonyms (prompts-021C; canonical names from 021E-pre) ───────────
 
+
 def _clear_resolver_cache():
     from backend.normalizer.engine import _resolve_canonical
+
     _resolve_canonical.cache_clear()
 
 
 def test_auto_wildcard_matches_src_ip_variants():
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_auto
+
     r = map_entry_auto({"src_ip_addr": "1.2.3.4"}, "t")
     assert r["indicator"] == "1.2.3.4"
     assert r["indicator_type"] == "ip"
@@ -76,6 +87,7 @@ def test_auto_wildcard_matches_src_ip_variants():
 def test_auto_wildcard_matches_cve_variants():
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_auto
+
     r = map_entry_auto({"nvd_cve_id": "CVE-2024-0001"}, "t")
     assert r["cve_id"] == "CVE-2024-0001"
     r = map_entry_auto({"vulnerability.id": "CVE-2024-0002"}, "t")
@@ -87,6 +99,7 @@ def test_auto_wildcard_matches_cve_variants():
 def test_auto_wildcard_matches_hash_variants():
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_auto
+
     r = map_entry_auto({"file_md5": "abc"}, "t")
     assert r["indicator"] == "abc"
     assert r["indicator_type"] == "hash_md5"
@@ -98,6 +111,7 @@ def test_auto_wildcard_matches_hash_variants():
 def test_auto_wildcard_matches_timestamp_variants():
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_auto
+
     r = map_entry_auto({"record_published_at": "2024-01-01"}, "t")
     assert r["published_at"] == "2024-01-01"
     r = map_entry_auto({"first_seen_utc": "2024-02-02"}, "t")
@@ -108,6 +122,7 @@ def test_auto_exact_match_beats_wildcard():
     """Exact-table match must win even when a wildcard could also match."""
     _clear_resolver_cache()
     from backend.normalizer.engine import _resolve_canonical
+
     # `ip` is exact → indicator (+ type hint)
     canonical, hint = _resolve_canonical("ip")
     assert canonical == "indicator"
@@ -122,6 +137,7 @@ def test_auto_existing_ioc_synonyms_unchanged():
     """Regression guard: pre-021C exact synonyms still resolve to indicator."""
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_auto
+
     r = map_entry_auto({"indicator": "evil.com", "src_ip": "1.2.3.4"}, "t")
     # Both → `indicator`; first-wins de-dupe sends the second to extra_norm.
     assert r["indicator"] in ("evil.com", "1.2.3.4")
@@ -131,6 +147,7 @@ def test_auto_manual_mode_unaffected_by_wildcards():
     """Manual mode must not consult wildcard table — only explicit mappings."""
     _clear_resolver_cache()
     from backend.normalizer.engine import map_entry_manual
+
     # `src_ip_addr` would match `*src*ip*` wildcard in auto mode, but in manual
     # mode without an explicit mapping it must fall through to extra_norm.
     r = map_entry_manual({"src_ip_addr": "1.2.3.4"}, "t", mappings={})
@@ -141,8 +158,10 @@ def test_auto_manual_mode_unaffected_by_wildcards():
 
 # ── map_entry_manual ──────────────────────────────────────────────────────────
 
+
 def test_manual_explicit_mapping():
     from backend.normalizer.engine import map_entry_manual
+
     mappings = {"src_ip": "indicator", "threat": "severity"}
     result = map_entry_manual({"src_ip": "1.2.3.4", "threat": "critical"}, "test", mappings)
     assert result["indicator"] == "1.2.3.4"
@@ -151,6 +170,7 @@ def test_manual_explicit_mapping():
 
 def test_manual_unmapped_go_to_extra():
     from backend.normalizer.engine import map_entry_manual
+
     mappings = {"src_ip": "indicator"}
     result = map_entry_manual({"src_ip": "1.2.3.4", "unknown_col": "value"}, "test", mappings)
     extra = json.loads(result.get("extra_norm", "{}"))
@@ -159,11 +179,14 @@ def test_manual_unmapped_go_to_extra():
 
 # ── run_normalizer (mocked DB) ────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_run_normalizer_disabled():
     from unittest.mock import patch
+
     with patch("backend.normalizer.engine.load_normalizer_config", return_value={"enabled": False}):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
     assert result["status"] == "disabled"
     assert result["processed"] == 0
@@ -172,11 +195,17 @@ async def test_run_normalizer_disabled():
 @pytest.mark.anyio
 async def test_run_normalizer_auto_empty():
     """When no un-normalized entries exist, run completes with 0 processed."""
-    from unittest.mock import patch, AsyncMock
-    with patch("backend.normalizer.engine.query_entries", new=AsyncMock(return_value=[])), \
-         patch("backend.normalizer.engine.load_normalizer_config",
-               return_value={"enabled": True, "mode": "auto", "manual_mappings": {}}):
+    from unittest.mock import AsyncMock, patch
+
+    with (
+        patch("backend.normalizer.engine.query_entries", new=AsyncMock(return_value=[])),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={"enabled": True, "mode": "auto", "manual_mappings": {}},
+        ),
+    ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
     assert result["status"] == "ok"
     assert result["processed"] == 0
@@ -188,6 +217,7 @@ async def test_run_normalizer_auto_empty():
 def test_load_normalizer_config_missing_file_returns_defaults(tmp_path, monkeypatch):
     """When the YAML file is missing, defaults are returned and no exception is raised."""
     import backend.normalizer.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "_NORMALIZER_CONFIG_PATH", tmp_path / "missing.yaml")
     result = cfg_mod.load_normalizer_config()
     assert result["mode"] == "auto"
@@ -199,23 +229,25 @@ def test_load_normalizer_config_missing_file_returns_defaults(tmp_path, monkeypa
 def test_load_normalizer_config_partial_yaml_merges_defaults(tmp_path, monkeypatch):
     """A partial YAML is merged over defaults so all keys are present."""
     import backend.normalizer.config as cfg_mod
+
     p = tmp_path / "partial.yaml"
     p.write_text("mode: manual\n")
     monkeypatch.setattr(cfg_mod, "_NORMALIZER_CONFIG_PATH", p)
     result = cfg_mod.load_normalizer_config()
     assert result["mode"] == "manual"
-    assert result["enabled"] is True        # default preserved
+    assert result["enabled"] is True  # default preserved
     assert result["interval_minutes"] == 10  # default preserved (prompts-021A: 30 → 10)
 
 
 # ── prompts-021F: active mapping_version threading ────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_run_normalizer_threads_active_mapping_version_id(tmp_path, monkeypatch):
     """When an active mapping_version exists for a source, run_normalizer:
-       1. uses that version's mapping (not yaml manual_mappings),
-       2. writes mapping_version_id into normalized_entries,
-       3. ignores yaml manual_mappings even when both are defined.
+    1. uses that version's mapping (not yaml manual_mappings),
+    2. writes mapping_version_id into normalized_entries,
+    3. ignores yaml manual_mappings even when both are defined.
     """
     from unittest.mock import AsyncMock, patch
 
@@ -225,7 +257,9 @@ async def test_run_normalizer_threads_active_mapping_version_id(tmp_path, monkey
 
     monkeypatch.setattr(ndb, "_NORM_DB_PATH", tmp_path / "normalized.db")
     monkeypatch.setattr(
-        mappings_mod, "_MAPPINGS_DB_PATH", tmp_path / "mapping_versions.db",
+        mappings_mod,
+        "_MAPPINGS_DB_PATH",
+        tmp_path / "mapping_versions.db",
     )
 
     # Active version maps `vendor_field` → indicator. Yaml mapping (which
@@ -245,22 +279,28 @@ async def test_run_normalizer_threads_active_mapping_version_id(tmp_path, monkey
     async def _noop_mark(src, ids):
         return None
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={
-            "enabled": True,
-            "mode": "manual",
-            # Intentionally divergent yaml — must be ignored in favour of
-            # the active version.
-            "manual_mappings": {"feed-x": {"vendor_field": "severity"}},
-        },
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={
+                "enabled": True,
+                "mode": "manual",
+                # Intentionally divergent yaml — must be ignored in favour of
+                # the active version.
+                "manual_mappings": {"feed-x": {"vendor_field": "severity"}},
+            },
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
 
     assert result["inserted"] == 1
@@ -285,7 +325,9 @@ async def test_run_normalizer_falls_back_to_yaml_when_no_active_version(tmp_path
 
     monkeypatch.setattr(ndb, "_NORM_DB_PATH", tmp_path / "normalized.db")
     monkeypatch.setattr(
-        mappings_mod, "_MAPPINGS_DB_PATH", tmp_path / "mapping_versions.db",
+        mappings_mod,
+        "_MAPPINGS_DB_PATH",
+        tmp_path / "mapping_versions.db",
     )
 
     fake_entries = [
@@ -295,20 +337,26 @@ async def test_run_normalizer_falls_back_to_yaml_when_no_active_version(tmp_path
     async def _noop_mark(src, ids):
         return None
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={
-            "enabled": True,
-            "mode": "manual",
-            "manual_mappings": {"feed-y": {"vendor_field": "indicator"}},
-        },
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={
+                "enabled": True,
+                "mode": "manual",
+                "manual_mappings": {"feed-y": {"vendor_field": "indicator"}},
+            },
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
 
     assert result["inserted"] == 1
@@ -330,7 +378,9 @@ async def test_run_normalizer_auto_mode_skips_active_version(tmp_path, monkeypat
 
     monkeypatch.setattr(ndb, "_NORM_DB_PATH", tmp_path / "normalized.db")
     monkeypatch.setattr(
-        mappings_mod, "_MAPPINGS_DB_PATH", tmp_path / "mapping_versions.db",
+        mappings_mod,
+        "_MAPPINGS_DB_PATH",
+        tmp_path / "mapping_versions.db",
     )
 
     vid = await create_version(
@@ -347,16 +397,22 @@ async def test_run_normalizer_auto_mode_skips_active_version(tmp_path, monkeypat
     async def _noop_mark(src, ids):
         return None
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={"enabled": True, "mode": "auto", "manual_mappings": {}},
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={"enabled": True, "mode": "auto", "manual_mappings": {}},
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         await run_normalizer()
 
     rows = await ndb.query_normalized(source_name="feed-z")
@@ -366,6 +422,7 @@ async def test_run_normalizer_auto_mode_skips_active_version(tmp_path, monkeypat
 
 
 # ── prompts-032 Phase E: smart mode (consolidated mapping) ────────────────────
+
 
 @pytest.mark.anyio
 async def test_run_normalizer_smart_applies_active_consolidated(tmp_path, monkeypatch):
@@ -394,19 +451,26 @@ async def test_run_normalizer_smart_applies_active_consolidated(tmp_path, monkey
         "active": True,
     }
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.get_active_consolidated",
-        new=AsyncMock(return_value=active_consolidated),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.get_active_consolidated",
+            new=AsyncMock(return_value=active_consolidated),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
 
     assert result["status"] == "ok"
@@ -440,19 +504,26 @@ async def test_run_normalizer_smart_without_active_falls_back_to_auto(tmp_path, 
     async def _noop_mark(src, ids):
         return None
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.get_active_consolidated",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.get_active_consolidated",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
 
     assert result["status"] == "ok"
@@ -494,22 +565,30 @@ async def test_run_normalizer_records_run_history(tmp_path, monkeypatch):
         "proposal_id": 77,
     }
 
-    with patch(
-        "backend.normalizer.engine.query_entries",
-        new=AsyncMock(return_value=fake_entries),
-    ), patch(
-        "backend.normalizer.engine.mark_normalized", new=AsyncMock(side_effect=_noop_mark),
-    ), patch(
-        "backend.normalizer.engine.get_active_consolidated",
-        new=AsyncMock(return_value=active_consolidated),
-    ), patch(
-        "backend.normalizer.engine.get_proposal",
-        new=AsyncMock(return_value={"proposal_name": "Proposal-X"}),
-    ), patch(
-        "backend.normalizer.engine.load_normalizer_config",
-        return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+    with (
+        patch(
+            "backend.normalizer.engine.query_entries",
+            new=AsyncMock(return_value=fake_entries),
+        ),
+        patch(
+            "backend.normalizer.engine.mark_normalized",
+            new=AsyncMock(side_effect=_noop_mark),
+        ),
+        patch(
+            "backend.normalizer.engine.get_active_consolidated",
+            new=AsyncMock(return_value=active_consolidated),
+        ),
+        patch(
+            "backend.normalizer.engine.get_proposal",
+            new=AsyncMock(return_value={"proposal_name": "Proposal-X"}),
+        ),
+        patch(
+            "backend.normalizer.engine.load_normalizer_config",
+            return_value={"enabled": True, "mode": "smart", "manual_mappings": {}},
+        ),
     ):
         from backend.normalizer.engine import run_normalizer
+
         await run_normalizer(trigger="reapply")
 
     runs = await list_runs()
@@ -536,6 +615,7 @@ async def test_run_normalizer_disabled_records_no_history(monkeypatch):
         return_value={"enabled": False},
     ):
         from backend.normalizer.engine import run_normalizer
+
         result = await run_normalizer()
 
     assert result["status"] == "disabled"
@@ -544,9 +624,11 @@ async def test_run_normalizer_disabled_records_no_history(monkeypatch):
 
 # ── issue_local_02: normalized field filters ──────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_query_normalized_field_filter_matches_validated_column(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """An arbitrary filter on a yaml-derived column returns only matching rows;
     an unknown/unsafe column name is silently dropped (never interpolated into
@@ -555,17 +637,26 @@ async def test_query_normalized_field_filter_matches_validated_column(
 
     monkeypatch.setattr(ndb, "_NORM_DB_PATH", tmp_path / "normalized.db")
 
-    await ndb.insert_normalized({
-        "source_entry_id": 1, "source_name": "feed-q",
-        "indicator": "1.1.1.1", "severity": "critical",
-    })
-    await ndb.insert_normalized({
-        "source_entry_id": 2, "source_name": "feed-q",
-        "indicator": "2.2.2.2", "severity": "low",
-    })
+    await ndb.insert_normalized(
+        {
+            "source_entry_id": 1,
+            "source_name": "feed-q",
+            "indicator": "1.1.1.1",
+            "severity": "critical",
+        }
+    )
+    await ndb.insert_normalized(
+        {
+            "source_entry_id": 2,
+            "source_name": "feed-q",
+            "indicator": "2.2.2.2",
+            "severity": "low",
+        }
+    )
 
     crit = await ndb.query_normalized(
-        source_name="feed-q", filters={"severity": "critical"},
+        source_name="feed-q",
+        filters={"severity": "critical"},
     )
     assert [r["indicator"] for r in crit] == ["1.1.1.1"]
 

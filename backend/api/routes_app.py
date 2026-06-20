@@ -4,6 +4,7 @@ Application-config routes — read and update application.yaml.
 Exposes app_base_prefix, pagination cap, and the branding logo. Lives behind
 /api/app/.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,7 +63,6 @@ def _sniff_logo_ext(data: bytes) -> str | None:
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return ".webp"
     return None
-
 
 
 @router.get("/base-prefix")

@@ -12,6 +12,7 @@ Routes:
   POST /api/normalizer/mappings/versions/{id}/activate
   GET  /api/normalizer/mappings/diff?from={id}&to={id}
 """
+
 from __future__ import annotations
 
 import logging
@@ -107,7 +108,9 @@ async def activate_mapping_version(version_id: int) -> dict[str, Any]:
     reset_rows = await reset_normalized_flag_for_source(source)
     logger.info(
         "mapping_version %d activated for source %s (reset %d rows)",
-        version_id, source, reset_rows,
+        version_id,
+        source,
+        reset_rows,
     )
     return {
         "version_id": version_id,

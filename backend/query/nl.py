@@ -18,6 +18,7 @@ Design (ADR-0023):
 The robust JSON extraction (code-fence / Harmony / comment stripping, tolerant
 load) is reused from :mod:`backend.normalizer.smart`.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,16 +37,29 @@ logger = logging.getLogger(__name__)
 #   search              — free-text LIKE term across indexed columns
 #   limit               — max rows (clamped to 1..MAX_LIMIT)
 #   <column filters>    — exact-match equality on a whitelisted column
-STRUCTURED_FILTER_KEYS: frozenset[str] = frozenset({
-    "dataset", "source", "search", "limit",
-    "severity", "indicator_type", "threat_type", "cve_id", "actor", "country",
-})
+STRUCTURED_FILTER_KEYS: frozenset[str] = frozenset(
+    {
+        "dataset",
+        "source",
+        "search",
+        "limit",
+        "severity",
+        "indicator_type",
+        "threat_type",
+        "cve_id",
+        "actor",
+        "country",
+    }
+)
 
 # Column-equality filter keys (everything in the whitelist except the four
 # control keys). These map onto real columns of the entries schema and onto
 # canonical normalized columns when present.
 COLUMN_FILTER_KEYS: frozenset[str] = STRUCTURED_FILTER_KEYS - {
-    "dataset", "source", "search", "limit",
+    "dataset",
+    "source",
+    "search",
+    "limit",
 }
 
 VALID_DATASETS: frozenset[str] = frozenset({"raw", "normalized"})
@@ -67,6 +81,7 @@ class NLQueryError(Exception):
 @dataclass
 class StructuredQuery:
     """A validated, safe-to-execute query distilled from the LLM answer."""
+
     dataset: str = DEFAULT_DATASET
     source: str | None = None
     search: str | None = None
@@ -98,9 +113,7 @@ def build_nl_prompt(
     The model is asked for a single JSON object restricted to the closed key
     set. It must NOT emit SQL, prose, or invent keys/values.
     """
-    sources_block = (
-        "\n".join(f"  - {s}" for s in known_sources) if known_sources else "(none)"
-    )
+    sources_block = "\n".join(f"  - {s}" for s in known_sources) if known_sources else "(none)"
     column_keys = ", ".join(sorted(COLUMN_FILTER_KEYS))
 
     system_prompt = (
@@ -119,7 +132,7 @@ def build_nl_prompt(
     user_prompt = (
         f"Question: {question}\n\n"
         f"Default dataset if unspecified: {default_dataset}\n\n"
-        f"Known feeds (use exact names for \"source\"; omit \"source\" to search "
+        f'Known feeds (use exact names for "source"; omit "source" to search '
         f"all):\n{sources_block}\n\n"
         f"Return a JSON object using only the allowed keys."
     )
@@ -237,11 +250,15 @@ async def execute_structured_query(sq: StructuredQuery) -> list[dict[str, Any]]:
     # normalized
     if not sq.column_filters:
         return await query_normalized(
-            source_name=sq.source, limit=sq.limit, search=sq.search,
+            source_name=sq.source,
+            limit=sq.limit,
+            search=sq.search,
         )
 
     rows = await query_normalized(
-        source_name=sq.source, limit=_NORMALIZED_FETCH_CAP, search=sq.search,
+        source_name=sq.source,
+        limit=_NORMALIZED_FETCH_CAP,
+        search=sq.search,
     )
     filtered = _post_filter(rows, sq.column_filters)
     return filtered[: sq.limit]

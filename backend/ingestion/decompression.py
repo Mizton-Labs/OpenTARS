@@ -19,6 +19,7 @@ Design rules (locked by prompts-021B planning):
 
 Only Python's stdlib is used (``gzip``, ``zipfile``); no new dependencies.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -178,8 +179,7 @@ def _do_decompress(
     if declared_ext == ".gz":
         if not body.startswith(GZIP_MAGIC):
             raise MagicMismatchError(
-                "Payload declared as gzip but does not start with the gzip magic "
-                "bytes (1f 8b)."
+                "Payload declared as gzip but does not start with the gzip magic bytes (1f 8b)."
             )
         inner = _safe_gzip_decompress(body, max_bytes)
         inner_name = _strip_compression_suffix(filename, ".gz")
@@ -192,8 +192,7 @@ def _do_decompress(
             or body.startswith(_ZIP_SPANNED_MAGIC)
         ):
             raise MagicMismatchError(
-                "Payload declared as zip but does not start with the zip magic "
-                "bytes (50 4b 03 04)."
+                "Payload declared as zip but does not start with the zip magic bytes (50 4b 03 04)."
             )
         return _safe_zip_extract(body, max_bytes)
 
@@ -242,8 +241,7 @@ def _safe_zip_extract(body: bytes, max_bytes: int) -> tuple[str, bytes]:
             members = [m for m in zf.infolist() if not m.is_dir()]
             if len(members) != 1:
                 raise MultiMemberZipError(
-                    f"Zip archive must contain exactly one file "
-                    f"(found {len(members)})."
+                    f"Zip archive must contain exactly one file (found {len(members)})."
                 )
             info = members[0]
             if info.file_size > max_bytes:
@@ -300,6 +298,5 @@ def _assert_plaintext(body: bytes) -> None:
         detect_format(body)
     except Exception as exc:
         raise NotPlaintextError(
-            "Decompressed payload is not a recognised JSON/NDJSON/CSV/XML "
-            f"plaintext format: {exc}"
+            f"Decompressed payload is not a recognised JSON/NDJSON/CSV/XML plaintext format: {exc}"
         ) from exc

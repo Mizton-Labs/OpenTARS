@@ -1,4 +1,5 @@
 """Tests for parse_llm_response + validate_proposal (021E-1)."""
+
 from __future__ import annotations
 
 import pytest
@@ -8,7 +9,6 @@ from backend.normalizer.smart import (
     parse_llm_response,
     validate_proposal,
 )
-
 
 # ── parse_llm_response ──────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ def test_parse_non_object_raises():
 
 def test_parse_invalid_json_raises():
     with pytest.raises(SmartModeError, match="not valid JSON"):
-        parse_llm_response('{not json}')
+        parse_llm_response("{not json}")
 
 
 def test_parse_no_braces_raises():

@@ -4,6 +4,7 @@ Each batch endpoint iterates every configured source of one kind, refreshes
 each independently, and returns a per-source report. A failure on one source
 must be captured in that source's entry without aborting the whole batch.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -14,7 +15,8 @@ async def test_refresh_all_api_pull_reports_every_source(monkeypatch):
     import backend.api.routes_control as rc
 
     monkeypatch.setattr(
-        rc, "load_sources",
+        rc,
+        "load_sources",
         lambda: {"api_pull": [{"name": "a"}, {"name": "b"}]},
     )
 
@@ -43,7 +45,8 @@ async def test_refresh_all_continues_past_a_failing_source(monkeypatch):
     import backend.api.routes_control as rc
 
     monkeypatch.setattr(
-        rc, "load_sources",
+        rc,
+        "load_sources",
         lambda: {"rss_pull": [{"name": "ok1"}, {"name": "boom"}, {"name": "ok2"}]},
     )
 
@@ -71,10 +74,13 @@ async def test_refresh_all_remote_json_pull_passes_url_and_fields(monkeypatch):
     import backend.api.routes_control as rc
 
     monkeypatch.setattr(
-        rc, "load_sources",
-        lambda: {"remote_json_pull": [
-            {"name": "feed1", "url": "http://x/1", "fields": ["a", "b"]},
-        ]},
+        rc,
+        "load_sources",
+        lambda: {
+            "remote_json_pull": [
+                {"name": "feed1", "url": "http://x/1", "fields": ["a", "b"]},
+            ]
+        },
     )
 
     captured: dict = {}

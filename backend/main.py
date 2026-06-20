@@ -2,11 +2,10 @@
 Mizton-ThreatBox — FastAPI application entry point.
 Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 """
+
 from __future__ import annotations
 
 import logging
-
-from backend import __version__
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,9 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import __version__
+from backend import scheduler as scheduler_mod
 from backend.api.routes_app import router as app_config_router
 from backend.api.routes_auth import router as auth_router
 from backend.api.routes_control import router as control_router
+from backend.api.routes_feed import router as feed_router
 from backend.api.routes_fields import router as fields_router
 from backend.api.routes_ingest import router as ingest_router
 from backend.api.routes_jobs import router as jobs_router
@@ -29,25 +31,23 @@ from backend.api.routes_smart import router as smart_router
 from backend.api.routes_sources import router as sources_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
-from backend.api.routes_feed import router as feed_router
-from backend.config.loader import load_app_base_prefix, load_auth_enabled
 from backend.auth.db import init_users_db
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
     bootstrap_admin_if_empty,
     resolve_session,
 )
+from backend.config.loader import load_app_base_prefix, load_auth_enabled
+from backend.db.watchers import init_watchers_db
+from backend.logging_config import setup_logging
+from backend.normalizer.consolidated import init_consolidated_db
 from backend.normalizer.db import check_and_handle_schema_bump
 from backend.normalizer.mappings import (
     init_mappings_db,
     migrate_yaml_manual_mappings_once,
 )
-from backend.normalizer.consolidated import init_consolidated_db
 from backend.normalizer.proposals import init_proposals_db
 from backend.normalizer.run_history import init_run_history_db
-from backend.db.watchers import init_watchers_db
-from backend.logging_config import setup_logging
-from backend import scheduler as scheduler_mod
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 setup_logging(_LOG_DIR)
@@ -75,7 +75,8 @@ async def lifespan(app: FastAPI):
         seeded = await migrate_yaml_manual_mappings_once()
         if seeded:
             logger.info(
-                "mapping_versions migration seeded %d row(s) from yaml", seeded,
+                "mapping_versions migration seeded %d row(s) from yaml",
+                seeded,
             )
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("Mapping versions init/migration failed: %s", exc)
@@ -172,18 +173,22 @@ app.include_router(feed_router)
 # page can load; the SPA itself redirects to /login when unauthenticated.
 
 # Exact public API paths (method-checked below).
-_PUBLIC_API_PATHS = frozenset({
-    "/api/health",
-    "/api/auth/login",
-    "/api/auth/status",
-})
+_PUBLIC_API_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/status",
+    }
+)
 
 # Self-service paths any authenticated user may reach regardless of role.
-_SELF_PATHS = frozenset({
-    "/api/auth/me",
-    "/api/auth/logout",
-    "/api/auth/password",
-})
+_SELF_PATHS = frozenset(
+    {
+        "/api/auth/me",
+        "/api/auth/logout",
+        "/api/auth/password",
+    }
+)
 
 # GET-only prefixes a 'normal' (Viewer-only) user may read. Scoped to exactly
 # what the Viewer page fetches.
@@ -209,9 +214,7 @@ _NORMAL_GET_PREFIXES = (
 # query endpoint (prompts-064) is a read operation expressed as a POST (it
 # carries a JSON body), so it is added here rather than to the GET prefixes.
 # The push-only 'sender' role is deliberately NOT granted this.
-_NORMAL_POST_PATHS = (
-    "/api/query/nl",
-)
+_NORMAL_POST_PATHS = ("/api/query/nl",)
 
 
 def _normal_role_allowed(method: str, path: str) -> bool:
@@ -271,25 +274,19 @@ async def auth_enforcement(request, call_next):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     user = await resolve_session(token or "")
     if user is None:
-        return JSONResponse(
-            status_code=401, content={"detail": "Authentication required"}
-        )
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
     # Forced password change (prompts-047): a user whose password is a generated
     # default (first-run bootstrap or --reset-admin-password) must change it
     # before doing anything else. Allow only the self-service paths needed to
     # complete that flow — read identity (/me), change the password, and log out.
     if user.get("must_change_password") and path not in _SELF_PATHS:
-        return JSONResponse(
-            status_code=403, content={"detail": "Password change required"}
-        )
+        return JSONResponse(status_code=403, content={"detail": "Password change required"})
 
     # Role gate: admins may reach everything; non-admin roles are constrained
     # to their allowlist ('normal' = Viewer reads; 'sender' = listener POST).
     if user.get("role") != "admin" and not _role_allowed(user.get("role", ""), method, path):
-        return JSONResponse(
-            status_code=403, content={"detail": "Insufficient privileges"}
-        )
+        return JSONResponse(status_code=403, content={"detail": "Insufficient privileges"})
 
     request.state.user = user
     return await call_next(request)
@@ -374,9 +371,7 @@ def _render_index_html(prefix: str) -> str:
 
     base_href = f"{prefix}/" if prefix else "./"
     base_tag = f'<base href="{base_href}">'
-    meta_tag = (
-        f'<meta name="{_META_PREFIX_NAME}" content="{prefix}">' if prefix else ""
-    )
+    meta_tag = f'<meta name="{_META_PREFIX_NAME}" content="{prefix}">' if prefix else ""
 
     # Compose the injection block: <base> first so it scopes any same-document
     # relative URLs that follow; <meta> second if applicable.
@@ -416,6 +411,7 @@ if _FRONTEND_DIST.exists():
             candidate = _FRONTEND_DIST / full_path
             if candidate.is_file() and candidate.suffix not in {".html", ""}:
                 from fastapi.responses import FileResponse
+
                 return FileResponse(str(candidate))
         # Otherwise: serve the SPA shell with the active prefix injected.
         prefix = load_app_base_prefix()

@@ -3,6 +3,7 @@ Normaliser — filters an incoming dict against the enabled fields from
 feed-fields.yaml. Unknown fields are discarded unless they match a
 custom field.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,7 +14,9 @@ from backend.config.loader import load_fields, load_ingest_all_fields
 audit = logging.getLogger("backend.audit")
 
 
-def normalise(raw_data: dict[str, Any], ingest_mode: str, source_name: str, source_fields: dict | None = None) -> dict[str, Any]:
+def normalise(
+    raw_data: dict[str, Any], ingest_mode: str, source_name: str, source_fields: dict | None = None
+) -> dict[str, Any]:
     """
     Given a raw parsed dict, return a new dict containing only enabled fields.
 
@@ -36,9 +39,7 @@ def normalise(raw_data: dict[str, Any], ingest_mode: str, source_name: str, sour
     if source_fields:
         # Build override map from source-specific core field settings
         override_map: dict[str, bool] = {
-            f["name"]: f["enabled"]
-            for f in source_fields.get("core_fields", [])
-            if "enabled" in f
+            f["name"]: f["enabled"] for f in source_fields.get("core_fields", []) if "enabled" in f
         }
         merged_core = [
             {**f, "enabled": override_map.get(f["name"], f.get("enabled", True))}
@@ -53,13 +54,9 @@ def normalise(raw_data: dict[str, Any], ingest_mode: str, source_name: str, sour
         fields_config = global_config
 
     enabled_core: set[str] = {
-        f["name"]
-        for f in fields_config.get("core_fields", [])
-        if f.get("enabled", True)
+        f["name"] for f in fields_config.get("core_fields", []) if f.get("enabled", True)
     }
-    custom_names: set[str] = {
-        f["name"] for f in fields_config.get("custom_fields", [])
-    }
+    custom_names: set[str] = {f["name"] for f in fields_config.get("custom_fields", [])}
     allowed = enabled_core | custom_names
 
     result: dict[str, Any] = {}
@@ -73,6 +70,7 @@ def normalise(raw_data: dict[str, Any], ingest_mode: str, source_name: str, sour
     # Store full raw payload if raw field is enabled
     if "raw" in enabled_core:
         import json
+
         result["raw"] = json.dumps(raw_data)
 
     # Audit: log accepted and dropped fields at DEBUG level
@@ -81,7 +79,10 @@ def normalise(raw_data: dict[str, Any], ingest_mode: str, source_name: str, sour
     dropped = sorted(set(raw_data.keys()) - allowed - _meta)
     audit.debug(
         "fields source=%s mode=%s accepted=%s dropped=%s",
-        source_name, ingest_mode, accepted, dropped,
+        source_name,
+        ingest_mode,
+        accepted,
+        dropped,
     )
 
     return result

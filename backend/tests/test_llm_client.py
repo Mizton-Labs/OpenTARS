@@ -1,9 +1,9 @@
 """Tests for backend.llm.client and registry (prompts-021D)."""
+
 from __future__ import annotations
 
 import json
 import logging
-import socket
 
 import pytest
 
@@ -38,16 +38,18 @@ class _FakeTransport:
         max_retries,
         provider_name,
     ):
-        self.calls.append({
-            "method": method,
-            "url": url,
-            "headers": headers,
-            "body": body,
-            "timeout": timeout,
-            "skip_tls_verify": skip_tls_verify,
-            "max_retries": max_retries,
-            "provider_name": provider_name,
-        })
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "body": body,
+                "timeout": timeout,
+                "skip_tls_verify": skip_tls_verify,
+                "max_retries": max_retries,
+                "provider_name": provider_name,
+            }
+        )
         item = self.responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -206,9 +208,11 @@ def _compat_client(tx):
 def test_empty_content_finish_reason_length_raises_truncation_diagnostic():
     """prompts-035 (#2.5): empty content + finish_reason=length → deterministic
     token-budget diagnostic, not a silent empty string."""
-    body = json.dumps({
-        "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     with pytest.raises(client_mod.LLMProviderError) as exc:
         _compat_client(tx).complete("hi")
@@ -224,9 +228,11 @@ def test_empty_content_raises_typed_empty_content_error_with_finish_reason():
     while genuine provider errors still fail."""
     from backend.llm.errors import LLMEmptyContentError, LLMProviderError
 
-    body = json.dumps({
-        "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     with pytest.raises(LLMEmptyContentError) as exc:
         _compat_client(tx).complete("hi")
@@ -237,12 +243,16 @@ def test_empty_content_raises_typed_empty_content_error_with_finish_reason():
 def test_empty_content_with_reasoning_field_raises_reasoning_diagnostic():
     """prompts-035 (#2.5): empty content but a populated reasoning_content field
     → the model reasoned without producing a final answer."""
-    body = json.dumps({
-        "choices": [{
-            "message": {"content": "", "reasoning_content": "let me think..."},
-            "finish_reason": "stop",
-        }],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": "", "reasoning_content": "let me think..."},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     with pytest.raises(client_mod.LLMProviderError, match="reasoning"):
         _compat_client(tx).complete("hi")
@@ -258,28 +268,38 @@ def test_empty_content_with_reasoning_recovers_trailing_json_answer():
         '{"source": "source", "c2_ip": "indicator", "port": "__skip__"}\n\n'
         "Thus produce JSON object exactly. Let's output."
     )
-    body = json.dumps({
-        "choices": [{
-            "message": {"content": "", "reasoning_content": reasoning},
-            "finish_reason": "stop",
-        }],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": "", "reasoning_content": reasoning},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     out = _compat_client(tx).complete("hi")
     assert json.loads(out) == {
-        "source": "source", "c2_ip": "indicator", "port": "__skip__",
+        "source": "source",
+        "c2_ip": "indicator",
+        "port": "__skip__",
     }
 
 
 def test_empty_content_reasoning_without_json_still_raises():
     """Recovery is best-effort: prose-only reasoning with no JSON object falls
     through to the existing empty-content diagnostic."""
-    body = json.dumps({
-        "choices": [{
-            "message": {"content": "", "reasoning_content": "let me think..."},
-            "finish_reason": "stop",
-        }],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": "", "reasoning_content": "let me think..."},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     with pytest.raises(client_mod.LLMProviderError, match="reasoning"):
         _compat_client(tx).complete("hi")
@@ -296,9 +316,7 @@ def test_recover_json_object_from_reasoning_picks_last_balanced_object():
     )
     blob = _recover_json_object_from_reasoning(text)
     assert blob is not None
-    assert json.loads(blob) == {
-        "a": "title", "nested": {"k": "v"}, "lit": "has } brace"
-    }
+    assert json.loads(blob) == {"a": "title", "nested": {"k": "v"}, "lit": "has } brace"}
 
 
 def test_recover_json_object_from_reasoning_returns_none_when_absent():
@@ -310,9 +328,11 @@ def test_recover_json_object_from_reasoning_returns_none_when_absent():
 
 
 def test_empty_content_content_filter_raises_block_diagnostic():
-    body = json.dumps({
-        "choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     with pytest.raises(client_mod.LLMProviderError, match="content_filter"):
         _compat_client(tx).complete("hi")
@@ -328,12 +348,16 @@ def test_empty_content_no_finish_reason_raises_generic_diagnostic():
 def test_non_empty_content_returned_even_when_reasoning_present():
     """prompts-035 (#2.5): a populated content is returned verbatim; the
     reasoning field is only used to explain an EMPTY content."""
-    body = json.dumps({
-        "choices": [{
-            "message": {"content": "the answer", "reasoning_content": "thinking"},
-            "finish_reason": "stop",
-        }],
-    }).encode()
+    body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": "the answer", "reasoning_content": "thinking"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    ).encode()
     tx = _FakeTransport([(200, {}, body)])
     assert _compat_client(tx).complete("hi") == "the answer"
 
@@ -342,7 +366,7 @@ def test_transport_timeout_becomes_llm_transport_error(monkeypatch):
     """The real _http_request must translate socket.timeout to LLMTransportError."""
 
     def boom(*args, **kwargs):
-        raise socket.timeout("simulated")
+        raise TimeoutError("simulated")
 
     monkeypatch.setattr(client_mod.urllib.request, "urlopen", boom)
     with pytest.raises(LLMTransportError):
@@ -361,8 +385,8 @@ def test_transport_timeout_becomes_llm_transport_error(monkeypatch):
 def test_5xx_retried_then_succeeds():
     body_ok = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
     # First call: a 503 via HTTPError; second: success.
-    import urllib.error
     import io
+    import urllib.error
 
     err = urllib.error.HTTPError(
         url="https://x", code=503, msg="busy", hdrs=None, fp=io.BytesIO(b"")
@@ -416,9 +440,7 @@ def test_skip_tls_verify_emits_warning(caplog, monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(
-        client_mod.urllib.request, "urlopen", lambda *a, **kw: _FakeResp(body_ok)
-    )
+    monkeypatch.setattr(client_mod.urllib.request, "urlopen", lambda *a, **kw: _FakeResp(body_ok))
 
     with caplog.at_level(logging.WARNING, logger="backend.llm.client"):
         client_mod._http_request(
@@ -532,8 +554,7 @@ def test_send_info_line_marks_list_models_and_test_context(caplog):
     c._tap = lambda rec: None  # simulate test_runner having installed a tap
     with caplog.at_level(logging.INFO, logger="backend.llm.client"):
         c.list_models()
-    req = next(m for m in (r.getMessage() for r in caplog.records)
-               if m.startswith("llm.request "))
+    req = next(m for m in (r.getMessage() for r in caplog.records) if m.startswith("llm.request "))
     assert "purpose=list_models" in req
     assert "context=test" in req
 
@@ -544,9 +565,7 @@ def test_send_never_logs_raw_api_key_at_any_level(caplog):
     with caplog.at_level(logging.DEBUG, logger="backend.llm.client"):
         c.complete("hi")
     full_log = "\n".join(r.getMessage() for r in caplog.records)
-    assert "sk-very-secret" not in full_log, (
-        f"raw api_key leaked to logs: {full_log!r}"
-    )
+    assert "sk-very-secret" not in full_log, f"raw api_key leaked to logs: {full_log!r}"
     # And the DEBUG body line carries the redacted Authorization header.
     body_lines = [m for m in full_log.splitlines() if m.startswith("llm.request.body")]
     assert body_lines, "expected a DEBUG llm.request.body line"
@@ -578,8 +597,8 @@ def test_send_info_only_does_not_emit_body_lines(caplog):
 
 
 def test_send_logs_warning_on_failure_and_re_raises(caplog):
-    import urllib.error
     import io
+    import urllib.error
 
     err = urllib.error.HTTPError(
         url="https://x", code=503, msg="busy", hdrs=None, fp=io.BytesIO(b"")
@@ -614,8 +633,8 @@ def test_send_tap_receives_full_record_with_step_label():
 
 
 def test_send_tap_captures_error_record():
-    import urllib.error
     import io
+    import urllib.error
 
     err = urllib.error.HTTPError(
         url="https://x", code=500, msg="boom", hdrs=None, fp=io.BytesIO(b"")
@@ -776,8 +795,8 @@ def test_openai_compatible_list_models_raises_on_non_json_not_swallow():
     typed error, otherwise a misconfigured proxy looks indistinguishable
     from a missing endpoint (prompts-025, extended in prompts-029 to span
     all candidate URLs)."""
-    from backend.llm.errors import LLMProviderError
     from backend.llm.client import _candidate_model_list_urls
+    from backend.llm.errors import LLMProviderError
 
     base = "http://openwebui:3000/api"
     n = len(_candidate_model_list_urls(base))
@@ -807,11 +826,16 @@ def test_openai_compatible_list_models_falls_back_to_v1_path():
     answers with a non-OpenAI body; discovery must fall through to the
     next candidate and return its models."""
     # Candidate order: /api/models, /api/v1/models, …
-    tx = _FakeTransport([
-        (200, {}, b"<html>OpenWebUI</html>"),                       # /api/models — HTML
-        (200, {}, json.dumps({"data": [{"id": "llama3"},
-                                        {"id": "mistral"}]}).encode()),  # /api/v1/models — OK
-    ])
+    tx = _FakeTransport(
+        [
+            (200, {}, b"<html>OpenWebUI</html>"),  # /api/models — HTML
+            (
+                200,
+                {},
+                json.dumps({"data": [{"id": "llama3"}, {"id": "mistral"}]}).encode(),
+            ),  # /api/v1/models — OK
+        ]
+    )
     c = OpenAICompatibleClient(
         name="openwebui",
         base_url="http://openwebui:3000/api",
@@ -830,9 +854,11 @@ def test_openai_compatible_list_models_falls_back_to_v1_path():
 def test_openai_compatible_list_models_single_get_on_v1_base():
     """OpenAI proper / …/v1 compatibles resolve on the FIRST candidate —
     no extra GETs (the common case stays a single request)."""
-    tx = _FakeTransport([
-        (200, {}, json.dumps({"data": [{"id": "gpt-4o"}]}).encode()),
-    ])
+    tx = _FakeTransport(
+        [
+            (200, {}, json.dumps({"data": [{"id": "gpt-4o"}]}).encode()),
+        ]
+    )
     c = OpenAICompatibleClient(
         name="vllm",
         base_url="http://10.0.0.5:8000/v1",
@@ -851,8 +877,8 @@ def test_openai_compatible_list_models_returns_none_when_all_absent():
     """When EVERY candidate fails with a transport/HTTP error (endpoint
     genuinely absent — never answered a usable 2xx), discovery soft-fails
     to None so the wizard falls back to the free-text model path."""
-    from backend.llm.errors import LLMProviderError
     from backend.llm.client import _candidate_model_list_urls
+    from backend.llm.errors import LLMProviderError
 
     base = "http://openwebui:3000/api"
     n = len(_candidate_model_list_urls(base))
@@ -875,10 +901,16 @@ def test_openai_compatible_list_models_keeps_probing_past_empty_catalog():
     not short-circuit — discovery keeps probing in case another route
     actually publishes models, and only falls back to the empty result if
     nothing else is found."""
-    tx = _FakeTransport([
-        (200, {}, json.dumps({"data": []}).encode()),                # /api/models — empty
-        (200, {}, json.dumps({"data": [{"id": "llama3"}]}).encode()),  # /api/v1/models — has model
-    ])
+    tx = _FakeTransport(
+        [
+            (200, {}, json.dumps({"data": []}).encode()),  # /api/models — empty
+            (
+                200,
+                {},
+                json.dumps({"data": [{"id": "llama3"}]}).encode(),
+            ),  # /api/v1/models — has model
+        ]
+    )
     c = OpenAICompatibleClient(
         name="openwebui",
         base_url="http://openwebui:3000/api",
@@ -908,7 +940,6 @@ def test_openai_compatible_list_models_returns_empty_when_only_empty_found():
     )
     assert c.list_models() == []
     assert len(tx.calls) == n
-
 
 
 def test_ollama_list_models_raises_llmprovidererror_on_empty_body():
@@ -949,13 +980,14 @@ def test_anthropic_complete_raises_llmprovidererror_on_non_json_body():
 def test_format_request_raw_renders_method_url_headers_body():
     from backend.llm.client import format_request_raw
 
-    out = format_request_raw({
-        "method": "POST",
-        "url": "https://h/v1/chat/completions",
-        "headers_redacted": {"Content-Type": "application/json",
-                             "Authorization": "***"},
-        "request_body": '{"model": "m"}',
-    })
+    out = format_request_raw(
+        {
+            "method": "POST",
+            "url": "https://h/v1/chat/completions",
+            "headers_redacted": {"Content-Type": "application/json", "Authorization": "***"},
+            "request_body": '{"model": "m"}',
+        }
+    )
     assert out.startswith("POST https://h/v1/chat/completions\n")
     assert "Authorization: ***" in out
     assert out.rstrip().endswith('{"model": "m"}')
@@ -994,8 +1026,7 @@ def test_last_exchange_raw_sources_response_body_from_provider_error():
     body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
     c, _ = _build_client_with_tx([(200, {}, body)])
     c.complete("hello")  # populate the sink with a 200 first
-    err = LLMProviderError("bad", status=400, body='{"error": "nope"}',
-                           attempted_urls=[])
+    err = LLMProviderError("bad", status=400, body='{"error": "nope"}', attempted_urls=[])
     req_raw, resp_json = c.last_exchange_raw(err)
     # The error body overrides the sink's 200 response.
     assert resp_json.startswith("HTTP 400")

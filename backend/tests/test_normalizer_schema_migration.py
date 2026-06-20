@@ -9,17 +9,17 @@ Covers:
 * reset_normalized_flag_for_all_sources updates rows across multiple source
   DBs (synthetic).
 """
+
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 import aiosqlite
 import pytest
 import yaml
 
-
 # ── schema_version drop+recreate ───────────────────────────────────────────────
+
 
 @pytest.mark.anyio
 async def test_schema_bump_drops_and_recreates_normalized_db(tmp_path, monkeypatch):
@@ -42,6 +42,7 @@ async def test_schema_bump_drops_and_recreates_normalized_db(tmp_path, monkeypat
     # Stub the source-flag-reset to avoid touching real source DBs.
     async def _noop_reset() -> int:
         return 0
+
     monkeypatch.setattr(
         "backend.db.manager.reset_normalized_flag_for_all_sources",
         _noop_reset,
@@ -67,17 +68,14 @@ async def test_schema_bump_drops_and_recreates_normalized_db(tmp_path, monkeypat
 
 # ── manual_mappings auto-migration ─────────────────────────────────────────────
 
+
 def test_manual_mappings_migrates_ip_address_canonical(tmp_path, monkeypatch):
     """Legacy `ip_address` canonical is rewritten to `indicator` and persisted."""
     import backend.normalizer.config as cfg_mod
 
     cfg_path = tmp_path / "normalizer-config.yaml"
     cfg_path.write_text(
-        "mode: manual\n"
-        "manual_mappings:\n"
-        "  feed_a:\n"
-        "    src_ip: ip_address\n"
-        "    cve: cve\n"
+        "mode: manual\nmanual_mappings:\n  feed_a:\n    src_ip: ip_address\n    cve: cve\n"
     )
     monkeypatch.setattr(cfg_mod, "_NORMALIZER_CONFIG_PATH", cfg_path)
 
@@ -140,6 +138,7 @@ def test_manual_mappings_no_change_when_already_current(tmp_path, monkeypatch):
 
 # ── reset_normalized_flag_for_all_sources ──────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_reset_normalized_flag_clears_flag_across_sources(tmp_path, monkeypatch):
     """Synthetic source DBs have their normalized flag reset to 0."""
@@ -175,6 +174,7 @@ async def test_reset_normalized_flag_clears_flag_across_sources(tmp_path, monkey
 
 # ── prompts-021F: mapping_version_id housekeeping column ──────────────────────
 
+
 @pytest.mark.anyio
 async def test_normalized_entries_has_mapping_version_id_column(tmp_path, monkeypatch):
     """Schema bump v3 adds the mapping_version_id housekeeping column."""
@@ -197,15 +197,27 @@ async def test_query_normalized_filters_by_mapping_version_id(tmp_path, monkeypa
     fake_path = tmp_path / "normalized.db"
     monkeypatch.setattr(ndb, "_NORM_DB_PATH", fake_path)
 
-    await ndb.insert_normalized({
-        "source_entry_id": 1, "source_name": "s", "mapping_version_id": 1,
-    })
-    await ndb.insert_normalized({
-        "source_entry_id": 2, "source_name": "s", "mapping_version_id": 2,
-    })
-    await ndb.insert_normalized({
-        "source_entry_id": 3, "source_name": "s", "mapping_version_id": 2,
-    })
+    await ndb.insert_normalized(
+        {
+            "source_entry_id": 1,
+            "source_name": "s",
+            "mapping_version_id": 1,
+        }
+    )
+    await ndb.insert_normalized(
+        {
+            "source_entry_id": 2,
+            "source_name": "s",
+            "mapping_version_id": 2,
+        }
+    )
+    await ndb.insert_normalized(
+        {
+            "source_entry_id": 3,
+            "source_name": "s",
+            "mapping_version_id": 2,
+        }
+    )
 
     v2_rows = await ndb.query_normalized(source_name="s", mapping_version_id=2)
     assert {r["source_entry_id"] for r in v2_rows} == {2, 3}

@@ -1,4 +1,5 @@
 """Tests for routes_jobs — job status polling endpoint."""
+
 from __future__ import annotations
 
 import pytest
@@ -33,6 +34,7 @@ async def test_get_job_returns_state():
 @pytest.mark.asyncio
 async def test_get_job_returns_404_for_unknown_id():
     from fastapi import HTTPException
+
     with pytest.raises(HTTPException) as exc:
         await rj.get_job("non-existent")
     assert exc.value.status_code == 404

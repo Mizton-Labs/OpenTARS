@@ -5,6 +5,7 @@ to cover the v3 ``mapping_version_id`` column, (prompts-032) the v4
 consolidated-proposal columns, and (prompts-034) the v5 lifecycle columns
 ``proposal_name`` + ``archived``.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -47,9 +48,7 @@ def _build_v1_db(path: Path) -> None:
         )
         """
     )
-    conn.execute(
-        "CREATE TABLE schema_version (version INTEGER NOT NULL)"
-    )
+    conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
     conn.execute("INSERT INTO schema_version (version) VALUES (1)")
     conn.execute(
         """
@@ -82,10 +81,17 @@ async def test_v1_to_v2_migration_is_idempotent_and_additive(_isolate_proposals_
         await cur.close()
 
     assert {
-        "trigger_reason", "score", "score_breakdown", "outcome",
-        "auto_applied", "mapping_version_id",
-        "sources_json", "field_scope", "consolidated_version_id",
-        "proposal_name", "archived",
+        "trigger_reason",
+        "score",
+        "score_breakdown",
+        "outcome",
+        "auto_applied",
+        "mapping_version_id",
+        "sources_json",
+        "field_scope",
+        "consolidated_version_id",
+        "proposal_name",
+        "archived",
     } <= cols
     assert version_row is not None and int(version_row[0]) == 6
     # Pre-existing row defaults to 'manual' (the column default).
@@ -103,9 +109,16 @@ async def test_v1_to_v2_migration_is_idempotent_and_additive(_isolate_proposals_
 @pytest.mark.asyncio
 async def test_insert_proposal_persists_trigger_reason(_isolate_proposals_db: Path):
     pid = await proposals_mod.insert_proposal(
-        source_name="src", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-        llm_response_raw="", trigger_reason="on_new_feed",
+        source_name="src",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        trigger_reason="on_new_feed",
     )
     fetched = await proposals_mod.get_proposal(pid)
     assert fetched is not None
@@ -116,9 +129,16 @@ async def test_insert_proposal_persists_trigger_reason(_isolate_proposals_db: Pa
 async def test_insert_proposal_rejects_invalid_trigger_reason(_isolate_proposals_db: Path):
     with pytest.raises(ValueError):
         await proposals_mod.insert_proposal(
-            source_name="src", provider_name=None, model=None, sample_size=1,
-            raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-            llm_response_raw="", trigger_reason="bogus",
+            source_name="src",
+            provider_name=None,
+            model=None,
+            sample_size=1,
+            raw_fields=[],
+            mapping={},
+            prompt_system="",
+            prompt_user="",
+            llm_response_raw="",
+            trigger_reason="bogus",
         )
 
 
@@ -205,12 +225,21 @@ async def test_v2_to_v3_migration_adds_mapping_version_id(_isolate_proposals_db:
 async def test_update_proposal_status_persists_mapping_version_id(_isolate_proposals_db: Path):
     """``update_proposal_status`` must persist mapping_version_id when given."""
     pid = await proposals_mod.insert_proposal(
-        source_name="src", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="src",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     changed = await proposals_mod.update_proposal_status(
-        pid, "approved", note="lgtm", outcome="approved",
+        pid,
+        "approved",
+        note="lgtm",
+        outcome="approved",
         mapping_version_id=42,
     )
     assert changed is True
@@ -228,6 +257,7 @@ async def test_update_proposal_status_persists_mapping_version_id(_isolate_propo
 # ---------------------------------------------------------------------------
 # prompts-032: v3 → v4 consolidated columns
 # ---------------------------------------------------------------------------
+
 
 def _build_v3_db(path: Path) -> None:
     """Build a v3-shape proposals.db file directly via sqlite3."""
@@ -305,10 +335,16 @@ async def test_insert_consolidated_proposal_roundtrips(_isolate_proposals_db: Pa
     """insert_proposal must persist and parse back the consolidated columns."""
     pid = await proposals_mod.insert_proposal(
         source_name=proposals_mod.CONSOLIDATED_SENTINEL,
-        provider_name="openai", model="gpt-x", sample_size=20,
-        raw_fields=["a", "b", "c"], mapping={"a": "title"},
-        prompt_system="", prompt_user="", llm_response_raw="",
-        sources=["feed-a", "feed-b"], field_scope="configured",
+        provider_name="openai",
+        model="gpt-x",
+        sample_size=20,
+        raw_fields=["a", "b", "c"],
+        mapping={"a": "title"},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        sources=["feed-a", "feed-b"],
+        field_scope="configured",
     )
     row = await proposals_mod.get_proposal(pid)
     assert row is not None
@@ -322,9 +358,16 @@ async def test_insert_consolidated_proposal_roundtrips(_isolate_proposals_db: Pa
 async def test_insert_proposal_rejects_invalid_field_scope(_isolate_proposals_db: Path):
     with pytest.raises(ValueError):
         await proposals_mod.insert_proposal(
-            source_name="src", provider_name=None, model=None, sample_size=1,
-            raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-            llm_response_raw="", field_scope="bogus",
+            source_name="src",
+            provider_name=None,
+            model=None,
+            sample_size=1,
+            raw_fields=[],
+            mapping={},
+            prompt_system="",
+            prompt_user="",
+            llm_response_raw="",
+            field_scope="bogus",
         )
 
 
@@ -332,12 +375,22 @@ async def test_insert_proposal_rejects_invalid_field_scope(_isolate_proposals_db
 async def test_update_proposal_status_persists_consolidated_version_id(_isolate_proposals_db: Path):
     pid = await proposals_mod.insert_proposal(
         source_name=proposals_mod.CONSOLIDATED_SENTINEL,
-        provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
-        llm_response_raw="", sources=["s1"], field_scope="all",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
+        llm_response_raw="",
+        sources=["s1"],
+        field_scope="all",
     )
     changed = await proposals_mod.update_proposal_status(
-        pid, "approved", note="ok", outcome="approved",
+        pid,
+        "approved",
+        note="ok",
+        outcome="approved",
         consolidated_version_id=99,
     )
     assert changed is True
@@ -352,6 +405,7 @@ async def test_update_proposal_status_persists_consolidated_version_id(_isolate_
 # ---------------------------------------------------------------------------
 # prompts-034: v4 → v5 lifecycle columns (proposal_name + archived)
 # ---------------------------------------------------------------------------
+
 
 def _build_v4_db(path: Path) -> None:
     """Build a v4-shape proposals.db file directly via sqlite3."""
@@ -410,8 +464,7 @@ async def test_v4_to_v5_migration_adds_lifecycle_columns(_isolate_proposals_db: 
         cols = {r[1] for r in await cur.fetchall()}
         await cur.close()
         cur = await db.execute(
-            "SELECT proposal_name, archived FROM proposals "
-            "WHERE source_name = 'v4-feed'"
+            "SELECT proposal_name, archived FROM proposals WHERE source_name = 'v4-feed'"
         )
         legacy = await cur.fetchone()
         await cur.close()
@@ -428,9 +481,7 @@ async def test_v4_to_v5_migration_adds_lifecycle_columns(_isolate_proposals_db: 
     # Second init is a no-op (idempotent backfill).
     await proposals_mod.init_proposals_db()
     async with aiosqlite.connect(_isolate_proposals_db) as db:
-        cur = await db.execute(
-            "SELECT proposal_name FROM proposals WHERE source_name = 'v4-feed'"
-        )
+        cur = await db.execute("SELECT proposal_name FROM proposals WHERE source_name = 'v4-feed'")
         again = await cur.fetchone()
         await cur.close()
     assert again is not None and again[0] == "Proposal-2024-01-01T00:00:00Z"
@@ -439,8 +490,14 @@ async def test_v4_to_v5_migration_adds_lifecycle_columns(_isolate_proposals_db: 
 @pytest.mark.asyncio
 async def test_insert_proposal_populates_name_and_defaults_unarchived(_isolate_proposals_db: Path):
     pid = await proposals_mod.insert_proposal(
-        source_name="src", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="src",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     row = await proposals_mod.get_proposal(pid)
@@ -452,8 +509,14 @@ async def test_insert_proposal_populates_name_and_defaults_unarchived(_isolate_p
 @pytest.mark.asyncio
 async def test_archive_proposal_flips_flag_and_hides_by_default(_isolate_proposals_db: Path):
     pid = await proposals_mod.insert_proposal(
-        source_name="src", provider_name=None, model=None, sample_size=1,
-        raw_fields=[], mapping={}, prompt_system="", prompt_user="",
+        source_name="src",
+        provider_name=None,
+        model=None,
+        sample_size=1,
+        raw_fields=[],
+        mapping={},
+        prompt_system="",
+        prompt_user="",
         llm_response_raw="",
     )
     # Visible by default (archived defaults False).
@@ -479,6 +542,7 @@ async def test_archive_proposal_flips_flag_and_hides_by_default(_isolate_proposa
 # prompts-037: v5 → v6 raw-exchange columns
 #   (llm_request_raw + llm_response_json)
 # ---------------------------------------------------------------------------
+
 
 def _build_v5_db(path: Path) -> None:
     """Build a v5-shape proposals.db file directly via sqlite3."""
@@ -540,8 +604,7 @@ async def test_v5_to_v6_migration_adds_raw_exchange_columns(_isolate_proposals_d
         cols = {r[1] for r in await cur.fetchall()}
         await cur.close()
         cur = await db.execute(
-            "SELECT llm_request_raw, llm_response_json FROM proposals "
-            "WHERE source_name = 'v5-feed'"
+            "SELECT llm_request_raw, llm_response_json FROM proposals WHERE source_name = 'v5-feed'"
         )
         legacy = await cur.fetchone()
         await cur.close()

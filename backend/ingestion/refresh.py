@@ -11,15 +11,16 @@ kind to its pull/ingest coroutine. It is reused by:
   `run_tracked_pull` so the UI can show a "pulling…" / "ready" / "error"
   status marker per feed (issue #1).
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
 from backend.ingestion.api_pull import pull_api_source
-from backend.ingestion.rss_pull import pull_rss_source
-from backend.ingestion.remote_feed import ingest_remote_feed
 from backend.ingestion.jobs import job_store
+from backend.ingestion.remote_feed import ingest_remote_feed
+from backend.ingestion.rss_pull import pull_rss_source
 
 logger = logging.getLogger(__name__)
 

@@ -1,9 +1,8 @@
 """
 Viewer routes — query ingested entries for the frontend.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
@@ -15,13 +14,13 @@ router = APIRouter(prefix="/api/viewer", tags=["viewer"])
 
 @router.get("/entries")
 async def get_entries(
-    source: Optional[str] = Query(None, description="Filter by source name"),
-    search: Optional[str] = Query(None, description="Full-text search across key fields"),
-    severity: Optional[str] = Query(None),
-    indicator_type: Optional[str] = Query(None),
-    threat_type: Optional[str] = Query(None),
-    ingest_mode: Optional[str] = Query(None),
-    field: Optional[list[str]] = Query(
+    source: str | None = Query(None, description="Filter by source name"),
+    search: str | None = Query(None, description="Full-text search across key fields"),
+    severity: str | None = Query(None),
+    indicator_type: str | None = Query(None),
+    threat_type: str | None = Query(None),
+    ingest_mode: str | None = Query(None),
+    field: list[str] | None = Query(
         None,
         description=(
             "Arbitrary column filter as 'name=value' (repeatable). Unknown "
@@ -75,13 +74,15 @@ async def get_summary_endpoint(
     active = job_store.list_active()
     by_source: dict[str, list[dict]] = {}
     for j in active:
-        by_source.setdefault(j.source, []).append({
-            "job_id": j.id,
-            "kind": j.kind,
-            "step": j.step,
-            "processed": j.processed,
-            "total": j.total,
-        })
+        by_source.setdefault(j.source, []).append(
+            {
+                "job_id": j.id,
+                "kind": j.kind,
+                "step": j.step,
+                "processed": j.processed,
+                "total": j.total,
+            }
+        )
     for row in rows:
         if row["source"] == "__total__":
             continue

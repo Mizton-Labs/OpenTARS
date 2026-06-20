@@ -24,6 +24,7 @@ Each row carries:
 Retention: capped at the newest ``_MAX_ROWS`` rows; older rows are trimmed on
 every insert (prompts-039 decision: keep last 500).
 """
+
 from __future__ import annotations
 
 import json

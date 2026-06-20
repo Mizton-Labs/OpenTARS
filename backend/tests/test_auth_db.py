@@ -1,4 +1,5 @@
 """Tests for backend.auth.db (prompts-045)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -212,6 +213,7 @@ async def test_purge_expired_sessions():
 
 # ── must_change_password flag (prompts-047) ──────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_new_user_defaults_to_no_forced_change():
     await init_users_db()
@@ -276,10 +278,10 @@ async def test_migration_adds_must_change_password_to_legacy_db(tmp_path, monkey
 
     user = await get_user_by_username("legacy")
     assert user is not None
-    assert user["password_hash"] == "oldhash"           # data preserved
-    assert user["must_change_password"] is False         # new column defaults 0
+    assert user["password_hash"] == "oldhash"  # data preserved
+    assert user["must_change_password"] is False  # new column defaults 0
 
     async with aiosqlite.connect(db_path) as conn:
         cur = await conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert (await cur.fetchone())[0] == 2             # version bumped
+        assert (await cur.fetchone())[0] == 2  # version bumped
         await cur.close()
