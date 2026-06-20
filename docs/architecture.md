@@ -675,11 +675,12 @@ readability in prompts-044. See
 
 ## Authentication, roles & branding (prompts-045)
 
-Optional, off-by-default identity layer. With `auth_enabled` false (the default)
-the app is fully open and behaves exactly as in earlier versions; nothing below
-applies. The toggle resolves `MIZTON_THREATBOX_ENABLE_AUTH` env → `auth_enabled`
-yaml → false, and the CLI flag `./mizton-threatbox start --enable-auth` sets
-the env var for one run. See
+On-by-default identity layer. With `auth_enabled` true (the default) the app
+requires login and enforces roles. To disable for local / trusted-network use,
+set `auth_enabled: false` in `config/application.yaml` or pass `--disable-auth`
+per-run. The toggle resolves `MIZTON_THREATBOX_ENABLE_AUTH` env → `auth_enabled`
+yaml → true, and the CLI flag `./mizton-threatbox start --disable-auth` sets
+`MIZTON_THREATBOX_ENABLE_AUTH=0` for one run. See
 `docs/decisions/0017-authentication-module-roles-sessions-branding-logo.md`.
 
 ### Backend

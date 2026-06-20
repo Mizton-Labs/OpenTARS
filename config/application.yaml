@@ -59,9 +59,10 @@
 #                  are rejected). 7z is intentionally not supported.
 #
 # auth_enabled:    whether the login / session / role layer is active
-#                  (prompts-045). Default false — when disabled the app is
-#                  fully open (no login screen, every API route public) so
-#                  local / trusted-network use needs zero configuration.
+#                  (prompts-045). Default true — authentication is ON out of
+#                  the box. To run without authentication (local / trusted-
+#                  network, single-user use) pass `--disable-auth` or set
+#                  MIZTON_THREATBOX_ENABLE_AUTH=0.
 #
 #                  When true:
 #                    - the SPA shows a login screen and gates all routes,
@@ -70,11 +71,15 @@
 #                      get a read-mostly GET allowlist, no admin tooling),
 #                    - Account and User Management config tabs appear.
 #
+#                  When false:
+#                    - the app is fully open (no login screen, every API
+#                      route public).
+#
 #                  Precedence: the MIZTON_THREATBOX_ENABLE_AUTH environment
-#                  variable (truthy = on) overrides this yaml value. The CLI
-#                  flag `./mizton-threatbox start --enable-auth` sets that
-#                  env var for one run. Changing the yaml value requires a
-#                  backend restart to take effect.
+#                  variable overrides this yaml value (truthy = on, falsy = off).
+#                  The CLI flag `./mizton-threatbox start --disable-auth` sets
+#                  MIZTON_THREATBOX_ENABLE_AUTH=0 for one run. Changing the yaml
+#                  value requires a backend restart to take effect.
 #
 #                  On first start with auth enabled and no users present, a
 #                  default admin account is provisioned. The generated password
@@ -121,7 +126,7 @@
 
 app_base_prefix: ""
 max_decompressed_bytes: 104857600
-auth_enabled: false
+auth_enabled: true
 logo_path: ""
 cookie_secure: auto
 password_min_length: 8

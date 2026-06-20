@@ -61,10 +61,13 @@ Open your browser at **http://localhost:8000**
 > By default the server binds to localhost only. To expose it on your network
 > or use a different port, see [Binding & ports](#binding--ports) below.
 
-> **Sharing the server?** Authentication is **off by default** (open UI and API).
-> For anything beyond a local single-user run — especially when binding to a
-> network interface — start with `./mizton-threatbox start --enable-auth` and see
-> [Authentication](#authentication-optional) for roles and first-run admin setup.
+> **Authentication is on by default.** The first time you start the app, a default
+> `admin` account is provisioned and its password is displayed in the terminal and
+> written to `data/first-run-admin-credentials.txt` (mode `0600`). Change the
+> password on first login. To run without authentication (local / trusted-network,
+> single-user use), start with `./mizton-threatbox start --disable-auth` or set
+> `auth_enabled: false` in `config/application.yaml`. See
+> [Authentication](#authentication-optional) for roles and setup details.
 
 ---
 
@@ -115,7 +118,7 @@ Runs the backend and the Vite dev server separately for hot-reload on frontend c
 | `--dev` | Run uvicorn in the **foreground** with logs streamed to the terminal (Ctrl+C to stop). Without it, the server runs backgrounded. |
 | `--bind <ip[:port]>` | Address (and optional port) to bind. Accepts `ip`, `ip:port`, or `:port`. If no port is given, **8000** is used. Default: `127.0.0.1:8000`. See [Binding & ports](#binding--ports). |
 | `--base-prefix <value>` | Override `app_base_prefix` from `config/application.yaml` for this run only (via `MIZTON_THREATBOX_BASE_PREFIX`). Must start with `/`, must not end with `/`, must not contain `//`. Use `""` (empty string) to mount at root. |
-| `--enable-auth` | Force-enable authentication for this run (via `MIZTON_THREATBOX_ENABLE_AUTH=1`, overriding the yaml). See [Authentication](#authentication-optional). |
+| `--disable-auth` | Force-disable authentication for this run (via `MIZTON_THREATBOX_ENABLE_AUTH=0`, overriding the yaml). Authentication is **on by default**. See [Authentication](#authentication-optional). |
 
 > Runtime PID and port state are written to `.pids/` (gitignored). `stop`/`status`
 > read the persisted port, so they work correctly even when the server was
@@ -145,13 +148,14 @@ local machine. Use `--bind` to change the address and/or port:
 
 ## Authentication (optional)
 
-Authentication is **disabled by default** — the UI and API are open. Enable it
-either per-run with `--enable-auth`, via the `MIZTON_THREATBOX_ENABLE_AUTH=1`
-environment variable, or in `config/application.yaml`. The CLI flag and env var
-take precedence over the yaml.
+Authentication is **enabled by default** — the app shows a login screen and
+requires valid credentials. To disable it for local / trusted-network,
+single-user use, pass `--disable-auth` per-run, set
+`MIZTON_THREATBOX_ENABLE_AUTH=0`, or set `auth_enabled: false` in
+`config/application.yaml`. The CLI flag and env var take precedence over the yaml.
 
 ```bash
-./mizton-threatbox start --enable-auth
+./mizton-threatbox start --disable-auth
 ```
 
 When enabled:
@@ -238,8 +242,8 @@ To push into an **explicitly-named** feed instead, POST to
 `/api/ingest/push/<source_name>` (single object) or
 `/api/ingest/push-batch/<source_name>` (array).
 
-> When `auth_enabled` is on, ingest endpoints require an admin session; with the
-> default local config (auth off) they are open.
+> When `auth_enabled` is on (the default), ingest endpoints require an admin session;
+> with authentication disabled they are open.
 
 ---
 
@@ -539,18 +543,7 @@ LLM.
 Authentication is **optional**. The client adapts to whichever mode the server
 runs in.
 
-**Without auth (the default).** When the server has auth disabled, run any
-command with no credentials — exactly as the examples above. `send` succeeds for
-anyone:
-
-```bash
-# default local server, no credentials
-scripts/api_client.py get-raw
-scripts/api_client.py --url http://192.168.0.10:8001 get-normalized --max 50
-scripts/api_client.py --url http://192.168.0.10:8001 send --data '[{"indicator": "1.2.3.4"}]'
-```
-
-**With auth enabled.** Supply `--username`; the client logs in once and reuses
+**With auth enabled (the default).** Supply `--username`; the client logs in once and reuses
 the session cookie for the request. Omit `--password` to be prompted securely
 (it never touches your shell history):
 
@@ -571,6 +564,16 @@ A dedicated **sender** account (see [User roles](#user-roles)) is the recommende
 identity for unattended `send` automation — it can push to the listener and
 nothing else. With auth enabled, `send` requires an **admin** or **sender**
 account (a `normal` user gets `403`).
+
+**Without auth (disabled).** When the server is started with `--disable-auth`,
+run any command with no credentials. `send` succeeds for anyone:
+
+```bash
+# server started with --disable-auth, no credentials needed
+scripts/api_client.py get-raw
+scripts/api_client.py --url http://192.168.0.10:8001 get-normalized --max 50
+scripts/api_client.py --url http://192.168.0.10:8001 send --data '[{"indicator": "1.2.3.4"}]'
+```
 
 ---
 

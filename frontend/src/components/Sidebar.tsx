@@ -11,6 +11,8 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Radar,
+  Crosshair,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -29,13 +31,44 @@ import BrandLogo from './BrandLogo'
 //               open mode (there is no signed-in identity to manage).
 // Both link-hiding and route guards (App.tsx) are applied: hiding alone does not
 // stop a user typing the URL directly.
-const navItems = [
-  { to: 'viewer',        label: 'Viewer',        icon: LayoutDashboard, adminOnly: false, authOnly: false },
-  { to: 'configuration', label: 'Configuration', icon: Settings,        adminOnly: true,  authOnly: false },
-  { to: 'normalizer',    label: 'Normalizer',    icon: Sparkles,        adminOnly: true,  authOnly: false },
-  { to: 'watchers',      label: 'Watchers',      icon: Eye,             adminOnly: true,  authOnly: false },
-  { to: 'account',       label: 'Account',       icon: UserCircle,      adminOnly: false, authOnly: true },
-  { to: 'about',         label: 'About',         icon: Info,            adminOnly: false, authOnly: false },
+
+type NavItem = {
+  to: string
+  label: string
+  icon: React.ElementType
+  adminOnly: boolean
+  authOnly: boolean
+}
+
+type NavSection = {
+  label: string
+  icon: React.ElementType
+  items: NavItem[]
+}
+
+// Module sections — rendered with a labeled icon divider above their items.
+const navSections: NavSection[] = [
+  {
+    label: 'Threat Intel',
+    icon: Radar,
+    items: [
+      { to: 'viewer',    label: 'Viewer',    icon: LayoutDashboard, adminOnly: false, authOnly: false },
+      { to: 'normalizer', label: 'Normalizer', icon: Sparkles,        adminOnly: true,  authOnly: false },
+      { to: 'watchers',  label: 'Watchers',  icon: Eye,             adminOnly: true,  authOnly: false },
+    ],
+  },
+  {
+    label: 'Threat Hunting',
+    icon: Crosshair,
+    items: [],
+  },
+]
+
+// Utility items rendered below the module sections without a section header.
+const utilityItems: NavItem[] = [
+  { to: 'configuration', label: 'Configuration', icon: Settings,    adminOnly: true,  authOnly: false },
+  { to: 'account',       label: 'Account',       icon: UserCircle,  adminOnly: false, authOnly: true  },
+  { to: 'about',         label: 'About',         icon: Info,        adminOnly: false, authOnly: false },
 ]
 
 const COLLAPSE_KEY = 'sfi.sidebar.collapsed'
@@ -67,20 +100,20 @@ export default function Sidebar() {
     queryFn: api.getLogoInfo,
   })
 
-  const items = navItems.filter(
-    (it) => (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled),
-  )
+  const filterItem = (it: NavItem) =>
+    (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled)
+
+  const filteredUtility = utilityItems.filter(filterItem)
 
   return (
     <aside
       className={clsx(
         'flex flex-col shrink-0 bg-gray-900 border-r border-gray-800 h-screen transition-[width] duration-150',
-        collapsed ? 'w-[64px]' : 'w-[220px]',
+        collapsed ? 'w-[64px]' : 'w-[256px]',
       )}
     >
-      {/* Header: logo + title + collapse toggle (prompts-049: toggle moved to
-          the top). Expanded → toggle pinned right; collapsed → stacked below
-          the logo, centered. */}
+      {/* Header: logo + title + collapse toggle. Expanded → toggle pinned right;
+          collapsed → stacked below the logo, centered. */}
       <div
         className={clsx(
           'border-b border-gray-800 px-3 py-4',
@@ -93,7 +126,7 @@ export default function Sidebar() {
             <p className="text-xs font-semibold text-gray-100 leading-tight truncate">
               Mizton-ThreatBox
             </p>
-            <p className="text-[10px] text-gray-500 leading-tight">Threat Intel</p>
+            <p className="text-[10px] text-gray-500 leading-tight truncate">TI &amp; Hunting Ops Framework</p>
           </div>
         )}
         <button
@@ -107,8 +140,68 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-3 px-2">
-        {items.map(({ to, label, icon: Icon }) => (
+      <nav className="flex-1 py-3 px-2 overflow-y-auto">
+        {/* Module sections */}
+        {navSections.map(({ label, icon: SectionIcon, items }) => {
+          const visibleItems = items.filter(filterItem)
+          return (
+            <div key={label} className="mb-3">
+              {/* Section divider */}
+              <div
+                className={clsx(
+                  'flex items-center gap-2 px-3 py-1 mb-0.5',
+                  collapsed ? 'justify-center' : '',
+                )}
+                title={collapsed ? label : undefined}
+              >
+                <SectionIcon className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                {!collapsed && (
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider truncate">
+                    {label}
+                  </span>
+                )}
+              </div>
+
+              {/* Section items */}
+              {visibleItems.length > 0 ? (
+                visibleItems.map(({ to, label: itemLabel, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    title={collapsed ? itemLabel : undefined}
+                    className={({ isActive }) =>
+                      clsx(
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
+                        collapsed && 'justify-center',
+                        isActive
+                          ? 'bg-brand-600/20 text-brand-400'
+                          : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800',
+                      )
+                    }
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {!collapsed && itemLabel}
+                  </NavLink>
+                ))
+              ) : (
+                // Empty section placeholder — shown only when expanded
+                !collapsed && (
+                  <p className="px-3 py-1.5 text-[10px] text-gray-600 italic">
+                    Coming soon
+                  </p>
+                )
+              )}
+            </div>
+          )
+        })}
+
+        {/* Divider before utility items */}
+        {filteredUtility.length > 0 && (
+          <div className="border-t border-gray-800 my-2" />
+        )}
+
+        {/* Utility items (Configuration, Account, About) */}
+        {filteredUtility.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
