@@ -623,6 +623,14 @@ export const api = {
       body: JSON.stringify({ watcher_max_events: value }),
     }),
 
+  // Application — operator display title (issue-local-001-rev1)
+  getAppTitle: () => request<{ app_title: string }>('/app/title'),
+  setAppTitle: (value: string) =>
+    request<{ app_title: string }>('/app/title', {
+      method: 'PUT',
+      body: JSON.stringify({ app_title: value }),
+    }),
+
   // Application — branding logo (prompts-045)
   getLogoInfo: () => request<{ has_logo: boolean }>('/app/logo-info'),
   uploadLogo: async (file: File): Promise<{ logo_path: string; has_logo: boolean }> => {

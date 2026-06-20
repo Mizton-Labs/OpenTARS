@@ -27,6 +27,8 @@ import { useAuth } from '../auth/useAuth'
 import { clsx } from 'clsx'
 import { Upload, Plus, Trash2, Pencil, Check, X, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 
+type Group = 'general' | 'threat-intel' | 'threat-hunting'
+
 type Tab =
   | 'application'
   | 'listener'
@@ -36,69 +38,140 @@ type Tab =
   | 'remote-feed'
   | 'threat-intel'
   | 'global-fields'
+  | 'general-ti-settings'
   | 'user-management'
 
-const BASE_TABS: { id: Tab; label: string }[] = [
-  { id: 'threat-intel',  label: 'Open Threat Feeds' },
-  { id: 'local-feed',    label: 'Local Feed' },
-  { id: 'remote-feed',   label: 'External Feeds' },
-  { id: 'rss',           label: 'External RSS' },
-  { id: 'api',           label: 'External API' },
-  { id: 'listener',      label: 'Listener Endpoint' },
-  { id: 'global-fields', label: 'Global Field Defaults' },
-  { id: 'application',   label: 'Application' },
+const GENERAL_TABS: { id: Tab; label: string }[] = [
+  { id: 'application', label: 'Application' },
 ]
+
+const THREAT_INTEL_BASE_TABS: { id: Tab; label: string }[] = [
+  { id: 'threat-intel',       label: 'Open Threat Feeds' },
+  { id: 'local-feed',         label: 'Local Feed' },
+  { id: 'remote-feed',        label: 'External Feeds' },
+  { id: 'rss',                label: 'External RSS' },
+  { id: 'api',                label: 'External API' },
+  { id: 'listener',           label: 'Listener Endpoint' },
+  { id: 'global-fields',      label: 'Global Field Defaults' },
+  { id: 'general-ti-settings', label: 'General TI Settings' },
+]
+
+const GROUP_LABELS: Record<Group, string> = {
+  'general':       'General',
+  'threat-intel':  'Threat Intel',
+  'threat-hunting': 'Threat Hunting',
+}
+
+const DEFAULT_TAB: Record<Group, Tab> = {
+  'general':       'application',
+  'threat-intel':  'threat-intel',
+  'threat-hunting': 'threat-intel', // fallback; group has no tabs
+}
 
 export default function Configuration() {
   const { authEnabled, isAdmin } = useAuth()
+  const [activeGroup, setActiveGroup] = useState<Group>('threat-intel')
   const [activeTab, setActiveTab] = useState<Tab>('threat-intel')
 
+  // Build the tab list for the current group.
   // Auth-gated tabs:
-  //   - User Management is admin-only (prompts-045).
+  //   - User Management is admin-only (prompts-045), lives in Threat Intel group.
   // Self-service account management moved to its own top-level Account page
   // (prompts-046), so there is no longer an Account tab here.
-  const TABS: { id: Tab; label: string }[] = [
-    ...BASE_TABS,
+  const threatIntelTabs: { id: Tab; label: string }[] = [
+    ...THREAT_INTEL_BASE_TABS,
     ...(authEnabled && isAdmin
       ? [{ id: 'user-management' as Tab, label: 'User Management' }]
       : []),
   ]
 
+  const tabsForGroup: Record<Group, { id: Tab; label: string }[]> = {
+    'general':        GENERAL_TABS,
+    'threat-intel':   threatIntelTabs,
+    'threat-hunting': [],
+  }
+
+  const currentTabs = tabsForGroup[activeGroup]
+
+  const handleGroupChange = (g: Group) => {
+    setActiveGroup(g)
+    // Reset to the default tab for the new group (avoids landing on a tab
+    // that doesn't exist in the newly selected group).
+    setActiveTab(DEFAULT_TAB[g])
+  }
+
+  const groups: Group[] = ['general', 'threat-intel', 'threat-hunting']
+
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-lg font-semibold text-gray-100">Configuration</h1>
-        <p className="text-sm text-gray-500">Manage ingestion sources and field mappings.</p>
+        <p className="text-sm text-gray-500">Platform settings, ingestion sources, and field mappings.</p>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-800">
-        <nav className="flex gap-6 flex-wrap">
-          {TABS.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={clsx(
-                'pb-3 text-sm font-medium transition-colors',
-                activeTab === id ? 'tab-active' : 'tab-inactive',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+      {/* Group selector — top level */}
+      <div className="flex gap-1 border-b border-gray-800 pb-0">
+        {groups.map((g) => (
+          <button
+            key={g}
+            onClick={() => handleGroupChange(g)}
+            className={clsx(
+              'px-4 py-2 text-sm font-semibold rounded-t transition-colors',
+              activeGroup === g
+                ? 'bg-gray-800 text-gray-100 border border-b-0 border-gray-700'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50',
+            )}
+          >
+            {GROUP_LABELS[g]}
+          </button>
+        ))}
       </div>
+
+      {/* Sub-tab row — shown only when the active group has tabs */}
+      {currentTabs.length > 0 && (
+        <div className="border-b border-gray-800">
+          <nav className="flex gap-6 flex-wrap">
+            {currentTabs.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={clsx(
+                  'pb-3 text-sm font-medium transition-colors',
+                  activeTab === id ? 'tab-active' : 'tab-inactive',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
 
       <div className="max-w-3xl">
-        {activeTab === 'application'   && <ApplicationTab />}
-        {activeTab === 'listener'      && <ListenerTab />}
-        {activeTab === 'api'           && <ApiTab />}
-        {activeTab === 'rss'           && <RssTab />}
-        {activeTab === 'local-feed'    && <LocalFeedTab />}
-        {activeTab === 'remote-feed'   && <RemoteFeedTab />}
-        {activeTab === 'threat-intel'  && <ThreatIntelCatalog />}
-        {activeTab === 'global-fields' && <GlobalFieldsTab />}
-        {activeTab === 'user-management' && <UserManagementTab />}
+        {/* General group */}
+        {activeGroup === 'general' && activeTab === 'application' && <ApplicationTab />}
+
+        {/* Threat Intel group */}
+        {activeGroup === 'threat-intel' && activeTab === 'application'        && <ApplicationTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'listener'           && <ListenerTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'api'                && <ApiTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'rss'                && <RssTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'local-feed'         && <LocalFeedTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'remote-feed'        && <RemoteFeedTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'threat-intel'       && <ThreatIntelCatalog />}
+        {activeGroup === 'threat-intel' && activeTab === 'global-fields'      && <GlobalFieldsTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'general-ti-settings' && <GeneralTISettingsTab />}
+        {activeGroup === 'threat-intel' && activeTab === 'user-management'    && <UserManagementTab />}
+
+        {/* Threat Hunting group — no settings yet */}
+        {activeGroup === 'threat-hunting' && (
+          <div className="card space-y-2">
+            <h3 className="text-sm font-semibold text-gray-200">Threat Hunting Settings</h3>
+            <p className="text-sm text-gray-500">
+              No settings available yet. Threat Hunting settings will appear here in a future release.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -156,6 +229,83 @@ function validateAppBasePrefix(v: string): string | null {
   return null
 }
 
+// ── App display title (issue-local-001-rev1) ─────────────────────────────────
+
+const APP_TITLE_MAX_LEN = 80
+
+function AppTitleSetting() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['app-title'],
+    queryFn: api.getAppTitle,
+  })
+  const [input, setInput] = useState<string>('')
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (data?.app_title != null) setInput(data.app_title)
+  }, [data?.app_title])
+
+  const mutation = useMutation({
+    mutationFn: (v: string) => api.setAppTitle(v),
+    onSuccess: () => {
+      setSaved(true)
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['app-title'] })
+    },
+    onError: (err: unknown) => {
+      setSaved(false)
+      setError(err instanceof Error ? err.message : String(err))
+    },
+  })
+
+  const trimmed = input.trim()
+  const tooLong = trimmed.length > APP_TITLE_MAX_LEN
+  const unchanged = trimmed === (data?.app_title ?? '')
+  const saveDisabled = tooLong || unchanged || mutation.isPending
+
+  return (
+    <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
+      <div>
+        <p className="text-sm text-gray-300">Application Display Title</p>
+        <p className="text-xs text-gray-500">
+          Branding name shown in the sidebar header and browser tab title.
+          Leave empty to use the default <span className="font-mono text-gray-400">Mizton-ThreatBox</span>.
+          Maximum {APP_TITLE_MAX_LEN} characters. Takes effect immediately (no restart).
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          maxLength={APP_TITLE_MAX_LEN}
+          className="input flex-1"
+          placeholder="Mizton-ThreatBox (default)"
+          value={input}
+          onChange={e => { setInput(e.target.value); setSaved(false); setError(null) }}
+          spellCheck={false}
+        />
+        <button
+          className="btn-primary text-xs"
+          disabled={saveDisabled}
+          onClick={() => mutation.mutate(trimmed)}
+        >
+          {mutation.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {tooLong && (
+        <p className="text-xs text-red-400">
+          Must be {APP_TITLE_MAX_LEN} characters or fewer ({trimmed.length}/{APP_TITLE_MAX_LEN}).
+        </p>
+      )}
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {saved && !error && <p className="text-xs text-green-400">Saved.</p>}
+    </div>
+  )
+}
+
+// ── Application Tab ───────────────────────────────────────────────────────────
+
 function ApplicationTab() {
   const qc = useQueryClient()
   const { data: cfg } = useQuery({
@@ -199,6 +349,8 @@ function ApplicationTab() {
           API is mounted. Changes require a backend restart to take effect.
         </p>
       </div>
+
+      <AppTitleSetting />
 
       <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
         <div>
@@ -245,9 +397,28 @@ function ApplicationTab() {
         )}
       </div>
 
+      <LogoSetting />
+    </div>
+  )
+}
+
+// ── General TI Settings Tab ───────────────────────────────────────────────────
+// Contains Threat-Intel-scoped global settings: normalized viewer pagination cap
+// and the per-watcher stored events cap. Moved here from ApplicationTab
+// (issue-local-001) so the Application tab remains focused on infrastructure
+// settings (base URL prefix, branding).
+
+function GeneralTISettingsTab() {
+  return (
+    <div className="card space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-200">General TI Settings</h3>
+        <p className="text-xs text-gray-500 mt-1">
+          Global settings for the Threat Intelligence features.
+        </p>
+      </div>
       <PaginationMaxSetting />
       <WatcherMaxEventsSetting />
-      <LogoSetting />
     </div>
   )
 }

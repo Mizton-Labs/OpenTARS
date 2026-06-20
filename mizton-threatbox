@@ -154,7 +154,7 @@ cmd_start() {
     local bind_addr="127.0.0.1"
     local cli_base_prefix=""
     local cli_base_prefix_set=false
-    local cli_enable_auth_set=false
+    local cli_disable_auth_set=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dev)   dev_mode=true ;;
@@ -177,10 +177,11 @@ cmd_start() {
                     bind_addr="${bind_value}"
                 fi
                 ;;
-            --enable-auth)
-                # Boolean opt-in. Forces MIZTON_THREATBOX_ENABLE_AUTH=1 for this run,
+            --disable-auth)
+                # Boolean opt-out. Forces MIZTON_THREATBOX_ENABLE_AUTH=0 for this run,
                 # which the backend reads with precedence over application.yaml.
-                cli_enable_auth_set=true
+                # Authentication is ON by default (application.yaml: auth_enabled: true).
+                cli_disable_auth_set=true
                 ;;
             --base-prefix)
                 shift
@@ -225,9 +226,9 @@ cmd_start() {
         env_overrides+=("MIZTON_THREATBOX_BASE_PREFIX=${cli_base_prefix}")
         log "Base URL prefix override: '${cli_base_prefix:-<root>}' (MIZTON_THREATBOX_BASE_PREFIX)"
     fi
-    if [ "${cli_enable_auth_set}" = true ]; then
-        env_overrides+=("MIZTON_THREATBOX_ENABLE_AUTH=1")
-        log "Authentication override: ENABLED (MIZTON_THREATBOX_ENABLE_AUTH=1)"
+    if [ "${cli_disable_auth_set}" = true ]; then
+        env_overrides+=("MIZTON_THREATBOX_ENABLE_AUTH=0")
+        log "Authentication override: DISABLED (MIZTON_THREATBOX_ENABLE_AUTH=0)"
     fi
 
     # ── First-run admin credential (prompts-059) ──────────────────────────────
@@ -466,7 +467,7 @@ case "${CMD}" in
         echo "Usage: ./mizton-threatbox <command> [options]"
         echo ""
         echo "Commands:"
-        echo "  start [--dev] [--bind <ip[:port]>] [--base-prefix <value>] [--enable-auth]"
+        echo "  start [--dev] [--bind <ip[:port]>] [--base-prefix <value>] [--disable-auth]"
         echo "                               Start the service"
         echo "                               --dev: run uvicorn in foreground (logs to terminal)"
         echo "                               Default bind address: 127.0.0.1:8000 (localhost only)"
@@ -479,10 +480,11 @@ case "${CMD}" in
         echo "                               this run only via the MIZTON_THREATBOX_BASE_PREFIX env var."
         echo "                               Must start with '/', must not end with '/', must not"
         echo "                               contain '//'. Use \"\" (empty string) to mount at root."
-        echo "                               --enable-auth force-enables authentication for this"
-        echo "                               run via MIZTON_THREATBOX_ENABLE_AUTH=1 (overrides yaml)."
+        echo "                               --disable-auth force-disables authentication for this"
+        echo "                               run via MIZTON_THREATBOX_ENABLE_AUTH=0 (overrides yaml)."
+        echo "                               Authentication is ON by default."
         echo "  stop                         Stop all running processes"
-        echo "  restart [--dev] [--bind <ip[:port]>] [--base-prefix <value>] [--enable-auth]"
+        echo "  restart [--dev] [--bind <ip[:port]>] [--base-prefix <value>] [--disable-auth]"
         echo "                               Stop then start (flags forwarded to start)"
         echo "  status                       Show running process status"
         echo "  --reset-db                   Delete and recreate all source databases"
