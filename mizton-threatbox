@@ -21,9 +21,7 @@ BACKEND_PID_FILE="${PID_DIR}/backend.pid"
 FRONTEND_PID_FILE="${PID_DIR}/frontend.pid"
 BACKEND_PORT_FILE="${PID_DIR}/backend.port"
 BACKEND_LOG="${SCRIPT_DIR}/backend.log"
-FRONTEND_LOG="${SCRIPT_DIR}/frontend.log"
 BACKEND_PORT=8000
-FRONTEND_PORT=8080
 VITE_DEV_PORT=5173
 FRONTEND_DIR="${SCRIPT_DIR}/frontend"
 BACKEND_DIR="${SCRIPT_DIR}/backend"
@@ -83,7 +81,7 @@ setup_venv() {
             python3 -m venv "${VENV_DIR}"
         fi
         log "Installing/updating dependencies with pip..."
-        "${VENV_DIR}/bin/pip" install -q -r "${BACKEND_DIR}/requirements.txt"
+        "${PIP}" install -q -r "${BACKEND_DIR}/requirements.txt"
     fi
 
     # Always point PYTHON/PIP at the venv after setup
