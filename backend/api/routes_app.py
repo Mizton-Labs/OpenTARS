@@ -17,10 +17,12 @@ from backend.auth.dependencies import require_admin_when_enabled
 from backend.config.loader import (
     load_app_base_prefix,
     load_app_pagination_max,
+    load_app_title,
     load_logo_path,
     load_watcher_max_events,
     save_app_base_prefix,
     save_app_pagination_max,
+    save_app_title,
     save_logo_path,
     save_watcher_max_events,
 )
@@ -96,6 +98,44 @@ async def set_base_prefix(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"app_base_prefix": value, "restart_required": True}
+
+
+# ── App display title (issue-local-001-rev1) ─────────────────────────────────
+
+
+@router.get("/title")
+async def get_app_title() -> dict[str, str]:
+    """Return the operator-configured display title.
+
+    Public — no auth required. Used by the sidebar and browser-tab title logic
+    before and after login. An empty string means 'use the default'.
+    """
+    return {"app_title": load_app_title()}
+
+
+@router.put("/title")
+async def set_app_title(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the operator display title.
+
+    Body: {"app_title": "My Custom Name"}
+
+    An empty string clears the override (sidebar falls back to 'Mizton-ThreatBox').
+    Maximum 80 characters; no newlines. Takes effect immediately (no restart).
+    """
+    value = body.get("app_title")
+    if not isinstance(value, str) or isinstance(value, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'app_title' as a string",
+        )
+    try:
+        save_app_title(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"app_title": value.strip()}
 
 
 @router.get("/pagination-max")

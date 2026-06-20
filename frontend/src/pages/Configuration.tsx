@@ -229,6 +229,83 @@ function validateAppBasePrefix(v: string): string | null {
   return null
 }
 
+// ── App display title (issue-local-001-rev1) ─────────────────────────────────
+
+const APP_TITLE_MAX_LEN = 80
+
+function AppTitleSetting() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['app-title'],
+    queryFn: api.getAppTitle,
+  })
+  const [input, setInput] = useState<string>('')
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (data?.app_title != null) setInput(data.app_title)
+  }, [data?.app_title])
+
+  const mutation = useMutation({
+    mutationFn: (v: string) => api.setAppTitle(v),
+    onSuccess: () => {
+      setSaved(true)
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['app-title'] })
+    },
+    onError: (err: unknown) => {
+      setSaved(false)
+      setError(err instanceof Error ? err.message : String(err))
+    },
+  })
+
+  const trimmed = input.trim()
+  const tooLong = trimmed.length > APP_TITLE_MAX_LEN
+  const unchanged = trimmed === (data?.app_title ?? '')
+  const saveDisabled = tooLong || unchanged || mutation.isPending
+
+  return (
+    <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
+      <div>
+        <p className="text-sm text-gray-300">Application Display Title</p>
+        <p className="text-xs text-gray-500">
+          Branding name shown in the sidebar header and browser tab title.
+          Leave empty to use the default <span className="font-mono text-gray-400">Mizton-ThreatBox</span>.
+          Maximum {APP_TITLE_MAX_LEN} characters. Takes effect immediately (no restart).
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          maxLength={APP_TITLE_MAX_LEN}
+          className="input flex-1"
+          placeholder="Mizton-ThreatBox (default)"
+          value={input}
+          onChange={e => { setInput(e.target.value); setSaved(false); setError(null) }}
+          spellCheck={false}
+        />
+        <button
+          className="btn-primary text-xs"
+          disabled={saveDisabled}
+          onClick={() => mutation.mutate(trimmed)}
+        >
+          {mutation.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {tooLong && (
+        <p className="text-xs text-red-400">
+          Must be {APP_TITLE_MAX_LEN} characters or fewer ({trimmed.length}/{APP_TITLE_MAX_LEN}).
+        </p>
+      )}
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {saved && !error && <p className="text-xs text-green-400">Saved.</p>}
+    </div>
+  )
+}
+
+// ── Application Tab ───────────────────────────────────────────────────────────
+
 function ApplicationTab() {
   const qc = useQueryClient()
   const { data: cfg } = useQuery({
@@ -272,6 +349,8 @@ function ApplicationTab() {
           API is mounted. Changes require a backend restart to take effect.
         </p>
       </div>
+
+      <AppTitleSetting />
 
       <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
         <div>

@@ -100,6 +100,16 @@ export default function Sidebar() {
     queryFn: api.getLogoInfo,
   })
 
+  // Operator-configurable display title (issue-local-001-rev1). Public endpoint
+  // so it resolves on the login screen too. Falls back to 'Mizton-ThreatBox'
+  // when empty or not yet fetched.
+  const { data: titleData } = useQuery({
+    queryKey: ['app-title'],
+    queryFn: api.getAppTitle,
+    staleTime: 5 * 60 * 1000,
+  })
+  const displayTitle = titleData?.app_title || 'Mizton-ThreatBox'
+
   const filterItem = (it: NavItem) =>
     (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled)
 
@@ -124,7 +134,7 @@ export default function Sidebar() {
         {!collapsed && (
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-gray-100 leading-tight truncate">
-              Mizton-ThreatBox
+              {displayTitle}
             </p>
             <p className="text-[10px] text-gray-500 leading-tight truncate">TI &amp; Hunting Ops Framework</p>
           </div>
@@ -171,8 +181,8 @@ export default function Sidebar() {
                     title={collapsed ? itemLabel : undefined}
                     className={({ isActive }) =>
                       clsx(
-                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
-                        collapsed && 'justify-center',
+                        'flex items-center gap-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
+                        collapsed ? 'justify-center px-3' : 'pl-5 pr-3',
                         isActive
                           ? 'bg-brand-600/20 text-brand-400'
                           : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800',
@@ -186,7 +196,7 @@ export default function Sidebar() {
               ) : (
                 // Empty section placeholder — shown only when expanded
                 !collapsed && (
-                  <p className="px-3 py-1.5 text-[10px] text-gray-600 italic">
+                  <p className="pl-5 pr-3 py-1.5 text-[10px] text-gray-600 italic">
                     Coming soon
                   </p>
                 )

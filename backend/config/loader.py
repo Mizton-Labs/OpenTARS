@@ -269,6 +269,41 @@ def save_app_base_prefix(value: str) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Operator-configurable app display title (issue-local-001-rev1) ───────────
+
+_APP_TITLE_MAX_LEN = 80
+
+
+def load_app_title() -> str:
+    """Return the configured display title (empty string when unset).
+
+    An empty string means "use the default 'Mizton-ThreatBox'". The value is
+    branding-only; the About page always shows the static product name.
+    """
+    raw = load_app_config().get("app_title", "")
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
+def save_app_title(value: str) -> None:
+    """Persist app_title to application.yaml.
+
+    Raises ValueError when the value is too long or contains newlines.
+    An empty string is valid (means "use the default").
+    """
+    if not isinstance(value, str):
+        raise ValueError("app_title must be a string")
+    value = value.strip()
+    if "\n" in value or "\r" in value:
+        raise ValueError("app_title must not contain newlines")
+    if len(value) > _APP_TITLE_MAX_LEN:
+        raise ValueError(f"app_title exceeds the maximum length of {_APP_TITLE_MAX_LEN} characters")
+    data = load_app_config()
+    data["app_title"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Normalized viewer pagination cap (prompts-043) ───────────────────────────
 
 # Ceiling on rows the Normalized Feeds viewer pulls in a single request. The

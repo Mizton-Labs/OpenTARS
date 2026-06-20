@@ -124,6 +124,12 @@
 #                  policy is published (non-sensitive) via GET /api/auth/status
 #                  so the SPA mirrors the same rule client-side.
 
+# app_title:       operator-configurable display name shown in the sidebar header
+#                  and browser tab title. Leave empty ("") to fall back to the
+#                  default "Mizton-ThreatBox". Maximum 80 characters. No newlines.
+#                  The About page always shows the static "Mizton-ThreatBox"
+#                  product name regardless of this value — it is branding-only.
+app_title: ""
 app_base_prefix: ""
 max_decompressed_bytes: 104857600
 auth_enabled: true

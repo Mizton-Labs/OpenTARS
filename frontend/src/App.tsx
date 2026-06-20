@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import ProtectedLayout from './components/ProtectedLayout'
 import Viewer from './pages/Viewer'
 import Configuration from './pages/Configuration'
@@ -7,6 +9,7 @@ import Watchers from './pages/Watchers'
 import Account from './pages/Account'
 import About from './pages/About'
 import Login from './pages/Login'
+import { api } from './api/client'
 import { useAuth } from './auth/useAuth'
 import { KNOWN_ROUTES } from './utils/basePrefix'
 
@@ -71,6 +74,18 @@ function guard(slug: ShellRoute, element: React.ReactElement): React.ReactElemen
 }
 
 export default function App() {
+  // Sync browser tab title with the operator-configured display name.
+  // Public endpoint — resolves before and after login. Falls back to the
+  // static product name when empty or not yet fetched.
+  const { data: titleData } = useQuery({
+    queryKey: ['app-title'],
+    queryFn: api.getAppTitle,
+    staleTime: 5 * 60 * 1000,
+  })
+  useEffect(() => {
+    document.title = titleData?.app_title || 'Mizton-ThreatBox'
+  }, [titleData?.app_title])
+
   return (
     <Routes>
       {/* Login is rendered outside the sidebar shell. */}
