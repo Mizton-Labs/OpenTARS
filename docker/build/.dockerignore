@@ -1,0 +1,44 @@
+# .dockerignore — docker/build/
+#
+# The Dockerfile's build context is this directory (docker/build/) which
+# contains only: Dockerfile, build.sh, docker-entrypoint.sh.
+# No project source is ever copied from the local filesystem — the app is
+# cloned from GitHub at image build time. This file is kept for completeness
+# and defence-in-depth in case the build context is ever widened.
+
+# Never include secrets or local state
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node artefacts
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Application runtime state
+data/*.db
+data/*.db-shm
+data/*.db-wal
+logs/*.log
+.pids/
+
+# Version control
+.git/
+.gitignore
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

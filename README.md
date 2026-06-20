@@ -42,7 +42,7 @@ brew install uv
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
+git clone https://github.com/Mizton-Labs/Mizton-ThreatBox.git
 cd Mizton-ThreatBox
 
 # 2. Start the application

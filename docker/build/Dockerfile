@@ -22,7 +22,7 @@
 #   docker build --build-arg MTB_REF=v1.2.3 -f docker/build/Dockerfile -t mizton-threatbox/local docker/build
 
 ARG MTB_REPO=https://github.com/Mizton-Labs/Mizton-ThreatBox.git
-ARG MTB_REF=initial-mizton-threatbox
+ARG MTB_REF=main
 
 # Node base provides Node.js 20 + npm (needed by the startup script's frontend
 # build). Everything else is added below.
@@ -73,6 +73,17 @@ RUN groupadd --gid 10001 threatbox \
     && chown -R threatbox:threatbox "${APP_HOME}"
 
 WORKDIR ${APP_HOME}
+
+# OCI image labels (standard annotations for container registries and tooling).
+# Version label uses the MTB_REF build arg as a proxy; override with
+# --build-arg MTB_REF=<tag> to produce a versioned label at release time.
+LABEL org.opencontainers.image.title="Mizton-ThreatBox" \
+      org.opencontainers.image.description="Lightweight, standalone Threat Intelligence feed aggregator with an LLM-powered normalization engine." \
+      org.opencontainers.image.version="${MTB_REF}" \
+      org.opencontainers.image.vendor="HoneyMex Lab" \
+      org.opencontainers.image.url="https://github.com/Mizton-Labs/Mizton-ThreatBox" \
+      org.opencontainers.image.source="https://github.com/Mizton-Labs/Mizton-ThreatBox.git" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # Entrypoint fixes ownership of the bind-mounted data/logs dirs as root, then
 # drops to the unprivileged "threatbox" user before running the startup script.

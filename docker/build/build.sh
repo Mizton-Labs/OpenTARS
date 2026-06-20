@@ -23,7 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 IMAGE_TAG="${IMAGE_TAG:-mizton-threatbox/local}"
-MTB_REF="${MTB_REF:-initial-mizton-threatbox}"
+MTB_REF="${MTB_REF:-main}"
 MTB_REPO="${MTB_REPO:-https://github.com/Mizton-Labs/Mizton-ThreatBox.git}"
 
 echo "[build] Building ${IMAGE_TAG} from ${MTB_REPO} @ ${MTB_REF}"

@@ -1,0 +1,67 @@
+# pyproject.toml — Mizton-ThreatBox project metadata (PEP 517/518)
+#
+# This file is the single authoritative source for project identity and
+# Python packaging metadata. The application is NOT published to PyPI; it
+# is run directly via the `./mizton-threatbox` launcher. This descriptor
+# exists to provide a canonical project manifest and to support tooling
+# (uv, ruff, pytest, type-checkers) that reads pyproject.toml.
+#
+# VERSION NOTE: When bumping the project version, update ALL of:
+#   1. [project].version below          (this file)
+#   2. backend/__init__.py __version__  (imported by backend/main.py)
+#   3. frontend/package.json "version"  (npm package identity)
+#   4. frontend/vite.config.ts __APP_VERSION__ (compile-time frontend constant)
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mizton-threatbox"
+version = "0.1.0"
+description = "Lightweight, standalone Threat Intelligence feed aggregator with an LLM-powered normalization engine."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [
+    { name = "HoneyMex Lab", email = "dev@honeymex.lab" },
+]
+keywords = [
+    "threat-intelligence",
+    "security",
+    "feed-aggregator",
+    "normalization",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage     = "https://github.com/Mizton-Labs/Mizton-ThreatBox"
+Repository   = "https://github.com/Mizton-Labs/Mizton-ThreatBox.git"
+"Bug Tracker" = "https://github.com/Mizton-Labs/Mizton-ThreatBox/issues"
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths   = ["backend/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]

@@ -5,6 +5,8 @@ Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 from __future__ import annotations
 
 import logging
+
+from backend import __version__
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -112,7 +114,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Mizton-ThreatBox",
-    version="0.1.0",
+    version=__version__,
     description="Lightweight Threat Intelligence feed receiver, normaliser, and viewer.",
     lifespan=lifespan,
     # When deployed behind a reverse proxy at a sub-path, root_path makes
@@ -295,7 +297,7 @@ async def auth_enforcement(request, call_next):
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": __version__}
 
 
 @app.post("/api/scheduler/reload")
