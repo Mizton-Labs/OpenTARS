@@ -246,7 +246,7 @@ async def test_call_tool_refetch_url_delegates_to_fetcher() -> None:
     ) as mock_fetch:
         result = await tools_module.call_tool("refetch_url", {"url": "https://example.com/"})
 
-    mock_fetch.assert_called_once_with("https://example.com/")
+    mock_fetch.assert_called_once_with("https://example.com/", prefer_playwright=False)
     assert result == "fetched content"
 
 

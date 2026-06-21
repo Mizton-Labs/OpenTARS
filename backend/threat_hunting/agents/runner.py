@@ -312,6 +312,32 @@ async def _run_pipeline(
         elif final_status == "awaiting_approval":
             await th_db.update_hunt_package(pkg_id, status="planning")
 
+        # issue-008-2C-A: auto-generate a run-scoped report when the pipeline
+        # completes (status 'completed' = approved, awaiting SIEM execution).
+        # Soft-fail — report failure never blocks the hunt workflow.
+        if final_status == "completed":
+            try:
+                from backend.threat_hunting.agents.nodes.report_writer import write_report
+
+                provider = final_state.get("provider_name")
+                model = final_state.get("model_name")
+                await write_report(
+                    pkg_id,
+                    run_id=run_id,
+                    provider_name=provider,
+                    model_name=model,
+                )
+                logger.info(
+                    "TH pipeline run=%s: auto-report generated (run-scoped)",
+                    run_id[:8],
+                )
+            except Exception as report_exc:  # noqa: BLE001
+                logger.warning(
+                    "TH pipeline run=%s: auto-report generation failed (non-fatal): %s",
+                    run_id[:8],
+                    report_exc,
+                )
+
     except Exception as exc:
         logger.exception("TH pipeline error run=%s pkg=%s: %s", run_id[:8], pkg_id[:8], exc)
         await _save_generation_state(

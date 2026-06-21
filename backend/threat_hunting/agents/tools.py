@@ -465,17 +465,21 @@ def tool_validate_spl(query: str) -> dict[str, Any]:
     return {"valid": len(issues) == 0, "issues": issues}
 
 
-async def tool_refetch_url(url: str) -> str:
+async def tool_refetch_url(url: str, prefer_playwright: bool = False) -> str:
     """Re-fetch a URL and return its extracted text (async, SSRF-validated).
 
     Delegates to url_fetcher.fetch_url which enforces SSRF validation before
     making any network request. The model cannot bypass SSRF via this tool.
+
+    Args:
+        prefer_playwright: When True, Playwright is used as the primary fetcher
+            (set by intake_classifier on high research-effort runs, issue-008-2D).
     """
     # Lazy import to avoid circular imports at module load time.
     # Tests should patch 'backend.threat_hunting.extractors.url_fetcher.fetch_url'.
     from backend.threat_hunting.extractors.url_fetcher import fetch_url as _fetch_url
 
-    result = await _fetch_url(url)
+    result = await _fetch_url(url, prefer_playwright=prefer_playwright)
     return result.extracted_text or ""
 
 

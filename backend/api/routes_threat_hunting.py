@@ -1,5 +1,5 @@
 """
-Threat Hunting API routes (issue-local-002, Phase 1–5).
+Threat Hunting API routes (issue-local-002, Phase 1–5, issue-008).
 
 All routes require authentication when auth is enabled. Admin and
 threat-researcher roles have write access; threat-viewer has read-only access
@@ -7,12 +7,12 @@ threat-researcher roles have write access; threat-viewer has read-only access
 
 Evidence endpoints:
   POST /packages/{id}/evidence/file      — upload a file (PDF, DOCX, TXT, CSV, …)
-  POST /packages/{id}/evidence/url       — fetch and extract a URL
+  POST /packages/{id}/evidence/url       — register a URL (fetched by the pipeline)
   POST /packages/{id}/evidence/text      — add manual text/note
   POST /packages/{id}/evidence/watcher   — import watcher events
   GET  /packages/{id}/evidence           — list evidence items
   DELETE /packages/{id}/evidence/{eid}   — remove an evidence item
-  GET  /packages/{id}/iocs               — list all extracted IOCs
+  GET  /packages/{id}/iocs               — list all extracted IOCs (populated by pipeline)
 
 Generation endpoints (Phase 3):
   POST /packages/{id}/generate           — start LLM pipeline
@@ -46,8 +46,12 @@ from pydantic import BaseModel
 
 from backend.threat_hunting import db as th_db
 from backend.threat_hunting.extractors.dispatcher import extract_file
-from backend.threat_hunting.extractors.url_fetcher import fetch_url
-from backend.threat_hunting.iocs import extract_iocs_from_text
+
+# issue-008-2B: fetch_url and extract_iocs_from_text are no longer called at
+# upload time. URL fetching and IOC extraction are now performed by the agent
+# pipeline (intake_classifier), keeping them as genuine agent tasks.
+# The imports remain available for other use sites (e.g. SSRF error re-raise).
+from backend.threat_hunting.extractors.url_fetcher import fetch_url  # noqa: F401 — SSRF route
 from backend.threat_hunting.models import (
     AddManualTextBody,
     AddUrlBody,
@@ -171,10 +175,8 @@ async def add_evidence_file(
         blob_data=raw,
     )
 
-    # Extract and store IOCs
-    iocs = extract_iocs_from_text(result["extracted_text"])
-    if iocs:
-        await th_db.add_extracted_iocs(pkg_id, item["id"], iocs)  # type: ignore[arg-type]
+    # issue-008-2B: IOC extraction moved to intake_classifier (agent pipeline).
+    # No add_extracted_iocs call here — IOCs are extracted during analysis.
 
     return item
 
@@ -188,45 +190,41 @@ async def add_evidence_file(
     status_code=201,
 )
 async def add_evidence_url(pkg_id: str, body: AddUrlBody) -> dict:
-    """Fetch a URL and add its content as evidence.
+    """Register a URL as a pending evidence item.
 
-    SSRF policy is enforced before and during fetch.
+    issue-008-2B: URL fetching is now deferred to the agent pipeline
+    (intake_classifier), which fetches the URL during analysis with
+    effort-aware settings (e.g. Playwright-first on high effort).
+
+    SSRF pre-validation is still performed here to reject obviously
+    invalid/blocked URLs before they are stored, so the user gets immediate
+    feedback rather than a silent pipeline failure.
     """
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
 
+    # Pre-flight SSRF check only — no HTTP fetch yet
+    from backend.threat_hunting.ssrf import validate_url
+
     try:
-        fetch_result = await fetch_url(body.url)
+        validated_url = await asyncio.to_thread(validate_url, body.url)
     except SSRFError as exc:
         raise HTTPException(status_code=400, detail=f"SSRF policy violation: {exc}") from exc
     except Exception as exc:
-        logger.warning("URL fetch failed for %r: %s", body.url, exc)
-        raise HTTPException(status_code=502, detail=f"URL fetch failed: {exc}") from exc
-
-    import hashlib
-
-    content_hash = hashlib.sha256(fetch_result.raw_bytes).hexdigest()
+        raise HTTPException(status_code=400, detail=f"Invalid URL: {exc}") from exc
 
     item = await th_db.add_evidence_item(
         pkg_id,
         item_type="url",
-        label=body.label or fetch_result.final_url,
+        label=body.label or validated_url,
         source_ref=body.url,
-        content_hash=content_hash,
-        mime_type=fetch_result.content_type,
         fetch_url=body.url,
-        final_url=fetch_result.final_url,
-        extracted_text=fetch_result.extracted_text,
-        parser_used=fetch_result.parser_used,
+        extracted_text="",
+        parser_used="",
         parser_version="",
-        parse_status="ok" if fetch_result.extracted_text else "partial",
-        parse_warnings=fetch_result.warnings,
-        fetch_metadata=fetch_result.fetch_metadata,
-        blob_data=fetch_result.raw_bytes,
+        # parse_status="pending" signals that fetch+extract hasn't happened yet
+        parse_status="pending",
+        parse_warnings=["URL content will be fetched during the analysis pipeline run."],
     )
-
-    iocs = extract_iocs_from_text(fetch_result.extracted_text)
-    if iocs:
-        await th_db.add_extracted_iocs(pkg_id, item["id"], iocs)  # type: ignore[arg-type]
 
     return item
 
@@ -259,9 +257,7 @@ async def add_evidence_text(pkg_id: str, body: AddManualTextBody) -> dict:
         parse_status="ok",
     )
 
-    iocs = extract_iocs_from_text(body.text)
-    if iocs:
-        await th_db.add_extracted_iocs(pkg_id, item["id"], iocs)  # type: ignore[arg-type]
+    # issue-008-2B: IOC extraction moved to intake_classifier.
 
     return item
 
@@ -330,9 +326,7 @@ async def add_evidence_watcher(pkg_id: str, body: AddWatcherBody) -> dict:
         watcher_snapshot=snapshot,
     )
 
-    iocs = extract_iocs_from_text(text_blob)
-    if iocs:
-        await th_db.add_extracted_iocs(pkg_id, item["id"], iocs)  # type: ignore[arg-type]
+    # issue-008-2B: IOC extraction moved to intake_classifier.
 
     return item
 

@@ -379,7 +379,7 @@ async def test_list_hunt_packages_enriches_phases() -> None:
         "evidence_count": 2,
     }
 
-    hp_row = ("pkg-1", "completed", step_logs)
+    hp_row = ("pkg-1", "completed", step_logs, "2026-01-01T00:00:00")
 
     class _FakeCur:
         def __init__(self, rows):

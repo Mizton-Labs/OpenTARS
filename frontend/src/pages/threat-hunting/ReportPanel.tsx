@@ -123,6 +123,14 @@ function reportToMarkdown(report: THHuntReport): string {
       lines.push(`### ${i + 1}. ${h.title} (${h.relevance})`)
       lines.push(h.description)
       if (h.justification) lines.push(`_${h.justification}_`)
+      // issue-008-2C-B: include ioc_basis and suggested_actions (matches backend MD export)
+      if (h.ioc_basis && h.ioc_basis.length > 0) {
+        lines.push(`_IOC Basis: ${h.ioc_basis.slice(0, 5).join(', ')}_`)
+      }
+      if (h.suggested_actions && h.suggested_actions.length > 0) {
+        lines.push(`**Suggested Actions:**`)
+        h.suggested_actions.forEach((a) => lines.push(`  - \`${a}\``))
+      }
       lines.push(``)
     })
   }
@@ -149,6 +157,13 @@ function reportToMarkdown(report: THHuntReport): string {
     lines.push(`## Recommendations`)
     lines.push(``)
     r.recommendations.forEach((rec) => lines.push(`- ${rec}`))
+    lines.push(``)
+  }
+  // issue-008-2C-C: Findings/Conclusion — last section
+  if (r.findings) {
+    lines.push(`## Findings and Conclusion`)
+    lines.push(``)
+    lines.push(r.findings)
     lines.push(``)
   }
   return lines.join('\n')
@@ -227,7 +242,7 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
   return (
     <div className="space-y-2">
       {hypotheses.map((h) => (
-        <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1">
+        <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono text-brand-400">{h.id}</span>
             <span className={clsx('text-[10px] px-1.5 py-0.5 rounded',
@@ -238,6 +253,25 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
           <p className="text-sm font-medium text-gray-200">{h.title}</p>
           <p className="text-xs text-gray-400">{h.description}</p>
           {h.justification && <p className="text-xs text-gray-600 italic">{h.justification}</p>}
+          {/* issue-008-2C-B: ioc_basis chips — matches Analysis tab */}
+          {h.ioc_basis && h.ioc_basis.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {h.ioc_basis.map((ioc) => (
+                <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
+                  {ioc}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* issue-008-2C-B: suggested_actions — matches Analysis tab */}
+          {h.suggested_actions && h.suggested_actions.length > 0 && (
+            <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-0.5">
+              <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+              {h.suggested_actions.map((action, i) => (
+                <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -528,6 +562,22 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           {report.full_report.recommendations.length > 0 && (
             <Section title="Recommendations" icon={CheckCircle} defaultOpen>
               <RecommendationsSection recommendations={report.full_report.recommendations} />
+            </Section>
+          )}
+
+          {/* issue-008-2C-C: Findings and Conclusion — placed LAST */}
+          {report.full_report.findings && (
+            <Section title="Findings and Conclusion" icon={CheckCircle} defaultOpen>
+              <div className="space-y-3">
+                {report.full_report.findings
+                  .split('\n\n')
+                  .filter((p: string) => p.trim())
+                  .map((para: string, i: number) => (
+                    <p key={i} className="text-sm text-gray-300 leading-relaxed">
+                      {para.trim()}
+                    </p>
+                  ))}
+              </div>
             </Section>
           )}
         </div>

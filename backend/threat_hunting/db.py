@@ -556,6 +556,87 @@ async def add_extracted_iocs(
         await db.commit()
 
 
+async def clear_extracted_iocs(hunt_package_id: str) -> int:
+    """Delete all extracted IOCs for *hunt_package_id*.
+
+    issue-008-2B: called by intake_classifier at the start of each pipeline
+    run to ensure re-runs produce a fresh, non-duplicated IOC set.
+
+    Returns the number of rows deleted.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM extracted_iocs WHERE hunt_package_id = ?",
+            (hunt_package_id,),
+        )
+        deleted = cur.rowcount
+        await db.commit()
+    return deleted
+
+
+async def update_evidence_item(
+    item_id: str,
+    *,
+    extracted_text: str | None = None,
+    parser_used: str | None = None,
+    parser_version: str | None = None,
+    parse_status: str | None = None,
+    parse_warnings: list[str] | None = None,
+    fetch_metadata: dict[str, Any] | None = None,
+    final_url: str | None = None,
+    content_hash: str | None = None,
+    mime_type: str | None = None,
+) -> None:
+    """Partially update an evidence item.
+
+    issue-008-2B: used by intake_classifier to write fetched URL content
+    back to pending evidence items created at upload time.
+
+    Only non-None keyword arguments are written; others are left unchanged.
+    """
+    import json as _json
+
+    set_clauses: list[str] = []
+    params: list[Any] = []
+
+    if extracted_text is not None:
+        set_clauses.append("extracted_text = ?")
+        params.append(extracted_text)
+    if parser_used is not None:
+        set_clauses.append("parser_used = ?")
+        params.append(parser_used)
+    if parser_version is not None:
+        set_clauses.append("parser_version = ?")
+        params.append(parser_version)
+    if parse_status is not None:
+        set_clauses.append("parse_status = ?")
+        params.append(parse_status)
+    if parse_warnings is not None:
+        set_clauses.append("parse_warnings = ?")
+        params.append(_json.dumps(parse_warnings))
+    if fetch_metadata is not None:
+        set_clauses.append("fetch_metadata = ?")
+        params.append(_json.dumps(fetch_metadata))
+    if final_url is not None:
+        set_clauses.append("final_url = ?")
+        params.append(final_url)
+    if content_hash is not None:
+        set_clauses.append("content_hash = ?")
+        params.append(content_hash)
+    if mime_type is not None:
+        set_clauses.append("mime_type = ?")
+        params.append(mime_type)
+
+    if not set_clauses:
+        return  # nothing to update
+
+    params.append(item_id)
+    sql = f"UPDATE evidence_items SET {', '.join(set_clauses)} WHERE id = ?"
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(sql, params)
+        await db.commit()
+
+
 async def list_extracted_iocs(hunt_package_id: str) -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
