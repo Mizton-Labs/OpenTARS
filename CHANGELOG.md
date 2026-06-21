@@ -9,6 +9,34 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — URL fetch Brotli decoding + Playwright fallback (issue-local-008)
+
+Diagnosed on production server (`test-edr-1` hunt package, welivesecurity.com evidence):
+URLs that serve `Content-Encoding: br` (Brotli) returned compressed binary bytes because
+the `brotli` package was missing. The extractors produced mojibake, Playwright was never
+triggered, and zero IOCs/info were extracted. Four fixes applied:
+
+- **Fix 1 — Brotli package**: `brotli>=1.1.0` added to `requirements.txt` so httpx
+  auto-decodes Brotli-encoded responses. Accept-Encoding header is now built
+  dynamically: only advertises `br` when a brotli decoder is actually importable
+  (`_BROTLI_AVAILABLE` flag), preventing servers from sending Brotli when httpx
+  can't decode it.
+- **Fix 2 — Binary content detection**: after streaming, raw bytes are checked with
+  `_looks_like_binary()` (non-ASCII ratio >30% OR control-char ratio >5%). When
+  binary content is detected on an HTML response, a descriptive `parse_warning` is
+  recorded and the Playwright fallback is forced regardless of extracted-text length.
+- **Fix 3 — Broader Playwright trigger**: `_should_force_playwright()` replaces the
+  original length-only check and also fires when extracted text is binary/mojibake
+  (the root cause of the welivesecurity failure: 31 KB of Brotli garbage was >200
+  chars so the old trigger silently passed). Also fires on `utf8-fallback` on HTML,
+  and when raw bytes are binary. Playwright result is accepted over static extraction
+  when the static content is binary — no longer rejected just because mojibake is
+  longer than the browser article.
+- **Fix 4 — readability errors surfaced**: `readability-lxml` exceptions (e.g.
+  `ValueError: All strings must be XML compatible: no NULL bytes`) are now captured
+  and appended to `parse_warnings` instead of being silently swallowed.
+- **21 new tests** covering all four fixes.
+
 ### Added — Agent Tools Config, Expandable Phase Cards, Marker PDF Parser (issue-local-007)
 
 - **Part 2A — Agent Tools Configuration**: global per-tool enable/disable toggles in Agents Configuration tab (Threat Hunting group); backend-driven catalog endpoint (`GET /api/app/agent-tools/catalog`) returns operator-facing labels, descriptions, per-tool agent assignments, implication-if-disabled text, and live runtime `available` flag; hard gate in all 4 tool-enabled nodes via new `get_enabled_tool_specs(names, enabled)` helper; disabled tools are never offered to the LLM; `deep_retrohunt_planner` inline tool tuple normalized to module-level `_TOOL_NAMES` constant; `load_agent_tools()`/`save_agent_tools()` in `loader.py` (YAML key `agent_tools`); `GET/PUT /api/app/agent-tools` routes; `ToolCatalogEntry` type in `client.ts`; `AgentsConfigTab` extended with pill-toggle rows per tool showing usage description, amber implication warning on disable, not-installed hint for Marker.
