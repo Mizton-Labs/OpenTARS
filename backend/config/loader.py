@@ -563,7 +563,7 @@ _AGENT_TOOLS_DEFAULT: dict[str, bool] = {
     "mitre_lookup": True,
     "validate_spl": True,
     "refetch_url": True,
-    "marker": True,  # PDF document parser; only takes effect when marker-pdf is installed
+    "docling": True,  # PDF document parser; only takes effect when docling is installed
 }
 _AGENT_TOOLS_KEYS = frozenset(_AGENT_TOOLS_DEFAULT.keys())
 

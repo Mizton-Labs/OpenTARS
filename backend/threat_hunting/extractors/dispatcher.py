@@ -1,14 +1,14 @@
 """Artifact extraction dispatcher for Threat Hunting evidence items.
 
 Selects the appropriate extractor based on MIME type / file extension and
-the configured parser_mode (auto | pymupdf | marker).
+the configured parser_mode (auto | pymupdf | docling).
 
 parser_mode routing for PDFs (issue-007):
-  - ``pymupdf`` — always use PyMuPDF (plain text, fast).
-  - ``marker``  — use marker-pdf when available + enabled in agent_tools config;
-                  otherwise fall back to PyMuPDF with a warning.
-  - ``auto``    — prefer marker-pdf when it is installed AND the "marker"
-                  agent_tools toggle is enabled; otherwise use PyMuPDF.
+  - ``pymupdf``  — always use PyMuPDF (plain text, fast).
+  - ``docling``  — use Docling ML pipeline when available + enabled in
+                   agent_tools config; otherwise fall back to PyMuPDF + warning.
+  - ``auto``     — **default: prefers Docling** when it is installed AND the
+                   "docling" agent_tools toggle is enabled; otherwise PyMuPDF.
 """
 
 from __future__ import annotations
@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 # Parser mode constants
 PARSER_AUTO = "auto"
 PARSER_PYMUPDF = "pymupdf"
-PARSER_MARKER = "marker"
+PARSER_DOCLING = "docling"
+
+# Keep backward-compat alias — any stored parser_mode="marker" is treated as "docling"
+PARSER_MARKER = "docling"
 
 # File size limits for in-process extraction (50 MiB)
 _MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -187,59 +190,61 @@ def extract_file(
 def _extract_pdf(
     data: bytes, parser_mode: str, warnings: list[str]
 ) -> tuple[str, str, str, list[str]]:
-    """Route PDF extraction to PyMuPDF or Marker based on parser_mode.
+    """Route PDF extraction to PyMuPDF or Docling based on parser_mode.
 
     Routing logic (issue-007):
-      - ``pymupdf`` - always PyMuPDF.
-      - ``marker``  - Marker when installed + toggle enabled; else PyMuPDF + warning.
-      - ``auto``    - Marker when installed + toggle enabled; else PyMuPDF.
+      - ``pymupdf``  - always PyMuPDF (fast, plain text).
+      - ``docling``  - Docling ML pipeline when installed + toggle enabled;
+                       else PyMuPDF + warning.
+      - ``marker``   - treated identically to ``docling`` (backward compat alias).
+      - ``auto``     - **prefers Docling** when installed + enabled; else PyMuPDF.
     """
     from backend.threat_hunting.extractors.pdf_extractor import (
         extract_pdf,
-        extract_pdf_marker,
+        extract_pdf_docling,
         is_available,
-        is_marker_available,
+        is_docling_available,
     )
 
-    def _marker_toggle_enabled() -> bool:
-        """Return whether the Marker toggle is on in agent_tools config."""
+    def _docling_toggle_enabled() -> bool:
+        """Return whether the Docling toggle is on in agent_tools config."""
         try:
             from backend.config.loader import load_agent_tools
 
-            return bool(load_agent_tools().get("marker", True))
+            return bool(load_agent_tools().get("docling", True))
         except Exception:  # noqa: BLE001
-            return True  # conservative default
+            return True  # conservative default: enabled if config unreadable
 
-    use_marker = is_marker_available() and _marker_toggle_enabled()
+    use_docling = is_docling_available() and _docling_toggle_enabled()
 
-    if parser_mode == PARSER_MARKER:
-        if not is_marker_available():
+    # ``docling`` and legacy ``marker`` both route to Docling
+    if parser_mode in (PARSER_DOCLING, "marker"):
+        if not is_docling_available():
             warnings.append(
-                "Marker parser selected but marker-pdf is not installed; "
-                "falling back to PyMuPDF. Install with: pip install marker-pdf"
+                "Docling parser selected but docling is not installed; falling back to PyMuPDF."
             )
-        elif not _marker_toggle_enabled():
+        elif not _docling_toggle_enabled():
             warnings.append(
-                "Marker parser selected but disabled in agent tools configuration; "
+                "Docling parser selected but disabled in agent tools configuration; "
                 "falling back to PyMuPDF."
             )
         else:
             try:
-                text, version, parse_warnings = extract_pdf_marker(data)
+                text, version, parse_warnings = extract_pdf_docling(data)
                 warnings.extend(parse_warnings)
-                return text, "marker", version, warnings
+                return text, "docling", version, warnings
             except Exception as exc:  # noqa: BLE001
-                warnings.append(f"Marker extraction failed ({exc}); falling back to PyMuPDF")
+                warnings.append(f"Docling extraction failed ({exc}); falling back to PyMuPDF")
 
-    elif parser_mode == PARSER_AUTO and use_marker:
-        # Auto-mode prefers Marker when available + enabled (issue-007)
+    elif parser_mode == PARSER_AUTO and use_docling:
+        # Auto-mode prefers Docling when available + enabled (issue-007)
         try:
-            text, version, parse_warnings = extract_pdf_marker(data)
+            text, version, parse_warnings = extract_pdf_docling(data)
             warnings.extend(parse_warnings)
-            warnings.append("auto: used marker-pdf for Markdown extraction")
-            return text, "marker", version, warnings
+            warnings.append("auto: used Docling for high-quality Markdown extraction")
+            return text, "docling", version, warnings
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Marker auto-mode failed ({exc}); falling back to PyMuPDF")
+            warnings.append(f"Docling auto-mode failed ({exc}); falling back to PyMuPDF")
 
     # Fall through: PyMuPDF
     if not is_available():

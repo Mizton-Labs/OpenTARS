@@ -235,6 +235,33 @@ cmd_start() {
         fi
     fi
 
+    # ── Docling ML model prefetch (idempotent) ────────────────────────────────
+    # Docling converts PDFs to high-quality Markdown using ML models (DocLayNet
+    # layout + TableFormer table-structure + picture classifier + code/formula).
+    # Models are downloaded from HuggingFace Hub on first use and cached under
+    # ~/.cache/docling/.  Prefetching them here avoids a multi-minute stall on
+    # the first PDF evidence upload.
+    #
+    # This step is idempotent: re-running is a no-op once models are cached
+    # (~0.2 s to verify checksums when already present).
+    # Non-fatal: on network failure the startup continues and models will be
+    # downloaded lazily on the first PDF parse instead.
+    #
+    # Wrapped in a guard: skipped entirely when docling is not importable
+    # (e.g. if the package was removed from requirements.txt).
+    if "${VENV_DIR}/bin/python" -c "import docling" &>/dev/null 2>&1; then
+        log "Prefetching Docling PDF parser models (idempotent, cached after first run)..."
+        if "${VENV_DIR}/bin/python" - <<'DOCLING_PREFETCH' > /dev/null 2>&1
+from docling.utils.model_downloader import download_models
+download_models(progress=False)
+DOCLING_PREFETCH
+        then
+            log "Docling models: ready."
+        else
+            log "WARNING: Docling model prefetch failed — models will download on first PDF parse."
+        fi
+    fi
+
     # Build the env-var override array for uvicorn. Empty when the flag was
     # not passed, so the backend reads application.yaml as usual.
     local env_overrides=()

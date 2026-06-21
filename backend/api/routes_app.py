@@ -369,14 +369,14 @@ async def get_agent_tools_catalog() -> dict[str, Any]:
     ``marker`` which requires an optional ML package).
     """
     from backend.threat_hunting.agents.tools import TOOL_METADATA
-    from backend.threat_hunting.extractors.pdf_extractor import is_marker_available
+    from backend.threat_hunting.extractors.pdf_extractor import is_docling_available
 
     catalog: list[dict[str, Any]] = []
     for name, meta in TOOL_METADATA.items():
         entry = dict(meta)
-        # Override 'available' for marker with the runtime check
-        if name == "marker":
-            entry["available"] = is_marker_available()
+        # Override 'available' for docling with the runtime check
+        if name == "docling":
+            entry["available"] = is_docling_available()
         catalog.append({"name": name, **entry})
     return {"catalog": catalog}
 

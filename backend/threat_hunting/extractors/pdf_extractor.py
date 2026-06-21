@@ -1,20 +1,25 @@
-"""PDF text extraction — PyMuPDF (fitz) and Marker (marker-pdf).
+"""PDF text extraction — PyMuPDF (fitz) and Docling.
 
 Parser: ``pymupdf`` — fast, reliable plain-text extraction with per-page
-  delimiters.  Default for all modes unless Marker is installed + enabled.
+  delimiters.  Fallback when Docling is unavailable or disabled.
 
-Parser: ``marker`` — higher-quality Markdown output for article-like PDFs.
-  Preserves layout, tables, equations, and headings via the marker-pdf ML
-  library (requires ``pip install marker-pdf``, which pulls PyTorch and
-  surya-ocr models; first-use model download is several GB).
+Parser: ``docling`` — high-quality Markdown output via the Docling ML pipeline.
+  Preserves document structure: headings, tables, reading order, code blocks,
+  and equations.  Requires ``docling>=2.104.0`` (pulled automatically via
+  requirements.txt; PyTorch + IBM DocLayNet models, ~2-3 GB first install).
+  ML models are prefetched at startup by the ``mizton-threatbox`` launcher
+  (idempotent; models cached under ``~/.cache/docling/``).
 
-  ``is_marker_available()`` checks whether marker-pdf is installed at runtime.
-  The catalog endpoint reports this to the frontend so the UI can reflect
-  actual availability without a hard dependency.
+  Docling is chosen over marker-pdf because:
+    - pillow constraint: ``pillow<13.0.0,>=10.0.0`` is COMPATIBLE with our
+      ``pillow>=12.2.0`` security pin.  marker-pdf capped ``pillow<11.0.0``
+      which forced a downgrade reintroducing 3 High-severity Pillow CVEs.
+    - ``is_docling_available()`` reflects runtime import; the catalog endpoint
+      surfaces this to the frontend.
 
 Both parsers are selected by the dispatcher (``dispatcher.py``) based on the
-requested ``parser_mode`` (``auto`` | ``pymupdf`` | ``marker``) AND the
-``agent_tools["marker"]`` config toggle.
+requested ``parser_mode`` (``auto`` | ``pymupdf`` | ``docling``) AND the
+``agent_tools["docling"]`` config toggle.
 """
 
 from __future__ import annotations
@@ -76,96 +81,81 @@ def extract_pdf(data: bytes) -> tuple[str, str, list[str]]:
     return "\n\n".join(pages), version, warnings
 
 
-# ── Marker (marker-pdf) ───────────────────────────────────────────────────────
+# ── Docling ───────────────────────────────────────────────────────────────────
 
-_MARKER_VERSION: str | None = None
+_DOCLING_VERSION: str | None = None
 
 try:
-    import marker  # type: ignore[import-untyped]  # marker-pdf
+    import docling  # type: ignore[import-untyped]
 
-    _MARKER_VERSION = getattr(marker, "__version__", "unknown")
-    _MARKER_AVAILABLE = True
+    _DOCLING_VERSION = getattr(docling, "__version__", "unknown")
+    _DOCLING_AVAILABLE = True
 except ImportError:
-    marker = None  # type: ignore[assignment]
-    _MARKER_AVAILABLE = False
+    docling = None  # type: ignore[assignment]
+    _DOCLING_AVAILABLE = False
 
 
-def is_marker_available() -> bool:
-    """Return True when marker-pdf is installed and importable."""
-    return _MARKER_AVAILABLE
+def is_docling_available() -> bool:
+    """Return True when docling is installed and importable."""
+    return _DOCLING_AVAILABLE
 
 
-def extract_pdf_marker(data: bytes) -> tuple[str, str, list[str]]:
-    """Extract Markdown text from PDF bytes using marker-pdf.
+def extract_pdf_docling(data: bytes) -> tuple[str, str, list[str]]:
+    """Extract Markdown from PDF bytes using the Docling ML pipeline.
 
     Returns (markdown_text, parser_version, warnings).
 
     Raises:
-        RuntimeError: when marker-pdf is not installed.
-        ValueError:   when the PDF cannot be parsed.
+        RuntimeError: when docling is not installed.
+        ValueError:   when the PDF cannot be converted.
 
     Notes:
-        - marker-pdf downloads ML models (surya-ocr, layout model) on first
-          use.  This may take several minutes and requires internet access.
-        - The output is structured Markdown: headings, tables, inline code,
-          and equation blocks are preserved where the model recognises them.
-        - CPU-only inference is used by default.  GPU acceleration is
-          available automatically when torch detects CUDA/MPS.
+        - Docling uses the DocLayNet layout model + TableFormer table-structure
+          model.  Models are prefetched at startup by ``mizton-threatbox`` and
+          cached under ``~/.cache/docling/``.
+        - Output is structured Markdown: headings, tables, lists, code blocks,
+          and reading order are preserved by the ML pipeline.
+        - CPU inference is used by default; CUDA/MPS are auto-detected if
+          available.
     """
-    if not _MARKER_AVAILABLE or marker is None:
-        raise RuntimeError("marker-pdf is not installed. Run: pip install marker-pdf")
+    if not _DOCLING_AVAILABLE or docling is None:
+        raise RuntimeError(
+            "docling is not installed. It should be installed automatically via requirements.txt."
+        )
 
-    warnings: list[str] = []
-    version = _MARKER_VERSION or "unknown"
+    warnings_out: list[str] = []
+    version = _DOCLING_VERSION or "unknown"
 
     try:
-        # marker-pdf ≥ 0.3: PdfConverter API
-        import os  # noqa: PLC0415
-        import tempfile  # noqa: PLC0415
+        import io  # noqa: PLC0415
 
-        from marker.converters.pdf import PdfConverter  # type: ignore[import-untyped]
-        from marker.models import create_model_dict  # type: ignore[import-untyped]
-        from marker.output import text_from_rendered  # type: ignore[import-untyped]
+        from docling.datamodel.document import DocumentStream  # type: ignore[import-untyped]
+        from docling.document_converter import DocumentConverter  # type: ignore[import-untyped]
 
-        # marker-pdf operates on file paths, not bytes — write to a temp file
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(data)
-            tmp_path = tmp.name
+        # DocumentStream avoids writing a temp file — passes bytes directly
+        stream = DocumentStream(name="document.pdf", stream=io.BytesIO(data))
+        converter = DocumentConverter()
+        result = converter.convert(stream)
 
-        try:
-            model_dict = create_model_dict()
-            converter = PdfConverter(artifact_dict=model_dict)
-            rendered = converter(tmp_path)
-            markdown, _, _ = text_from_rendered(rendered)
-        finally:
-            os.unlink(tmp_path)
+        status_val = getattr(result.status, "value", str(result.status))
+        if status_val not in ("success", "partial_success"):
+            raise ValueError(f"Docling conversion status: {status_val}")
 
-    except ImportError:
-        # Fallback: try the older marker-pdf 0.2.x API
-        try:
-            import os
-            import tempfile
+        if status_val == "partial_success":
+            warnings_out.append("Docling partial success — some pages may not have been converted")
 
-            from marker.convert import convert_single_pdf  # type: ignore[import-untyped]
-            from marker.models import load_all_models  # type: ignore[import-untyped]
+        markdown = result.document.export_to_markdown()
 
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(data)
-                tmp_path = tmp.name
-
-            try:
-                model_lst = load_all_models()
-                markdown, _images, _metadata = convert_single_pdf(tmp_path, model_lst)
-            finally:
-                os.unlink(tmp_path)
-
-        except Exception as exc:
-            raise ValueError(f"marker-pdf conversion failed: {exc}") from exc
-
+    except ImportError as exc:
+        raise RuntimeError(
+            f"docling is installed but a required sub-module is missing: {exc}"
+        ) from exc
     except Exception as exc:
-        raise ValueError(f"marker-pdf conversion failed: {exc}") from exc
+        raise ValueError(f"Docling PDF conversion failed: {exc}") from exc
 
     if not markdown or not markdown.strip():
-        warnings.append("marker-pdf produced no text (PDF may be image-only or incompatible)")
+        warnings_out.append(
+            "Docling produced no text (PDF may be image-only, encrypted, or incompatible)"
+        )
 
-    return markdown or "", version, warnings
+    return markdown or "", version, warnings_out

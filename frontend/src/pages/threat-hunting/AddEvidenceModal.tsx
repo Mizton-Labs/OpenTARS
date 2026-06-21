@@ -40,16 +40,15 @@ export default function AddEvidenceModal({
     enabled: addMode === 'watcher',
   })
 
-  // issue-007: fetch agent-tools catalog to check marker availability + enabled
+  // issue-007: fetch agent-tools catalog to check docling availability + enabled
   const { data: catalogData } = useQuery({
     queryKey: ['agent-tools-catalog'],
     queryFn: () => api.getAgentToolsCatalog(),
     staleTime: 60_000,
     enabled: addMode === 'file',
   })
-  const markerEntry = catalogData?.catalog?.find((e) => e.name === 'marker')
-  const markerAvailable = markerEntry?.available ?? false
-  const markerEnabled = markerEntry != null // present in catalog means it's recognized
+  const doclingEntry = catalogData?.catalog?.find((e) => e.name === 'docling')
+  const doclingAvailable = doclingEntry?.available ?? false
 
   async function submit() {
     setBusy(true)
@@ -113,20 +112,21 @@ export default function AddEvidenceModal({
                 value={parserMode}
                 onChange={(e) => setParserMode(e.target.value)}
               >
-                <option value="auto">Parser: auto{markerAvailable ? ' (prefers Marker)' : ' (PyMuPDF)'}</option>
+                <option value="auto">Parser: auto{doclingAvailable ? ' (prefers Docling)' : ' (PyMuPDF)'}</option>
                 <option value="pymupdf">PyMuPDF — fast, plain text</option>
                 <option
-                  value="marker"
-                  disabled={!markerAvailable}
-                  className={clsx(!markerAvailable && 'text-gray-600')}
+                  value="docling"
+                  disabled={!doclingAvailable}
+                  className={clsx(!doclingAvailable && 'text-gray-600')}
                 >
-                  Marker — high-quality Markdown{!markerAvailable ? ' (not installed)' : ''}
+                  Docling — high-quality Markdown{!doclingAvailable ? ' (not installed)' : ''}
                 </option>
               </select>
-              {parserMode === 'marker' && !markerAvailable && (
+              {parserMode === 'docling' && !doclingAvailable && (
                 <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
-                  marker-pdf is not installed — selection will fall back to PyMuPDF.
+                  Docling is not yet installed — selection will fall back to PyMuPDF.
+                  Restart the app to trigger installation.
                 </div>
               )}
             </div>

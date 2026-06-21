@@ -23,8 +23,8 @@ def test_tool_metadata_has_all_keys() -> None:
     for name in spec_names:
         assert name in TOOL_METADATA, f"TOOL_METADATA missing entry for {name!r}"
 
-    # Marker should be in metadata
-    assert "marker" in TOOL_METADATA
+    # Docling should be in metadata (replaces marker from issue-007)
+    assert "docling" in TOOL_METADATA
 
     # Every entry has required keys
     for name, meta in TOOL_METADATA.items():
@@ -49,7 +49,7 @@ def test_tool_metadata_categories() -> None:
         assert TOOL_METADATA[name]["category"] == "agent_tool"
 
     # Marker is a document_parser
-    assert TOOL_METADATA["marker"]["category"] == "document_parser"
+    assert TOOL_METADATA["docling"]["category"] == "document_parser"
 
 
 def test_tool_metadata_used_by_lists() -> None:
@@ -153,12 +153,12 @@ def test_load_agent_tools_applies_stored_values() -> None:
 
     with patch(
         "backend.config.loader.load_app_config",
-        return_value={"agent_tools": {"refetch_url": False, "marker": False}},
+        return_value={"agent_tools": {"refetch_url": False, "docling": False}},
     ):
         result = load_agent_tools()
 
     assert result["refetch_url"] is False
-    assert result["marker"] is False
+    assert result["docling"] is False
     assert result["mitre_lookup"] is True  # not in stored dict → default True
 
 
@@ -278,7 +278,7 @@ async def test_get_agent_tools_catalog_route() -> None:
     from backend.threat_hunting.agents.tools import TOOL_METADATA
 
     with patch(
-        "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=False
+        "backend.threat_hunting.extractors.pdf_extractor.is_docling_available", return_value=False
     ):
         client = TestClient(app)
         resp = client.get("/api/app/agent-tools/catalog")
@@ -291,8 +291,8 @@ async def test_get_agent_tools_catalog_route() -> None:
     for key in TOOL_METADATA:
         assert key in names, f"catalog missing {key!r}"
     # Marker available=False when not installed
-    marker_entry = next(e for e in data["catalog"] if e["name"] == "marker")
-    assert marker_entry["available"] is False
+    docling_entry = next(e for e in data["catalog"] if e["name"] == "docling")
+    assert docling_entry["available"] is False
 
 
 # ─── 2A: node gating ─────────────────────────────────────────────────────────
@@ -445,15 +445,16 @@ async def test_list_hunt_packages_enriches_phases() -> None:
         assert ctx.get("item_count") == 2
 
 
-# ─── 2C: Marker routing in dispatcher ────────────────────────────────────────
+# ─── 2C: Docling routing in dispatcher ───────────────────────────────────────
 
 
-def test_dispatcher_marker_mode_falls_back_when_not_installed() -> None:
-    from backend.threat_hunting.extractors.dispatcher import PARSER_MARKER, _extract_pdf
+def test_dispatcher_docling_mode_falls_back_when_not_installed() -> None:
+    """parser_mode='docling' falls back to PyMuPDF when docling is unavailable."""
+    from backend.threat_hunting.extractors.dispatcher import PARSER_DOCLING, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available",
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
             return_value=False,
         ),
         patch("backend.threat_hunting.extractors.pdf_extractor.is_available", return_value=True),
@@ -462,77 +463,105 @@ def test_dispatcher_marker_mode_falls_back_when_not_installed() -> None:
             return_value=("plain text", "1.0", []),
         ),
     ):
-        text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_MARKER, [])
+        _text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_DOCLING, [])
 
     assert parser_used == "pymupdf"
     assert any("not installed" in w for w in warnings)
 
 
-def test_dispatcher_marker_mode_falls_back_when_toggle_disabled() -> None:
-    from backend.threat_hunting.extractors.dispatcher import PARSER_MARKER, _extract_pdf
+def test_dispatcher_docling_mode_falls_back_when_toggle_disabled() -> None:
+    """parser_mode='docling' falls back to PyMuPDF when the toggle is off."""
+    from backend.threat_hunting.extractors.dispatcher import PARSER_DOCLING, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=True
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
         ),
-        patch("backend.config.loader.load_agent_tools", return_value={"marker": False}),
+        patch("backend.config.loader.load_agent_tools", return_value={"docling": False}),
         patch("backend.threat_hunting.extractors.pdf_extractor.is_available", return_value=True),
         patch(
             "backend.threat_hunting.extractors.pdf_extractor.extract_pdf",
             return_value=("plain text", "1.0", []),
         ),
     ):
-        text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_MARKER, [])
+        _text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_DOCLING, [])
 
     assert parser_used == "pymupdf"
     assert any("disabled" in w for w in warnings)
 
 
-def test_dispatcher_marker_mode_succeeds_when_available() -> None:
-    from backend.threat_hunting.extractors.dispatcher import PARSER_MARKER, _extract_pdf
+def test_dispatcher_docling_mode_succeeds_when_available() -> None:
+    """parser_mode='docling' uses Docling when available + enabled."""
+    from backend.threat_hunting.extractors.dispatcher import PARSER_DOCLING, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=True
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
         ),
-        patch("backend.config.loader.load_agent_tools", return_value={"marker": True}),
+        patch("backend.config.loader.load_agent_tools", return_value={"docling": True}),
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_marker",
-            return_value=("# Heading\nContent", "1.6.0", []),
+            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_docling",
+            return_value=("# Heading\nContent", "2.104.0", []),
         ),
     ):
-        text, parser_used, version, warnings = _extract_pdf(b"%PDF", PARSER_MARKER, [])
+        text, parser_used, version, _warnings = _extract_pdf(b"%PDF", PARSER_DOCLING, [])
 
-    assert parser_used == "marker"
+    assert parser_used == "docling"
     assert "# Heading" in text
-    assert version == "1.6.0"
+    assert version == "2.104.0"
 
 
-def test_dispatcher_auto_mode_uses_marker_when_available() -> None:
+def test_dispatcher_legacy_marker_mode_routes_to_docling() -> None:
+    """parser_mode='marker' (legacy) is treated as 'docling' — backward compat."""
+    from backend.threat_hunting.extractors.dispatcher import _extract_pdf
+
+    with (
+        patch(
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
+        ),
+        patch("backend.config.loader.load_agent_tools", return_value={"docling": True}),
+        patch(
+            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_docling",
+            return_value=("# Legacy\nContent", "2.104.0", []),
+        ),
+    ):
+        text, parser_used, _version, _warnings = _extract_pdf(b"%PDF", "marker", [])
+
+    assert parser_used == "docling"
+    assert "# Legacy" in text
+
+
+def test_dispatcher_auto_mode_uses_docling_when_available() -> None:
+    """parser_mode='auto' prefers Docling when installed + enabled."""
     from backend.threat_hunting.extractors.dispatcher import PARSER_AUTO, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=True
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
         ),
-        patch("backend.config.loader.load_agent_tools", return_value={"marker": True}),
+        patch("backend.config.loader.load_agent_tools", return_value={"docling": True}),
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_marker",
-            return_value=("# Title\n\nContent", "1.6.0", []),
+            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_docling",
+            return_value=("# Title\n\nContent", "2.104.0", []),
         ),
     ):
-        text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_AUTO, [])
+        _text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_AUTO, [])
 
-    assert parser_used == "marker"
+    assert parser_used == "docling"
     assert "auto" in " ".join(warnings).lower()
 
 
-def test_dispatcher_auto_mode_uses_pymupdf_when_marker_unavailable() -> None:
+def test_dispatcher_auto_mode_uses_pymupdf_when_docling_unavailable() -> None:
+    """parser_mode='auto' falls back to PyMuPDF when Docling is not installed."""
     from backend.threat_hunting.extractors.dispatcher import PARSER_AUTO, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available",
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
             return_value=False,
         ),
         patch("backend.threat_hunting.extractors.pdf_extractor.is_available", return_value=True),
@@ -541,43 +570,47 @@ def test_dispatcher_auto_mode_uses_pymupdf_when_marker_unavailable() -> None:
             return_value=("plain text", "1.24.0", []),
         ),
     ):
-        text, parser_used, _version, _warnings = _extract_pdf(b"%PDF", PARSER_AUTO, [])
+        _text, parser_used, _version, _warnings = _extract_pdf(b"%PDF", PARSER_AUTO, [])
 
     assert parser_used == "pymupdf"
 
 
-def test_dispatcher_pymupdf_mode_ignores_marker() -> None:
-    """Explicit pymupdf mode never touches Marker even when it's available."""
+def test_dispatcher_pymupdf_mode_ignores_docling() -> None:
+    """Explicit pymupdf mode never calls Docling even when it is available."""
     from backend.threat_hunting.extractors.dispatcher import PARSER_PYMUPDF, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=True
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
         ),
         patch("backend.threat_hunting.extractors.pdf_extractor.is_available", return_value=True),
         patch(
             "backend.threat_hunting.extractors.pdf_extractor.extract_pdf",
             return_value=("plain text", "1.24.0", []),
         ),
-        patch("backend.threat_hunting.extractors.pdf_extractor.extract_pdf_marker") as mock_marker,
+        patch(
+            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_docling"
+        ) as mock_docling,
     ):
         _text, parser_used, _version, _warnings = _extract_pdf(b"%PDF", PARSER_PYMUPDF, [])
 
-    mock_marker.assert_not_called()
+    mock_docling.assert_not_called()
     assert parser_used == "pymupdf"
 
 
-def test_dispatcher_marker_falls_back_when_extraction_fails() -> None:
-    """If Marker raises during extraction, fall back to PyMuPDF."""
-    from backend.threat_hunting.extractors.dispatcher import PARSER_MARKER, _extract_pdf
+def test_dispatcher_docling_falls_back_when_extraction_fails() -> None:
+    """If Docling raises during extraction, fall back to PyMuPDF with a warning."""
+    from backend.threat_hunting.extractors.dispatcher import PARSER_DOCLING, _extract_pdf
 
     with (
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.is_marker_available", return_value=True
+            "backend.threat_hunting.extractors.pdf_extractor.is_docling_available",
+            return_value=True,
         ),
-        patch("backend.config.loader.load_agent_tools", return_value={"marker": True}),
+        patch("backend.config.loader.load_agent_tools", return_value={"docling": True}),
         patch(
-            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_marker",
+            "backend.threat_hunting.extractors.pdf_extractor.extract_pdf_docling",
             side_effect=ValueError("model failed"),
         ),
         patch("backend.threat_hunting.extractors.pdf_extractor.is_available", return_value=True),
@@ -586,26 +619,25 @@ def test_dispatcher_marker_falls_back_when_extraction_fails() -> None:
             return_value=("fallback text", "1.24.0", []),
         ),
     ):
-        text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_MARKER, [])
+        text, parser_used, _version, warnings = _extract_pdf(b"%PDF", PARSER_DOCLING, [])
 
     assert parser_used == "pymupdf"
     assert text == "fallback text"
     assert any("failed" in w.lower() for w in warnings)
 
 
-# ─── 2C: is_marker_available ─────────────────────────────────────────────────
+# ─── 2C: is_docling_available ─────────────────────────────────────────────────
 
 
-def test_is_marker_available_reflects_import() -> None:
+def test_is_docling_available_reflects_import() -> None:
+    """is_docling_available() must mirror the module-level _DOCLING_AVAILABLE flag."""
     from backend.threat_hunting.extractors import pdf_extractor
 
-    # When the module-level _MARKER_AVAILABLE is True/False, is_marker_available
-    # should reflect it
-    original = pdf_extractor._MARKER_AVAILABLE
+    original = pdf_extractor._DOCLING_AVAILABLE
     try:
-        pdf_extractor._MARKER_AVAILABLE = False
-        assert pdf_extractor.is_marker_available() is False
-        pdf_extractor._MARKER_AVAILABLE = True
-        assert pdf_extractor.is_marker_available() is True
+        pdf_extractor._DOCLING_AVAILABLE = False
+        assert pdf_extractor.is_docling_available() is False
+        pdf_extractor._DOCLING_AVAILABLE = True
+        assert pdf_extractor.is_docling_available() is True
     finally:
-        pdf_extractor._MARKER_AVAILABLE = original
+        pdf_extractor._DOCLING_AVAILABLE = original
