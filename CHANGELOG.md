@@ -9,6 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — TH Tooling, Visualization, List UX, Hypotheses, Report, Re-run (issue-local-006)
+
+- **Part A — URL Fetch Robustness**: browser-like headers (realistic UA/Accept), `raise_for_status` on 4xx/5xx (no more error-HTML extraction), `tenacity` retry with exponential backoff (3 attempts), extractor fallback chain (trafilatura → readability-lxml → raw utf-8), Playwright headless-Chromium fallback for JS-heavy pages; new `browser_fetcher.py` with SSRF validation + route interception + service-worker blocking; `mizton-threatbox` startup script idempotently installs Chromium.
+- **Part B — Agent Tool-Calling**: `LLMClient.supports_tools` property (True for OpenAI/Anthropic/OpenAI-compatible, False for Ollama); `complete_with_tools()` on `OpenAIClient` (function-calling) and `AnthropicClient` (tool-use); `call_llm_with_tools()` in `llm_bridge.py` with non-capable provider fallback; `tools.py` with 6 tool wrappers (`extract_iocs`, `defang_ioc`, `noise_score`, `mitre_lookup`, `validate_spl`, `refetch_url`); `call_tool()` dispatcher with name + required-param validation + extra-kwarg stripping; 4 pipeline nodes (`intake_classifier`, `threat_context_builder`, `deep_retrohunt_planner`, `query_drafting_agent`) tool-enabled with `tools_used`/`decision`/`debug_lines` in step_logs.
+- **Part C — Workflow Visualization**: 2-column layout in verbose/debug (task list LEFT, diagram RIGHT); `tools_used` pills per step in timeline view; `decision` sub-text per step; `THIntakeSource` interface and `intake_sources` in `THStepLog`; Mermaid: amber source nodes + edges above `intake_classifier`; ReactFlow: same with y=-120 source tier and dashed amber edges.
+- **Part D — Hunt List Process-Arrow**: `list_hunt_packages` extended with latest-run phase summary (server-side subquery, no new migration); `THPhaseEntry`/`phases`/`total_elapsed_s`/`generation_status` on `THuntPackage`; `ProcessArrow` component in `ThreatHunting.tsx` (green=ok, red=error, blue-pulse=active, total elapsed time); `STATUS_COLORS.completed` → green.
+- **Part E — Hypotheses Enrichment**: `suggested_actions: list[str]` added to `Hypothesis` TypedDict; prompt instructs model to provide 2–4 concrete detection steps per hypothesis (SIEM query, EDR artifact, MITRE T-ID, log source); `suggested_actions` rendered in `AnalysisTab` hypothesis cards; `ioc_basis` now rendered; both included in Markdown and PDF reports.
+- **Part F — PDF Report Enrichment**: cover header block (styled H1 + thick colored rule + metadata row); page numbers via `onFirstPage`/`onLaterPages` callbacks; `Table`/`TableStyle` for Evidence Summary, TTP Techniques, and Execution Results; dark-blue `HRFlowable` rule above each H2 section header; all tables wrapped in try/except → paragraph fallback; no new dependencies.
+- **Part G — Re-run Dialog**: Re-run button opens a modal with model selector (Configured default + provider·model dropdown) and effort pills (low/medium/high); `startGeneration` called with chosen `provider_name`/`model_name`/`research_effort`; providers lazy-loaded only when dialog opens.
+
+### Security Fixes (issue-local-006 review)
+- `python-multipart>=0.0.31` (was `>=0.0.9`; GHSA-wp53-j4wj-2cfg CVSS 8.7 at file-upload endpoints).
+- `langsmith>=0.8.18` explicit pin (GHSA-f4xh-w4cj-qxq8 arbitrary file read via TracingMiddleware).
+- `pillow>=12.2.0` explicit pin (GHSA-3f63-hfp8-52jq CVSS 9.3; transitive via pymupdf/reportlab).
+- `ssrf.py`: RFC 6598 CGNAT `100.64.0.0/10` added to `_BLOCKED_NETWORKS`.
+- `idna>=3.15` explicit pin (PYSEC-2026-215 ReDoS; hostname-length cap in `ssrf.py` is the advisory workaround).
+- `browser_fetcher._ssrf_check_url` replaced with authoritative `ssrf.py` logic (eliminates divergence and CGNAT gap).
+
 ### Added — Threat Hunting Framework (issue-local-002, Phases 1–6)
 
 - **Phase 1** — Role model (`admin`, `threat-researcher`, `threat-viewer`, `feed-sender`), `threat_hunting.db` SQLite schema, sidebar sections, TH route skeleton, LLM Providers moved to Configuration → General.
