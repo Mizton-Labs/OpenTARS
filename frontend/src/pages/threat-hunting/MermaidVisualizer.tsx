@@ -1,6 +1,9 @@
 /**
  * MermaidVisualizer — lazy-loaded Mermaid flowchart for the agent pipeline.
  * Loaded only when the user selects "Mermaid" visualization style.
+ *
+ * issue-006-C: adds Threat Intel source nodes at the top of the diagram
+ * (above intake_classifier), sourced from step_logs[intake_classifier].intake_sources.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -26,8 +29,27 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     return `style ${id} fill:#1f2937,stroke:#374151,color:#6b7280`
   }
 
-  const lines: string[] = [
-    'flowchart TD',
+  // issue-006-C: extract intake sources from step_logs
+  const intakeLog = (genRecord.step_logs ?? []).find((l) => l.step === 'intake_classifier')
+  const intakeSources = intakeLog?.intake_sources ?? []
+
+  const lines: string[] = ['flowchart TD']
+
+  // Source nodes (amber) — one per evidence source
+  if (intakeSources.length > 0) {
+    for (let i = 0; i < intakeSources.length; i++) {
+      const src = intakeSources[i]
+      const safeLabel = (src.label || src.item_type || `source_${i}`)
+        .replace(/"/g, "'")
+        .slice(0, 30)
+      const nodeId = `src_${i}`
+      lines.push(`  ${nodeId}["${safeLabel}\\n(${src.item_type})"]`)
+    }
+    lines.push('')
+  }
+
+  // Pipeline nodes
+  lines.push(
     `  intake_classifier["${STEP_LABELS.intake_classifier}"]`,
     `  threat_context_builder["${STEP_LABELS.threat_context_builder}"]`,
     `  deep_retrohunt_planner["${STEP_LABELS.deep_retrohunt_planner}"]`,
@@ -36,6 +58,15 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     `  ttp_analyst["${STEP_LABELS.ttp_analyst}"]`,
     `  query_drafting_agent["${STEP_LABELS.query_drafting_agent}"]`,
     '',
+  )
+
+  // Source → intake_classifier edges
+  for (let i = 0; i < intakeSources.length; i++) {
+    lines.push(`  src_${i} --> intake_classifier`)
+  }
+
+  // Pipeline edges
+  lines.push(
     '  intake_classifier --> threat_context_builder',
     '  intake_classifier --> deep_retrohunt_planner',
     '  threat_context_builder --> hypothesis_generator',
@@ -44,10 +75,16 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     '  hunting_lead_planner --> ttp_analyst',
     '  ttp_analyst --> query_drafting_agent',
     '',
-  ]
+  )
 
+  // Style pipeline nodes
   for (const id of Object.keys(STEP_LABELS)) {
     lines.push(`  ${nodeStyle(id)}`)
+  }
+
+  // Style source nodes (amber)
+  for (let i = 0; i < intakeSources.length; i++) {
+    lines.push(`  style src_${i} fill:#78350f,stroke:#f59e0b,color:#fef3c7`)
   }
 
   return lines.join('\n')

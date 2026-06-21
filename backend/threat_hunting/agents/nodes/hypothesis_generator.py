@@ -23,7 +23,12 @@ _OUTPUT_FORMAT = """[
     "description": "...",
     "justification": "...",
     "relevance": "high|medium|low",
-    "ioc_basis": ["ioc1", "ioc2"]
+    "ioc_basis": ["ioc1", "ioc2"],
+    "suggested_actions": [
+      "Run SPL: index=main sourcetype=firewall dest_ip=<IOC>",
+      "Check EDR for process creation by <artifact>",
+      "MITRE T1059.001 — search PowerShell execution logs"
+    ]
   }
 ]"""
 
@@ -60,7 +65,11 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             additional_instructions=(
                 f"Return a JSON array with {h_min}-{h_max} hypothesis objects. "
                 "Assign sequential IDs: H1, H2, H3, etc. "
-                "Prioritize hypotheses that can be hunted with available IOCs."
+                "Prioritize hypotheses that can be hunted with available IOCs. "
+                "For each hypothesis, include 2-4 'suggested_actions': specific, actionable "
+                "detection steps such as a concrete SIEM query fragment, an EDR artifact to check, "
+                "a MITRE ATT&CK technique reference (e.g. T1059.001), or a log source to query. "
+                "suggested_actions must be strings, not nested objects."
             ),
         )
 

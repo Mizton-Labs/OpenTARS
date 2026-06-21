@@ -82,6 +82,8 @@ class Hypothesis(TypedDict):
     justification: str
     relevance: str  # 'high' | 'medium' | 'low'
     ioc_basis: list[str]  # IOC values that support this hypothesis
+    # issue-006-E: specific tool/artifact/query/technical details for this hypothesis
+    suggested_actions: list[str]
 
 
 class HuntTask(TypedDict):

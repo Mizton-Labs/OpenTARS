@@ -55,6 +55,8 @@ _BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
     ipaddress.ip_network("240.0.0.0/4"),
     # Unique local (IPv6 ULA — covers fd00:ec2:: broadly)
     ipaddress.ip_network("fc00::/7"),
+    # RFC 6598 carrier-grade NAT — can route to internal infra in cloud/container envs
+    ipaddress.ip_network("100.64.0.0/10"),
 ]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})

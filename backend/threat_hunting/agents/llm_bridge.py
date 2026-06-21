@@ -35,6 +35,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Registry import at module level so tests can patch it via
+# 'backend.threat_hunting.agents.llm_bridge.get_client'.
+# Uses a lazy wrapper to avoid import cycles at module load time.
+try:
+    from backend.llm.registry import get_client  # noqa: F401 (imported for test patching)
+except ImportError:  # pragma: no cover
+    get_client = None  # type: ignore[assignment]
+
 # LangChain message helpers (used for prompt assembly only)
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -44,6 +52,59 @@ except ImportError:  # pragma: no cover
     _LANGCHAIN_AVAILABLE = False
     HumanMessage = None  # type: ignore[assignment,misc]
     SystemMessage = None  # type: ignore[assignment,misc]
+
+
+async def call_llm_with_tools(
+    prompt: str,
+    tools: list[dict],
+    *,
+    system: str | None = None,
+    provider_name: str | None = None,
+    model: str | None = None,
+    max_tokens: int = 2048,
+    temperature: float = 0.0,
+    timeout: float | None = 120.0,
+) -> tuple[str, list[dict]]:
+    """Call the configured LLM with tool definitions.
+
+    Returns (text_response, tool_calls_list) where ``tool_calls`` is a list of
+    ``{name: str, arguments: dict}`` dicts.
+
+    When the provider does not support tool-calling (e.g. Ollama), falls back
+    to ``call_llm()`` and returns (text, []).
+
+    Args:
+        tools: List of tool spec dicts in OpenAI function-calling format
+               (name, description, parameters fields).
+    """
+    # Use the module-level get_client (patched in tests via
+    # 'backend.threat_hunting.agents.llm_bridge.get_client').
+    client = get_client(provider_name)
+
+    if not client.supports_tools:
+        # Fallback: prompt-only path — no tools available
+        text = await asyncio.to_thread(
+            client.complete,
+            prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+            model=model,
+        )
+        return text, []
+
+    text, tool_calls = await asyncio.to_thread(
+        client.complete_with_tools,
+        prompt,
+        tools,
+        system=system,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        timeout=timeout,
+        model=model,
+    )
+    return text, tool_calls
 
 
 async def call_llm(
@@ -67,8 +128,6 @@ async def call_llm(
         LLMProviderError  — on upstream HTTP errors.
         LLMTransportError — on network failures.
     """
-    from backend.llm.registry import get_client
-
     client = get_client(provider_name)
 
     # Run the synchronous complete() in a thread pool
