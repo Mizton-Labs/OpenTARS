@@ -711,6 +711,17 @@ docs/                       # Architecture, plans, session log
 scripts/                    # check.sh, test.sh, security-check.sh, api_client.py
 ```
 
+## Documentation
+
+| Document | Audience | Contents |
+|---|---|---|
+| [`docs/platform-overview.md`](docs/platform-overview.md) | Everyone | Plain-language platform overview, capability diagram, agent team descriptions, role guide |
+| [`docs/agent-architecture.md`](docs/agent-architecture.md) | Engineers | LangGraph/LangChain usage, tool-calling design, per-agent skill matrix, pipeline DAG, state management |
+| [`docs/threat-hunting-framework-design.md`](docs/threat-hunting-framework-design.md) | Engineers | Full TH domain model: Hunt Package schema, evidence model, IOC model, SSRF policy, DB schema, API route map |
+| [`docs/architecture.md`](docs/architecture.md) | Engineers | Whole-platform module map, data flows, config files, external dependencies |
+
+---
+
 ## License
 
 Mizton-ThreatBox is released under the Apache License 2.0. See the
