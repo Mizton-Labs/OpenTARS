@@ -340,14 +340,19 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
       </div>
     )
   }
+  // Normalise unknown fields to strings for safe JSX rendering
+  const summary      = typeof ctx.summary      === 'string' ? ctx.summary      : ''
+  const threatActor  = typeof ctx.threat_actor  === 'string' ? ctx.threat_actor  : ''
+  const campaignName = typeof ctx.campaign_name === 'string' ? ctx.campaign_name : ''
+  const confidence   = typeof ctx.confidence   === 'string' ? ctx.confidence   : ''
   return (
     <div className="card space-y-3">
       <p className="text-sm font-semibold text-gray-200">Threat Context</p>
-      {ctx.summary && <p className="text-xs text-gray-300">{String(ctx.summary)}</p>}
+      {summary      && <p className="text-xs text-gray-300">{summary}</p>}
       <div className="grid grid-cols-2 gap-2 text-xs">
-        {ctx.threat_actor && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{String(ctx.threat_actor)}</span></div>}
-        {ctx.campaign_name && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-300">{String(ctx.campaign_name)}</span></div>}
-        {ctx.confidence && <div><span className="text-gray-500">Confidence: </span><span className={clsx(ctx.confidence === 'high' ? 'text-green-400' : ctx.confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>{String(ctx.confidence)}</span></div>}
+        {threatActor  && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{threatActor}</span></div>}
+        {campaignName && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-300">{campaignName}</span></div>}
+        {confidence   && <div><span className="text-gray-500">Confidence: </span><span className={clsx(confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>{confidence}</span></div>}
       </div>
       {Array.isArray(ctx.key_observations) && ctx.key_observations.length > 0 && (
         <div>

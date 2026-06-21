@@ -41,17 +41,24 @@ type Tab =
   | 'global-fields'
   | 'llm-providers'
   | 'user-management'
+  | 'general-ti'
 
-const BASE_TABS: { id: Tab; label: string }[] = [
+// General group: infrastructure / platform settings
+const GENERAL_TABS: { id: Tab; label: string }[] = [
+  { id: 'application',   label: 'Application' },
+  { id: 'global-fields', label: 'Global Field Defaults' },
+  { id: 'llm-providers', label: 'LLM Providers' },
+]
+
+// Threat Intel group: ingestion sources and TI-scoped settings
+const THREAT_INTEL_BASE_TABS: { id: Tab; label: string }[] = [
   { id: 'threat-intel',  label: 'Open Threat Feeds' },
   { id: 'local-feed',    label: 'Local Feed' },
   { id: 'remote-feed',   label: 'External Feeds' },
   { id: 'rss',           label: 'External RSS' },
   { id: 'api',           label: 'External API' },
   { id: 'listener',      label: 'Listener Endpoint' },
-  { id: 'global-fields', label: 'Global Field Defaults' },
-  { id: 'llm-providers', label: 'LLM Providers' },
-  { id: 'application',   label: 'Application' },
+  { id: 'general-ti',    label: 'General TI Settings' },
 ]
 
 const GROUP_LABELS: Record<Group, string> = {
@@ -61,9 +68,9 @@ const GROUP_LABELS: Record<Group, string> = {
 }
 
 const DEFAULT_TAB: Record<Group, Tab> = {
-  'general':       'application',
-  'threat-intel':  'threat-intel',
-  'threat-hunting': 'threat-intel', // fallback; group has no tabs
+  'general':        'application',
+  'threat-intel':   'threat-intel',
+  'threat-hunting': 'application', // group has no sub-tabs; value unused
 }
 
 export default function Configuration() {
@@ -152,10 +159,11 @@ export default function Configuration() {
         {activeTab === 'rss'           && <RssTab />}
         {activeTab === 'local-feed'    && <LocalFeedTab />}
         {activeTab === 'remote-feed'   && <RemoteFeedTab />}
-        {activeTab === 'threat-intel'  && <ThreatIntelCatalog />}
-        {activeTab === 'global-fields' && <GlobalFieldsTab />}
-        {activeTab === 'llm-providers' && <div className="max-w-3xl"><LLMProvidersTab /></div>}
+        {activeTab === 'threat-intel'    && <ThreatIntelCatalog />}
+        {activeTab === 'global-fields'   && <GlobalFieldsTab />}
+        {activeTab === 'llm-providers'   && <div className="max-w-3xl"><LLMProvidersTab /></div>}
         {activeTab === 'user-management' && <UserManagementTab />}
+        {activeTab === 'general-ti'      && <GeneralTISettingsTab />}
       </div>
     </div>
   )

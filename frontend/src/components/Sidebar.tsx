@@ -100,6 +100,13 @@ export default function Sidebar() {
     queryFn: api.getLogoInfo,
   })
 
+  // App display title — configurable via Application settings tab.
+  const { data: titleData } = useQuery({
+    queryKey: ['app-title'],
+    queryFn: api.getAppTitle,
+  })
+  const displayTitle = titleData?.app_title?.trim() || 'Mizton-ThreatBox'
+
   // Unused: isResearcher is available for future gating within sections
   void isResearcher
 
