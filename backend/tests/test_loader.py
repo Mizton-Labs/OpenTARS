@@ -339,7 +339,12 @@ def _clear_auth_env(monkeypatch):
     monkeypatch.delenv("MIZTON_THREATBOX_ENABLE_AUTH", raising=False)
 
 
-def test_load_auth_enabled_default_false(tmp_path, monkeypatch):
+def test_load_auth_enabled_code_fallback_is_false(tmp_path, monkeypatch):
+    """When no yaml file exists and no env var is set, the code-level fallback is False.
+
+    The yaml default (auth_enabled: true) is irrelevant here because the yaml
+    path is pointed at a missing file. This tests the hardcoded fallback only.
+    """
     import backend.config.loader as loader
 
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "missing.yaml")

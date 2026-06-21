@@ -35,15 +35,18 @@ describe('About page (prompts-051)', () => {
     expect(screen.getByText('Mizton-ThreatBox')).toBeInTheDocument()
   })
 
-  it('credits the code dev team with a GitHub repo link next to the name', () => {
+  it('credits the code dev team with a repo link and author list', () => {
     renderAbout()
     expect(screen.getByText('Code Dev Team')).toBeInTheDocument()
-    // Name is plain text (no longer a link).
-    expect(screen.getByText('HoneyMex Lab')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'HoneyMex Lab' })).toBeNull()
-    // The GitHub icon next to the name links to the repository.
-    const repo = screen.getByRole('link', { name: 'Mizton-ThreatBox on GitHub' })
+    // The link shows the repository slug as visible text and links to the repo.
+    const repo = screen.getByRole('link', { name: /Mizton-Labs\/Mizton-ThreatBox/ })
     expect(repo).toHaveAttribute('href', 'https://github.com/Mizton-Labs/Mizton-ThreatBox')
+    expect(repo).toHaveTextContent('Mizton-Labs/Mizton-ThreatBox')
+    // The primary author @jusafing is always listed first.
+    const authorLink = screen.getByRole('link', { name: '@jusafing' })
+    expect(authorLink).toHaveAttribute('href', 'https://github.com/jusafing')
+    // "HoneyMex Lab" plain text is no longer rendered (replaced by author list).
+    expect(screen.queryByText('HoneyMex Lab')).toBeNull()
   })
 
   it('shows the License card referencing the license files', () => {

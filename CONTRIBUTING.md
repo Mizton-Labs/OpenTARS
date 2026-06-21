@@ -33,6 +33,13 @@ cd Mizton-ThreatBox
 The `--dev` flag runs uvicorn in the foreground with live logs and also starts
 the Vite dev server for hot-reload frontend development.
 
+> **Authentication is on by default.** On first start, a default `admin` account
+> is provisioned and its password is printed to the terminal. For local
+> development without authentication, use `--disable-auth`:
+> ```bash
+> ./mizton-threatbox start --dev --disable-auth
+> ```
+
 ---
 
 ## Development Workflow

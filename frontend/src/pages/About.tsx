@@ -64,20 +64,39 @@ export default function About() {
             </dd>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Users className="w-4 h-4 text-brand-400 shrink-0" />
-            <dt className="text-sm text-gray-400 w-32">Code Dev Team</dt>
-            <dd className="text-sm text-gray-200 flex items-center gap-2">
+          <div className="flex items-start gap-3">
+            <Users className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
+            <dt className="text-sm text-gray-400 w-32 shrink-0">Code Dev Team</dt>
+            <dd className="text-sm text-gray-200 space-y-1.5">
+              {/* Repository link */}
               <a
                 href="https://github.com/Mizton-Labs/Mizton-ThreatBox"
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Mizton-ThreatBox on GitHub"
-                className="text-brand-400 hover:text-brand-300 shrink-0"
+                className="inline-flex items-center gap-1.5 text-brand-400 hover:text-brand-300"
               >
-                <Github className="w-4 h-4" />
+                <Github className="w-4 h-4 shrink-0" />
+                <span>Mizton-Labs/Mizton-ThreatBox</span>
               </a>
-              <span>HoneyMex Lab</span>
+              {/* Authors — @jusafing always first; add future collaborators below */}
+              <ul className="space-y-0.5 pl-0.5">
+                {([
+                  'jusafing',
+                ] as const).map((username) => (
+                  <li key={username} className="flex items-center gap-1 text-xs text-gray-400">
+                    <span className="text-gray-600">•</span>
+                    <a
+                      href={`https://github.com/${username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-gray-200 transition-colors"
+                    >
+                      @{username}
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </dd>
           </div>
         </dl>

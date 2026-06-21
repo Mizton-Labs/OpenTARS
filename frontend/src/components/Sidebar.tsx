@@ -137,9 +137,8 @@ export default function Sidebar() {
         collapsed ? 'w-[64px]' : 'w-[256px]',
       )}
     >
-      {/* Header: logo + title + collapse toggle (prompts-049: toggle moved to
-          the top). Expanded → toggle pinned right; collapsed → stacked below
-          the logo, centered. */}
+      {/* Header: logo + title + collapse toggle. Expanded → toggle pinned right;
+          collapsed → stacked below the logo, centered. */}
       <div
         className={clsx(
           'border-b border-gray-800 px-3 py-4',
@@ -150,7 +149,7 @@ export default function Sidebar() {
         {!collapsed && (
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-gray-100 leading-tight truncate">
-              Mizton-ThreatBox
+              {displayTitle}
             </p>
             <p className="text-[10px] text-gray-500 leading-tight">TI & Hunting Ops Framework</p>
           </div>
