@@ -1,10 +1,33 @@
 # Mizton-ThreatBox
 
-A lightweight, standalone Threat Intelligence feed aggregator with an
-**LLM-powered normalization engine** — it doesn't just collect feeds, it uses an
-LLM to reconcile heterogeneous threat intel into a single canonical schema. It
-listens for, pulls, and normalises threat intel from multiple sources, stores
-data locally in SQLite, and exposes a web UI for viewing and configuration.
+A standalone **Threat Intel and Threat Hunting Operations Framework** for security teams.
+It ingests, normalizes, and analyzes threat intelligence from multiple sources, and
+drives end-to-end threat hunts using an LLM-powered agent pipeline backed by
+[LangGraph](https://github.com/langchain-ai/langgraph).
+
+## Modules
+
+| Module | What it does |
+|---|---|
+| **Threat Intel** | Ingest feeds (JSON, CSV, XML, NDJSON, push, RSS, API pull), LLM-powered field normalization, Smart Mappings proposals, Watchers with public syndication URLs and webhooks, natural-language (LLM) query |
+| **Threat Hunting** | Hunt Package wizard (file/URL/watcher/text evidence), IOC extraction + noise scoring, LangGraph agent pipeline (context → hypotheses → leads → TTPs → query drafts → Deep Retrohunt), operator approval gate, Splunk SIEM execution, structured HTML/Markdown reports |
+| **Configuration** | LLM provider management (OpenAI, Anthropic, Ollama, compatible), SIEM connector profiles (Splunk), feed sources, field defaults, application settings, user management |
+
+## Threat Hunting Workflow
+
+```
+1. Create Hunt Package     — name, description, tags
+2. Add Evidence            — upload files (PDF/DOCX/TXT/CSV), fetch URLs,
+                             import watcher events, paste manual notes
+3. Generate Analysis       — LangGraph agents produce: threat context,
+                             hypotheses, hunting leads, TTPs, SPL drafts,
+                             Deep Retrohunt IOC CSV
+4. Operator Approval       — review draft, approve or reject/revise
+5. SIEM Execution          — run SPL query against Splunk, collect events,
+                             LLM-interpreted findings
+6. Report                  — assembled executive summary + full structured
+                             report; export as JSON or Markdown
+```
 
 ---
 

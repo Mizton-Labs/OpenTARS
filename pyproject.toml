@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mizton-threatbox"
 version = "0.1.0"
-description = "Lightweight, standalone Threat Intelligence feed aggregator with an LLM-powered normalization engine."
+description = "Standalone Threat Intel and Threat Hunting Operations Framework with LLM-powered normalization, LangGraph agent pipeline, Splunk execution, and structured reporting."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -28,10 +28,16 @@ authors = [
 ]
 keywords = [
     "threat-intelligence",
+    "threat-hunting",
     "security",
     "feed-aggregator",
     "normalization",
     "llm",
+    "langgraph",
+    "siem",
+    "splunk",
+    "ioc",
+    "incident-response",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

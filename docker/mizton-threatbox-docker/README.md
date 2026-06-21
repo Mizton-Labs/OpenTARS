@@ -1,12 +1,16 @@
 # Mizton-ThreatBox — Docker
 
-Run Mizton-ThreatBox as a single local container. The image is a **minimal
-system**: it `git clone`s the application from GitHub at build time and ships it
-unchanged. The application's **own startup script** (`./mizton-threatbox`)
-installs all dependencies and builds the frontend on the **first start**, then
-runs `uvicorn` in the foreground. The Docker image and Compose file do **not**
-install dependencies, build the app, or reference the repository's app config —
-the repo is used only to download the app, which is then run via its script.
+Run Mizton-ThreatBox — a **Threat Intel and Threat Hunting Operations Framework** —
+as a single local container. The image is a **minimal system**: it `git clone`s the
+application from GitHub at build time and ships it unchanged. The application's **own
+startup script** (`./mizton-threatbox`) installs all dependencies and builds the
+frontend on the **first start**, then runs `uvicorn` in the foreground. The Docker
+image and Compose file do **not** install dependencies, build the app, or reference
+the repository's app config — the repo is used only to download the app.
+
+> **Runtime credentials:** LLM provider API keys (`config/llm-providers.yaml`) and
+> SIEM connector credentials are **never baked into the image**. Provide them at
+> runtime via volume-mounted config or through the application UI after first start.
 
 - **Image:** `mizton-threatbox/local`
 - **Base:** `node:20-bookworm-slim` + a minimal toolchain (`git`, Python 3 +
