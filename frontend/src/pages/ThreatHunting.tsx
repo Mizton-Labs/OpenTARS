@@ -68,16 +68,19 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
   const hasTools = (phase?.tools_used?.length ?? 0) > 0
   const hasCounts = phase?.item_count != null || phase?.ioc_count != null
 
-  // Status glyph — color-independent at-a-glance indicator
-  const glyph = isActive
-    ? '⟳'
+  // Glyph: color-independent, large enough to read
+  const glyph = isActive ? '⟳' : isDone ? '✓' : isError ? '✕' : isSkipped ? '⊘' : '·'
+
+  // Status word shown under the label — makes meaning explicit without relying on color alone
+  const statusWord = isActive
+    ? 'running'
     : isDone
-      ? '✓'
+      ? isPartial ? 'partial' : 'done'
       : isError
-        ? '✕'
+        ? 'error'
         : isSkipped
-          ? '⊘'
-          : '⋯'
+          ? 'skipped'
+          : 'pending'
 
   return (
     <div className="flex items-start gap-1.5">
@@ -85,53 +88,64 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
         {/* ── Card body ── */}
         <div
           className={clsx(
-            // fix: bigger — text-[11px], px-2.5 py-1.5, min-w-[68px]
-            'px-2.5 py-1.5 rounded text-[11px] font-semibold border transition-colors min-w-[68px] text-center select-none',
+            'px-2.5 py-1.5 rounded text-[11px] font-semibold border-2 transition-all min-w-[72px] text-center select-none',
+            // Solid fills — high contrast against the bg-gray-900 card background.
+            // Border-2 so the color line is clearly visible at small sizes.
             isActive
-              ? 'border-blue-400 bg-blue-900/50 text-blue-200 animate-pulse shadow-sm shadow-blue-900'
+              ? 'border-blue-400 bg-blue-800/60 text-blue-100 animate-pulse'
               : isDone
                 ? isPartial
-                  ? 'border-amber-500 bg-amber-900/40 text-amber-200'
-                  : 'border-green-500 bg-green-900/40 text-green-200'
+                  ? 'border-amber-400 bg-amber-800/50 text-amber-100'
+                  : 'border-green-500 bg-green-800/60 text-green-100'
                 : isError
-                  ? 'border-red-500 bg-red-900/40 text-red-200'
+                  ? 'border-red-500 bg-red-800/60 text-red-100'
                   : isSkipped
-                    // fix: was text-gray-800 (invisible) → text-gray-500
-                    ? 'border-gray-600/50 bg-gray-800/30 text-gray-500 opacity-70'
+                    ? 'border-gray-600 bg-gray-800/50 text-gray-400'
                     : isPending
-                      // fix: was text-gray-800 (invisible) → text-gray-500, dashed border
-                      ? 'border-gray-600/40 border-dashed bg-transparent text-gray-500'
-                      : 'border-gray-700/40 bg-transparent text-gray-500',
+                      ? 'border-gray-700 border-dashed bg-gray-900/50 text-gray-600'
+                      : 'border-gray-700 bg-gray-900/50 text-gray-600',
           )}
           title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
         >
-          {/* Glyph + label on one line */}
+          {/* Glyph + step name */}
           <div className="flex items-center justify-center gap-1">
             <span className={clsx(
-              'text-[10px] leading-none',
-              isActive ? 'text-blue-300' :
-              isDone ? isPartial ? 'text-amber-300' : 'text-green-400' :
-              isError ? 'text-red-400' :
+              'text-[13px] font-bold leading-none',
+              isActive ? 'text-blue-200' :
+              isDone ? isPartial ? 'text-amber-300' : 'text-green-300' :
+              isError ? 'text-red-300' :
               'text-gray-600',
             )}>
               {glyph}
             </span>
-            <span className="leading-none">{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
-          </div>
-          {/* Elapsed time */}
-          {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
-            <span className="block text-[9px] opacity-70 mt-0.5 font-normal">
-              {phase.elapsed_s}s
+            <span className="leading-none tracking-tight">
+              {STEP_SHORT_LABELS[stepId] ?? stepId}
             </span>
-          )}
+          </div>
+
+          {/* Status word + elapsed */}
+          <div className="flex items-center justify-center gap-1.5 mt-0.5">
+            <span className={clsx(
+              'text-[9px] font-normal leading-none',
+              isActive ? 'text-blue-300' :
+              isDone ? isPartial ? 'text-amber-400' : 'text-green-400' :
+              isError ? 'text-red-400' :
+              isSkipped ? 'text-gray-500' :
+              'text-gray-700',
+            )}>
+              {statusWord}
+            </span>
+            {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
+              <span className="text-[9px] font-mono opacity-60 leading-none">
+                {phase.elapsed_s}s
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ── Inline detail (done steps only) ── */}
         {isDone && (hasCounts || hasTools) && (
-          <div
-            className="mt-1 space-y-0.5 max-w-[80px]"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="mt-1 space-y-0.5 max-w-[90px]" onClick={(e) => e.stopPropagation()}>
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
@@ -148,11 +162,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
             )}
             {hasTools && (
               <div className="flex flex-wrap gap-0.5">
-                {/* Deduplicate tool names for display */}
                 {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[9px] font-mono bg-purple-900/40 text-purple-300 border border-purple-700/40 rounded px-1 leading-none"
+                    className="text-[9px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
                     title={t}
                   >
                     {t.replace(/_/g, ' ')}
@@ -164,9 +177,8 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
         )}
       </div>
 
-      {/* fix: brighter connector arrow */}
       {!isLast && (
-        <ChevronRight className="w-3 h-3 text-gray-600 shrink-0 mt-2.5" />
+        <ChevronRight className="w-3 h-3 text-gray-500 shrink-0 mt-3" />
       )}
     </div>
   )
