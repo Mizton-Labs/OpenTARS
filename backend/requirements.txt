@@ -15,6 +15,12 @@ pymupdf>=1.24.0          # PDF text extraction (PyMuPDF / fitz)
 python-docx>=1.1.0       # DOCX extraction
 trafilatura>=1.12.0      # URL article/content extraction
 
+# Threat Hunting — LLM agent pipeline (issue-local-002 Phase 3)
+langgraph>=1.2.0         # LangGraph stateful agent workflow orchestration
+langchain-core>=1.4.0    # LangChain base abstractions and message types
+langchain-openai>=1.3.0  # OpenAI + OpenAI-compatible provider integration
+langchain-anthropic>=1.4.0  # Anthropic provider integration
+
 # Dev / test
 pytest>=8.2.0
 pytest-asyncio>=0.23.7
