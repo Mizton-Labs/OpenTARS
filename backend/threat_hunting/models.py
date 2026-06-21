@@ -37,6 +37,14 @@ class HuntPackageOut(BaseModel):
     created_at: str
     updated_at: str
     evidence_count: int = 0
+    # Phase/run data computed by list_hunt_packages (issue-008 root-cause fix).
+    # These were previously stripped by FastAPI's response_model serialisation
+    # because HuntPackageOut didn't declare them, causing every phase card to
+    # render as pending/gray with no status color.
+    generation_status: str | None = None
+    phases: list[dict[str, Any]] | None = None
+    total_elapsed_s: float | None = None
+    run_created_at: str | None = None
 
 
 # ── Evidence ──────────────────────────────────────────────────────────────────
