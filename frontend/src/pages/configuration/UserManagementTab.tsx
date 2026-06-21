@@ -108,8 +108,9 @@ export default function UserManagementTab() {
                   onChange={(e) => roleMut.mutate({ id: u.id, role: e.target.value as UserRole })}
                 >
                   <option value="admin">admin</option>
-                  <option value="normal">normal</option>
-                  <option value="sender">sender</option>
+                  <option value="threat-researcher">threat-researcher</option>
+                  <option value="threat-viewer">threat-viewer</option>
+                  <option value="feed-sender">feed-sender</option>
                 </select>
 
                 {/* Enabled toggle */}
@@ -200,7 +201,7 @@ function CreateUserForm({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [role, setRole] = useState<UserRole>('normal')
+  const [role, setRole] = useState<UserRole>('threat-viewer')
 
   const mutation = useMutation({
     mutationFn: () => api.auth.createUser({ username, password, role }),
@@ -209,7 +210,7 @@ function CreateUserForm({
       setUsername('')
       setPassword('')
       setConfirm('')
-      setRole('normal')
+      setRole('threat-viewer')
       setOpen(false)
       onCreated()
     },
@@ -266,9 +267,10 @@ function CreateUserForm({
             value={role}
             onChange={(e) => setRole(e.target.value as UserRole)}
           >
-            <option value="normal">normal</option>
+            <option value="threat-viewer">threat-viewer</option>
+            <option value="threat-researcher">threat-researcher</option>
             <option value="admin">admin</option>
-            <option value="sender">sender</option>
+            <option value="feed-sender">feed-sender</option>
           </select>
         </div>
       </div>

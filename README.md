@@ -158,13 +158,13 @@ When enabled:
 
 <a id="user-roles"></a>
 
-- **Roles.** Three roles: `admin` (full access, including Configuration,
-  Normalizer, and User Management), `normal` (viewer-scoped, read-only), and
-  `sender` (a listener-only machine account that may **only** POST to
-  `/api/ingest/listener` — ideal for unattended push automation). The sidebar and
-  API enforce role gating server-side. The natural-language query endpoint
-  (`POST /api/query/nl`) is a read operation available to `admin` and `normal`,
-  but not to `sender`.
+- **Roles.** Four roles:
+  - `admin` — full access including Configuration, Normalizer, Threat Hunting, and User Management.
+  - `threat-researcher` — full Threat Hunting access (create, edit, approve, execute hunt packages) plus read access to the Threat Intel Viewer.
+  - `threat-viewer` — read-only access to hunt packages, reports, and the Threat Intel Viewer. The natural-language query endpoint (`POST /api/query/nl`) is available to this role.
+  - `feed-sender` — listener-only machine account that may **only** POST to `/api/ingest/listener` — ideal for unattended push automation.
+
+  The sidebar and API enforce role gating server-side independently of the UI. Existing users with the old `normal` role are automatically migrated to `threat-viewer`; existing `sender` users become `feed-sender` on first startup after upgrade.
 - **Sessions.** Login is session-cookie based; all API `401`s funnel through a
   single handler and the UI redirects to the login screen.
 - **First-run admin.** On first start with auth enabled, an `admin` account is

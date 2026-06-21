@@ -11,6 +11,8 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Radar,
+  Crosshair,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -29,13 +31,44 @@ import BrandLogo from './BrandLogo'
 //               open mode (there is no signed-in identity to manage).
 // Both link-hiding and route guards (App.tsx) are applied: hiding alone does not
 // stop a user typing the URL directly.
-const navItems = [
-  { to: 'viewer',        label: 'Viewer',        icon: LayoutDashboard, adminOnly: false, authOnly: false },
-  { to: 'configuration', label: 'Configuration', icon: Settings,        adminOnly: true,  authOnly: false },
-  { to: 'normalizer',    label: 'Normalizer',    icon: Sparkles,        adminOnly: true,  authOnly: false },
-  { to: 'watchers',      label: 'Watchers',      icon: Eye,             adminOnly: true,  authOnly: false },
-  { to: 'account',       label: 'Account',       icon: UserCircle,      adminOnly: false, authOnly: true },
-  { to: 'about',         label: 'About',         icon: Info,            adminOnly: false, authOnly: false },
+
+type NavItem = {
+  to: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  adminOnly: boolean
+  authOnly: boolean
+}
+
+type NavSection = {
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  items: NavItem[]
+}
+
+const navSections: NavSection[] = [
+  {
+    label: 'Threat Intel',
+    icon: Radar,
+    items: [
+      { to: 'viewer',     label: 'Viewer',     icon: LayoutDashboard, adminOnly: false, authOnly: false },
+      { to: 'normalizer', label: 'Normalizer', icon: Sparkles,        adminOnly: true,  authOnly: false },
+      { to: 'watchers',   label: 'Watchers',   icon: Eye,             adminOnly: true,  authOnly: false },
+    ],
+  },
+  {
+    label: 'Threat Hunting',
+    icon: Crosshair,
+    items: [
+      { to: 'threat-hunting', label: 'Threat Hunting', icon: Crosshair, adminOnly: false, authOnly: false },
+    ],
+  },
+]
+
+const utilityItems: NavItem[] = [
+  { to: 'configuration', label: 'Configuration', icon: Settings,   adminOnly: true,  authOnly: false },
+  { to: 'account',       label: 'Account',       icon: UserCircle, adminOnly: false, authOnly: true  },
+  { to: 'about',         label: 'About',         icon: Info,       adminOnly: false, authOnly: false },
 ]
 
 const COLLAPSE_KEY = 'sfi.sidebar.collapsed'
@@ -49,7 +82,7 @@ function readCollapsed(): boolean {
 }
 
 export default function Sidebar() {
-  const { authEnabled, isAdmin, user, logout } = useAuth()
+  const { authEnabled, isAdmin, isResearcher, user, logout } = useAuth()
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed)
 
   useEffect(() => {
@@ -67,15 +100,41 @@ export default function Sidebar() {
     queryFn: api.getLogoInfo,
   })
 
-  const items = navItems.filter(
-    (it) => (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled),
-  )
+  // Unused: isResearcher is available for future gating within sections
+  void isResearcher
+
+  const filterItems = (items: NavItem[]) =>
+    items.filter((it) => (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled))
+
+  const filteredUtility = filterItems(utilityItems)
+
+  function renderNavItem(item: NavItem) {
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        title={collapsed ? item.label : undefined}
+        className={({ isActive }) =>
+          clsx(
+            'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
+            collapsed && 'justify-center',
+            isActive
+              ? 'bg-brand-600/20 text-brand-400'
+              : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800',
+          )
+        }
+      >
+        <item.icon className="w-4 h-4 shrink-0" />
+        {!collapsed && item.label}
+      </NavLink>
+    )
+  }
 
   return (
     <aside
       className={clsx(
         'flex flex-col shrink-0 bg-gray-900 border-r border-gray-800 h-screen transition-[width] duration-150',
-        collapsed ? 'w-[64px]' : 'w-[220px]',
+        collapsed ? 'w-[64px]' : 'w-[256px]',
       )}
     >
       {/* Header: logo + title + collapse toggle (prompts-049: toggle moved to
@@ -93,7 +152,7 @@ export default function Sidebar() {
             <p className="text-xs font-semibold text-gray-100 leading-tight truncate">
               Mizton-ThreatBox
             </p>
-            <p className="text-[10px] text-gray-500 leading-tight">Threat Intel</p>
+            <p className="text-[10px] text-gray-500 leading-tight">TI & Hunting Ops Framework</p>
           </div>
         )}
         <button
@@ -106,27 +165,40 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 py-3 px-2">
-        {items.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            title={collapsed ? label : undefined}
-            className={({ isActive }) =>
-              clsx(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
-                collapsed && 'justify-center',
-                isActive
-                  ? 'bg-brand-600/20 text-brand-400'
-                  : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800',
-              )
-            }
-          >
-            <Icon className="w-4 h-4 shrink-0" />
-            {!collapsed && label}
-          </NavLink>
-        ))}
+      {/* Nav — sectioned */}
+      <nav className="flex-1 py-3 px-2 overflow-y-auto">
+        {navSections.map((section) => {
+          const sectionItems = filterItems(section.items)
+          return (
+            <div key={section.label} className="mb-3">
+              {/* Section header — hidden when collapsed */}
+              {!collapsed ? (
+                <div className="flex items-center gap-1.5 px-3 mb-1">
+                  <section.icon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                  <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+                    {section.label}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex justify-center mb-1">
+                  <section.icon className="w-3.5 h-3.5 text-gray-500" />
+                </div>
+              )}
+              {sectionItems.length > 0
+                ? sectionItems.map(renderNavItem)
+                : !collapsed && (
+                    <p className="px-3 text-[10px] text-gray-600 italic">Coming soon</p>
+                  )}
+            </div>
+          )
+        })}
+
+        {/* Utility items — separated by a border */}
+        {filteredUtility.length > 0 && (
+          <div className="border-t border-gray-800 pt-3 mt-1">
+            {filteredUtility.map(renderNavItem)}
+          </div>
+        )}
       </nav>
 
       {/* Footer: optional user/logout, version */}

@@ -25,7 +25,7 @@ import { api } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import Account from '../pages/Account'
 
-const selfUser: AuthUser = { id: 7, username: 'reader', role: 'normal', enabled: true }
+const selfUser: AuthUser = { id: 7, username: 'reader', role: 'threat-viewer', enabled: true }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -35,6 +35,8 @@ beforeEach(() => {
     user: selfUser,
     isAuthenticated: true,
     isAdmin: false,
+    isResearcher: false,
+    isViewer: true,
     passwordPolicy: { min_length: 8, required_classes: 3, max_bytes: 72 },
     login: vi.fn(),
     logout: vi.fn(),
@@ -55,7 +57,7 @@ describe('Account page', () => {
   it('shows the signed-in username and role', () => {
     renderAccount()
     expect(screen.getByText('reader')).toBeInTheDocument()
-    expect(screen.getByText('normal')).toBeInTheDocument()
+    expect(screen.getByText('threat-viewer')).toBeInTheDocument()
   })
 
   it('blocks submission when the new password reuses the current one', () => {

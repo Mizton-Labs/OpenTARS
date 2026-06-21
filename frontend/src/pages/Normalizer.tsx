@@ -21,17 +21,14 @@ import { useRunNow, useNormalizerRunning } from '../hooks/useNormalizerRun'
 import Toggle from '../components/Toggle'
 import RunHistoryModal from '../components/RunHistoryModal'
 import SmartMappings from './SmartMappings'
-import LLMProvidersTab from './configuration/LLMProvidersTab'
 
 type NormalizerSubTab =
   | 'settings'
   | 'smart-mappings'
-  | 'llm-providers'
 
 const SUB_TABS: { id: NormalizerSubTab; label: string }[] = [
   { id: 'settings',       label: 'Settings' },
   { id: 'smart-mappings', label: 'Smart Mappings' },
-  { id: 'llm-providers',  label: 'LLM Providers' },
 ]
 
 export default function Normalizer() {
@@ -73,11 +70,6 @@ export default function Normalizer() {
         </div>
       )}
       {sub === 'smart-mappings' && <SmartMappings />}
-      {sub === 'llm-providers' && (
-        <div className="max-w-3xl">
-          <LLMProvidersTab />
-        </div>
-      )}
     </div>
   )
 }

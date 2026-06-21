@@ -22,7 +22,7 @@ import {
 
 // Sidebar (prompts-045) reads auth state via useAuth and queries logo-info.
 // Mock both. `authState` is mutable so individual tests can flip to the
-// 'normal' role or an authenticated user; it defaults to the "open app"
+// 'threat-viewer' role or an authenticated user; it defaults to the "open app"
 // state (auth disabled → admin-equivalent → every nav entry visible) which
 // the legacy href-contract tests rely on.
 type MockAuth = {
@@ -125,7 +125,7 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
       authEnabled: true,
       isAdmin: false,
       isAuthenticated: true,
-      user: { username: 'reader', role: 'normal' },
+      user: { username: 'reader', role: 'threat-viewer' },
       logout: logoutSpy,
     }
     renderSidebar(undefined, '/')
@@ -277,7 +277,7 @@ describe('getAppBasePrefix() three-tier precedence (prompts-020)', () => {
   })
 
   it('exposes the known top-level routes as a single source of truth', () => {
-    expect(KNOWN_ROUTES).toEqual(['viewer', 'configuration', 'normalizer', 'watchers', 'account', 'about', 'login'])
+    expect(KNOWN_ROUTES).toEqual(['viewer', 'configuration', 'normalizer', 'watchers', 'threat-hunting', 'account', 'about', 'login'])
   })
 
   it('returns "" at root with no meta tag', () => {

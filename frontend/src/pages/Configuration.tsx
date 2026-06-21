@@ -20,6 +20,7 @@ import Toggle from '../components/Toggle'
 import ThreatIntelCatalog from '../components/ThreatIntelCatalog'
 import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
+import LLMProvidersTab from './configuration/LLMProvidersTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
 import { getAppBasePrefix } from '../utils/basePrefix'
@@ -36,6 +37,7 @@ type Tab =
   | 'remote-feed'
   | 'threat-intel'
   | 'global-fields'
+  | 'llm-providers'
   | 'user-management'
 
 const BASE_TABS: { id: Tab; label: string }[] = [
@@ -46,6 +48,7 @@ const BASE_TABS: { id: Tab; label: string }[] = [
   { id: 'api',           label: 'External API' },
   { id: 'listener',      label: 'Listener Endpoint' },
   { id: 'global-fields', label: 'Global Field Defaults' },
+  { id: 'llm-providers', label: 'LLM Providers' },
   { id: 'application',   label: 'Application' },
 ]
 
@@ -98,6 +101,7 @@ export default function Configuration() {
         {activeTab === 'remote-feed'   && <RemoteFeedTab />}
         {activeTab === 'threat-intel'  && <ThreatIntelCatalog />}
         {activeTab === 'global-fields' && <GlobalFieldsTab />}
+        {activeTab === 'llm-providers' && <div className="max-w-3xl"><LLMProvidersTab /></div>}
         {activeTab === 'user-management' && <UserManagementTab />}
       </div>
     </div>

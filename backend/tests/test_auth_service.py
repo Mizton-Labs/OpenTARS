@@ -84,7 +84,7 @@ def test_token_is_random_and_hash_stable():
 @pytest.mark.asyncio
 async def test_session_create_resolve_destroy():
     await auth_db.init_users_db()
-    uid = await auth_db.create_user("u", hash_password("pw"), role="normal")
+    uid = await auth_db.create_user("u", hash_password("pw"), role="threat-viewer")
     token = await create_session_for_user(uid)
     user = await resolve_session(token)
     assert user["id"] == uid

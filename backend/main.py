@@ -29,6 +29,7 @@ from backend.api.routes_normalizer import router as normalizer_router
 from backend.api.routes_query import router as query_router
 from backend.api.routes_smart import router as smart_router
 from backend.api.routes_sources import router as sources_router
+from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
 from backend.auth.db import init_users_db
@@ -48,6 +49,7 @@ from backend.normalizer.mappings import (
 )
 from backend.normalizer.proposals import init_proposals_db
 from backend.normalizer.run_history import init_run_history_db
+from backend.threat_hunting.db import init_threat_hunting_db
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 setup_logging(_LOG_DIR)
@@ -98,6 +100,12 @@ async def lifespan(app: FastAPI):
         await init_watchers_db()
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("Watchers DB init failed: %s", exc)
+    # issue-local-002: init the threat hunting store (its own DB file, never
+    # wiped by a normalized.db schema bump). Safe to re-run on every startup.
+    try:
+        await init_threat_hunting_db()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Threat hunting DB init failed: %s", exc)
     # prompts-045: when authentication is enabled, ensure the users/sessions
     # store exists and bootstrap a first-run admin account. When auth is
     # disabled the app stays fully open and this is skipped entirely.
@@ -150,6 +158,7 @@ app.include_router(smart_router)
 app.include_router(mappings_router)
 app.include_router(auth_router)
 app.include_router(watchers_router)
+app.include_router(threat_hunting_router)
 # Public per-watcher feed (issue_local_006). Registered before the SPA
 # catch-all (defined later in this module) so /feed/watcher/<id>/ resolves to
 # the renderer rather than the index.html fallback. It lives OUTSIDE /api/ so
@@ -165,10 +174,10 @@ app.include_router(feed_router)
 #   - a small public allowlist is always reachable (login, status, health,
 #     the branding logo image);
 #   - everything else requires a valid session cookie (401 otherwise);
-#   - 'normal' (Viewer-only) users are limited to a read allowlist (403
-#     otherwise), enforced server-side independently of the hidden UI nav;
-#   - 'sender' (listener-only machine) accounts may only POST to the listener
-#     ingest endpoint (prompts-054).
+#   - 'threat-researcher': full Threat Hunting access + TI Viewer reads;
+#   - 'threat-viewer' (read-only): limited to TI Viewer reads and TH reads;
+#   - 'feed-sender' (listener-only machine): POST /api/ingest/listener only
+#     (issue-local-002: replaces old 'normal'/'sender' roles).
 # Non-API paths (the SPA shell + static assets) are always served so the login
 # page can load; the SPA itself redirects to /login when unauthenticated.
 
@@ -190,16 +199,16 @@ _SELF_PATHS = frozenset(
     }
 )
 
-# GET-only prefixes a 'normal' (Viewer-only) user may read. Scoped to exactly
-# what the Viewer page fetches.
+# GET-only prefixes a 'threat-viewer' (read-only) user may reach. Scoped to
+# exactly what the Viewer page and Threat Hunting read-only views fetch.
 #
 # NOTE (prompts-045 security audit): the /api/sources/*-pull list endpoints are
 # DELIBERATELY excluded. They return raw source config that carries per-source
 # request `headers` (API keys / Authorization tokens). Source management is an
-# admin-only surface; a normal user has no need to read it and must never see
-# those credentials. The endpoints are additionally redacted server-side
+# admin-only surface; a viewer has no need to read it and must never see those
+# credentials. The endpoints are additionally redacted server-side
 # (routes_sources._redact_source) as defense-in-depth.
-_NORMAL_GET_PREFIXES = (
+_VIEWER_GET_PREFIXES = (
     "/api/viewer",
     "/api/normalizer/entries",
     "/api/normalizer/config",
@@ -208,43 +217,77 @@ _NORMAL_GET_PREFIXES = (
     "/api/app/pagination-max",
     "/api/app/logo",
     "/api/smart-mappings/active",
+    # Threat Hunting read-only access (issue-local-002, Phase 1)
+    "/api/threat-hunting/packages",
 )
 
-# POST endpoints a 'normal' (Viewer) account may reach. The natural-language
-# query endpoint (prompts-064) is a read operation expressed as a POST (it
-# carries a JSON body), so it is added here rather than to the GET prefixes.
-# The push-only 'sender' role is deliberately NOT granted this.
-_NORMAL_POST_PATHS = ("/api/query/nl",)
+# POST endpoints a 'threat-viewer' (read-only) account may reach. The
+# natural-language query endpoint (prompts-064) is a read operation expressed
+# as a POST (it carries a JSON body). The push-only 'feed-sender' role is
+# deliberately NOT granted this.
+_VIEWER_POST_PATHS = ("/api/query/nl",)
+
+# GET prefixes a 'threat-researcher' may read (everything viewer can + more).
+# In Phase 1 this is a superset of _VIEWER_GET_PREFIXES. Researchers can also
+# mutate Threat Hunting resources; those mutations are gated per-route via
+# require_researcher_or_admin (added in Phase 1f routes).
+_RESEARCHER_GET_PREFIXES = _VIEWER_GET_PREFIXES  # superset in later phases
+
+# POST / PUT / DELETE paths a 'threat-researcher' may reach (TH mutations).
+_RESEARCHER_WRITE_PREFIXES = (
+    "/api/threat-hunting/",
+    "/api/query/nl",
+)
 
 
-def _normal_role_allowed(method: str, path: str) -> bool:
+def _viewer_role_allowed(method: str, path: str) -> bool:
     if path in _SELF_PATHS:
         return True
-    if method == "GET" and any(path.startswith(p) for p in _NORMAL_GET_PREFIXES):
+    if method == "GET" and any(path.startswith(p) for p in _VIEWER_GET_PREFIXES):
         return True
-    if method == "POST" and path in _NORMAL_POST_PATHS:
+    if method == "POST" and path in _VIEWER_POST_PATHS:
         return True
     return False
 
 
-# The only ingest path a 'sender' (listener-only machine account) may reach.
-# Senders get self-service paths (to log in / change a forced password / log
-# out) plus this single POST endpoint — nothing else (prompts-054).
-_SENDER_POST_PATH = "/api/ingest/listener"
-
-
-def _sender_role_allowed(method: str, path: str) -> bool:
+def _researcher_role_allowed(method: str, path: str) -> bool:
     if path in _SELF_PATHS:
         return True
-    return method == "POST" and path == _SENDER_POST_PATH
+    # All GET access the viewer has
+    if method == "GET" and any(path.startswith(p) for p in _RESEARCHER_GET_PREFIXES):
+        return True
+    # Read-only TI Viewer POST (NL query)
+    if method == "POST" and path in _VIEWER_POST_PATHS:
+        return True
+    # Full Threat Hunting write access
+    if method in ("GET", "POST", "PUT", "DELETE", "PATCH") and any(
+        path.startswith(p) for p in _RESEARCHER_WRITE_PREFIXES
+    ):
+        return True
+    return False
+
+
+# The only ingest path a 'feed-sender' (listener-only machine account) may
+# reach. Feed-senders get self-service paths (login / forced-password-change /
+# logout) plus this single POST endpoint — nothing else (issue-local-002;
+# replaces old 'sender' role).
+_FEED_SENDER_POST_PATH = "/api/ingest/listener"
+
+
+def _feed_sender_role_allowed(method: str, path: str) -> bool:
+    if path in _SELF_PATHS:
+        return True
+    return method == "POST" and path == _FEED_SENDER_POST_PATH
 
 
 def _role_allowed(role: str, method: str, path: str) -> bool:
     """Authorize a non-admin role for a given request. Unknown roles fail closed."""
-    if role == "normal":
-        return _normal_role_allowed(method, path)
-    if role == "sender":
-        return _sender_role_allowed(method, path)
+    if role == "threat-viewer":
+        return _viewer_role_allowed(method, path)
+    if role == "threat-researcher":
+        return _researcher_role_allowed(method, path)
+    if role == "feed-sender":
+        return _feed_sender_role_allowed(method, path)
     return False
 
 
@@ -284,7 +327,8 @@ async def auth_enforcement(request, call_next):
         return JSONResponse(status_code=403, content={"detail": "Password change required"})
 
     # Role gate: admins may reach everything; non-admin roles are constrained
-    # to their allowlist ('normal' = Viewer reads; 'sender' = listener POST).
+    # to their allowlist (threat-viewer = reads; threat-researcher = TH writes;
+    # feed-sender = listener POST only).
     if user.get("role") != "admin" and not _role_allowed(user.get("role", ""), method, path):
         return JSONResponse(status_code=403, content={"detail": "Insufficient privileges"})
 
