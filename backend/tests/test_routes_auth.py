@@ -162,7 +162,7 @@ def test_admin_reset_password_evicts_target_sessions(auth_env):
     admin = _login("admin", "Adminpass1")
     created = admin.post(
         "/api/auth/users",
-        json={"username": "bob", "password": "Bobpass12", "role": "normal"},
+        json={"username": "bob", "password": "Bobpass12", "role": "threat-viewer"},
     )
     assert created.status_code == 200
     uid = created.json()["id"]
@@ -281,7 +281,7 @@ def test_normal_user_default_has_no_must_change(auth_env):
     admin = _login("admin", "Adminpass1")
     created = admin.post(
         "/api/auth/users",
-        json={"username": "bob", "password": "Bobpass12", "role": "normal"},
+        json={"username": "bob", "password": "Bobpass12", "role": "threat-viewer"},
     )
     assert created.status_code == 200
     assert created.json()["must_change_password"] is False
@@ -296,7 +296,7 @@ def test_create_user_rejects_insufficient_classes(auth_env):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "weakuser", "password": "alllowercase1", "role": "normal"},
+        json={"username": "weakuser", "password": "alllowercase1", "role": "threat-viewer"},
     )
     assert r.status_code == 400
 
@@ -306,7 +306,7 @@ def test_admin_reset_password_allows_reuse_unconstrained(auth_env):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "carol", "password": "Carolpass1", "role": "normal"},
+        json={"username": "carol", "password": "Carolpass1", "role": "threat-viewer"},
     )
     uid = r.json()["id"]
     # Reset to the same value the user already has — allowed for admin reset.
@@ -322,18 +322,18 @@ def test_admin_user_crud(auth_env):
     # Create
     r = c.post(
         "/api/auth/users",
-        json={"username": "viewer1", "password": "Viewerpass1", "role": "normal"},
+        json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
     )
     assert r.status_code == 200, r.text
     uid = r.json()["id"]
-    assert r.json()["role"] == "normal"
+    assert r.json()["role"] == "threat-viewer"
     # List
     users = c.get("/api/auth/users").json()
     assert {u["username"] for u in users} == {"admin", "viewer1"}
     assert all("password_hash" not in u for u in users)
     # Promote
     assert c.put(f"/api/auth/users/{uid}/role", json={"role": "admin"}).status_code == 200
-    assert c.put(f"/api/auth/users/{uid}/role", json={"role": "normal"}).status_code == 200
+    assert c.put(f"/api/auth/users/{uid}/role", json={"role": "threat-viewer"}).status_code == 200
     # Disable
     assert c.put(f"/api/auth/users/{uid}/enabled", json={"enabled": False}).status_code == 200
     # Disabled user cannot log in.
@@ -364,7 +364,7 @@ def test_create_user_duplicate_409(auth_env):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "admin", "password": "Anotherpass1", "role": "normal"},
+        json={"username": "admin", "password": "Anotherpass1", "role": "threat-viewer"},
     )
     assert r.status_code == 409
 
@@ -374,7 +374,7 @@ def test_create_user_bad_username(auth_env, bad):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": bad, "password": "Validpass1", "role": "normal"},
+        json={"username": bad, "password": "Validpass1", "role": "threat-viewer"},
     )
     assert r.status_code == 400
 
@@ -395,7 +395,7 @@ def test_cannot_demote_last_admin(auth_env):
     c = _login("admin", "Adminpass1")
     me_id = c.get("/api/auth/me").json()["user"]["id"]
     # Self-role change blocked first.
-    assert c.put(f"/api/auth/users/{me_id}/role", json={"role": "normal"}).status_code == 400
+    assert c.put(f"/api/auth/users/{me_id}/role", json={"role": "threat-viewer"}).status_code == 400
 
 
 def test_cannot_disable_or_delete_self(auth_env):
@@ -417,10 +417,16 @@ def test_cannot_demote_last_admin_via_other(auth_env):
     c2 = _login("admin2", "Admin2pass1")
     admin2_id = c2.get("/api/auth/me").json()["user"]["id"]
     # admin2 demotes admin1 → allowed (admin2 remains an admin).
-    assert c2.put(f"/api/auth/users/{admin1_id}/role", json={"role": "normal"}).status_code == 200
+    assert (
+        c2.put(f"/api/auth/users/{admin1_id}/role", json={"role": "threat-viewer"}).status_code
+        == 200
+    )
     # admin2 is now the last admin; another admin cannot exist to demote them,
     # and self-demotion is blocked.
-    assert c2.put(f"/api/auth/users/{admin2_id}/role", json={"role": "normal"}).status_code == 400
+    assert (
+        c2.put(f"/api/auth/users/{admin2_id}/role", json={"role": "threat-viewer"}).status_code
+        == 400
+    )
 
 
 # ── role gate (normal = Viewer-only) ──────────────────────────────────────────
@@ -430,7 +436,7 @@ def test_normal_role_blocked_from_admin_endpoints(auth_env):
     c = _login("admin", "Adminpass1")
     c.post(
         "/api/auth/users",
-        json={"username": "viewer1", "password": "Viewerpass1", "role": "normal"},
+        json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
     )
     nc = _login("viewer1", "Viewerpass1")
     # Self endpoints allowed.
@@ -445,7 +451,7 @@ def test_normal_role_allowed_viewer_reads(auth_env):
     c = _login("admin", "Adminpass1")
     c.post(
         "/api/auth/users",
-        json={"username": "viewer1", "password": "Viewerpass1", "role": "normal"},
+        json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
     )
     nc = _login("viewer1", "Viewerpass1")
     # A whitelisted Viewer read must pass the gate (not 401/403).

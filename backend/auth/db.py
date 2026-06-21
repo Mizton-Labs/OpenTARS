@@ -9,9 +9,14 @@ users
   * id            — autoincrement PK
   * username      — unique, case-sensitive login name
   * password_hash — bcrypt hash (str); never the plaintext
-  * role          — 'admin' | 'normal' | 'sender'
-                    ('sender' is a listener-only machine account: it may POST to
-                    /api/ingest/listener and nothing else — prompts-054)
+  * role          — 'admin' | 'threat-researcher' | 'threat-viewer' | 'feed-sender'
+                    (issue-local-002: expanded role model for Threat Hunting module)
+                    - 'admin': full access including configuration and user management
+                    - 'threat-researcher': full Threat Hunting access + TI Viewer read
+                    - 'threat-viewer': read-only access to hunts, reports, and TI Viewer
+                    - 'feed-sender': push-only machine account, POST /api/ingest/listener only
+                    (migration from old roles: 'normal' -> 'threat-viewer',
+                     'sender' -> 'feed-sender'; handled in _migrate_users_schema)
   * enabled       — 1 active, 0 disabled (cannot log in)
   * created_at    — UTC ISO8601
   * must_change_password — 1 when the current password is a generated default
@@ -45,9 +50,12 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 2
+_USERS_SCHEMA_VERSION = 3
 
-VALID_ROLES = frozenset({"admin", "normal", "sender"})
+# Canonical role set (issue-local-002): expanded for the Threat Hunting module.
+# Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
+# 'feed-sender' respectively on first startup after this change.
+VALID_ROLES = frozenset({"admin", "threat-researcher", "threat-viewer", "feed-sender"})
 
 
 CREATE_USERS_TABLE = """
@@ -55,7 +63,7 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE,
     password_hash TEXT    NOT NULL,
-    role          TEXT    NOT NULL DEFAULT 'normal',
+    role          TEXT    NOT NULL DEFAULT 'threat-viewer',
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT    NOT NULL,
     must_change_password INTEGER NOT NULL DEFAULT 0
@@ -118,14 +126,34 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
     v1 -> v2 (prompts-047): add the ``must_change_password`` column. SQLite's
     ``ALTER TABLE ... ADD COLUMN`` is non-destructive and existing rows take the
     column DEFAULT (0), so legacy accounts are unaffected.
+
+    v2 -> v3 (issue-local-002): rename legacy roles.
+      'normal' -> 'threat-viewer'
+      'sender' -> 'feed-sender'
+    Uses UPDATE ... WHERE role = <old> so existing admins are untouched and the
+    migration is idempotent (re-running on an already-migrated DB is a no-op).
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
     await cur.close()
     if "must_change_password" not in cols:
-        logger.info("Migrating users schema: adding must_change_password column")
+        logger.info("Migrating users schema v1->v2: adding must_change_password column")
         await db.execute(
             "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
+        )
+    # v3 role rename — UPDATE is idempotent: if no rows have the old role name,
+    # rowcount is 0 and nothing changes.
+    cur = await db.execute("UPDATE users SET role = 'threat-viewer' WHERE role = 'normal'")
+    if cur.rowcount:
+        logger.info(
+            "Migrating users schema v2->v3: renamed %d 'normal' role(s) to 'threat-viewer'",
+            cur.rowcount,
+        )
+    cur = await db.execute("UPDATE users SET role = 'feed-sender' WHERE role = 'sender'")
+    if cur.rowcount:
+        logger.info(
+            "Migrating users schema v2->v3: renamed %d 'sender' role(s) to 'feed-sender'",
+            cur.rowcount,
         )
 
 
@@ -150,7 +178,7 @@ _USER_COLS = "id, username, password_hash, role, enabled, created_at, must_chang
 async def create_user(
     username: str,
     password_hash: str,
-    role: str = "normal",
+    role: str = "threat-viewer",
     *,
     must_change_password: bool = False,
 ) -> int:

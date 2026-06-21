@@ -43,7 +43,7 @@ async def test_listener_names_feed_after_user(monkeypatch):
     monkeypatch.setattr(ri, "load_sources", lambda: {"listener": {"enabled": True}})
 
     payload = [{"indicator": "1.2.3.4"}, {"indicator": "5.6.7.8"}]
-    request = _fake_request(user={"username": "sensor-01", "role": "sender"})
+    request = _fake_request(user={"username": "sensor-01", "role": "feed-sender"})
     result = await ri.listener_ingest(payload, BackgroundTasks(), request, background=False)
 
     assert result.inserted == 2

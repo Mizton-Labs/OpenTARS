@@ -13,7 +13,18 @@ export interface AuthContextValue {
   authEnabled: boolean
   user: AuthUser | null
   isAuthenticated: boolean
+  /** True when auth is disabled (open app) OR role === 'admin'. */
   isAdmin: boolean
+  /**
+   * True when auth is disabled OR role is 'admin' or 'threat-researcher'.
+   * Use to gate Threat Hunting write operations.
+   */
+  isResearcher: boolean
+  /**
+   * True when auth is disabled OR role is any authenticated role.
+   * Effectively the same as isAuthenticated for read-only TH access.
+   */
+  isViewer: boolean
   passwordPolicy: PasswordPolicy
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>

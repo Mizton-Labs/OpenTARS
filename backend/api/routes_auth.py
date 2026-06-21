@@ -80,7 +80,7 @@ class ChangePasswordBody(BaseModel):
 class CreateUserBody(BaseModel):
     username: str
     password: str
-    role: str = "normal"
+    role: str = "threat-viewer"
 
 
 class RoleBody(BaseModel):
@@ -241,7 +241,10 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
     _validate_username(body.username)
     _validate_password(body.password)
     if body.role not in db.VALID_ROLES:
-        raise HTTPException(status_code=400, detail="role must be 'admin', 'normal', or 'sender'")
+        raise HTTPException(
+            status_code=400,
+            detail="role must be 'admin', 'threat-researcher', 'threat-viewer', or 'feed-sender'",
+        )
     if await db.get_user_by_username(body.username) is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
     uid = await db.create_user(body.username, hash_password(body.password), role=body.role)
@@ -252,7 +255,10 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
 @router.put("/users/{user_id}/role")
 async def set_user_role(user_id: int, body: RoleBody, admin: dict = Depends(require_admin)) -> dict:
     if body.role not in db.VALID_ROLES:
-        raise HTTPException(status_code=400, detail="role must be 'admin', 'normal', or 'sender'")
+        raise HTTPException(
+            status_code=400,
+            detail="role must be 'admin', 'threat-researcher', 'threat-viewer', or 'feed-sender'",
+        )
     target = await _require_user(user_id)
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="Cannot change your own role")

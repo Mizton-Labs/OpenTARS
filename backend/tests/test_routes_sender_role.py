@@ -1,6 +1,6 @@
-"""Tests for the 'sender' role authorization (prompts-054).
+"""Tests for the 'feed-sender' role authorization (prompts-054).
 
-A 'sender' is a listener-only machine account: it may POST to
+A 'feed-sender' is a listener-only machine account: it may POST to
 /api/ingest/listener and reach the self-service paths, but nothing else.
 """
 
@@ -19,7 +19,7 @@ from backend.main import app
 
 @pytest.fixture
 def sender_env(tmp_path, monkeypatch):
-    """Enable auth, isolate users.db, seed an admin and a 'sender' account."""
+    """Enable auth, isolate users.db, seed an admin and a 'feed-sender' account."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
     monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
     service._failures.clear()
@@ -27,7 +27,7 @@ def sender_env(tmp_path, monkeypatch):
     async def _seed():
         await auth_db.init_users_db()
         await auth_db.create_user("admin", service.hash_password("Adminpass1"), role="admin")
-        await auth_db.create_user("bot", service.hash_password("Botpass123"), role="sender")
+        await auth_db.create_user("bot", service.hash_password("Botpass123"), role="feed-sender")
 
     asyncio.run(_seed())
     yield
@@ -45,17 +45,17 @@ def _login(username: str, password: str) -> TestClient:
 
 
 def test_sender_is_a_valid_role():
-    assert "sender" in auth_db.VALID_ROLES
+    assert "feed-sender" in auth_db.VALID_ROLES
 
 
 def test_admin_can_create_sender(sender_env):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "bot2", "password": "Bot2pass123", "role": "sender"},
+        json={"username": "bot2", "password": "Bot2pass123", "role": "feed-sender"},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["role"] == "sender"
+    assert r.json()["role"] == "feed-sender"
 
 
 def test_invalid_role_still_rejected(sender_env):
@@ -65,7 +65,7 @@ def test_invalid_role_still_rejected(sender_env):
         json={"username": "x", "password": "Xpasssss1", "role": "robot"},
     )
     assert r.status_code == 400
-    assert "sender" in r.json()["detail"]
+    assert "feed-sender" in r.json()["detail"]
 
 
 # ── sender authz at the middleware boundary ─────────────────────────────────────

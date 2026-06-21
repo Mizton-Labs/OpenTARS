@@ -20,6 +20,7 @@ import Toggle from '../components/Toggle'
 import ThreatIntelCatalog from '../components/ThreatIntelCatalog'
 import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
+import LLMProvidersTab from './configuration/LLMProvidersTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
 import { getAppBasePrefix } from '../utils/basePrefix'
@@ -38,22 +39,19 @@ type Tab =
   | 'remote-feed'
   | 'threat-intel'
   | 'global-fields'
-  | 'general-ti-settings'
+  | 'llm-providers'
   | 'user-management'
 
-const GENERAL_TABS: { id: Tab; label: string }[] = [
-  { id: 'application', label: 'Application' },
-]
-
-const THREAT_INTEL_BASE_TABS: { id: Tab; label: string }[] = [
-  { id: 'threat-intel',       label: 'Open Threat Feeds' },
-  { id: 'local-feed',         label: 'Local Feed' },
-  { id: 'remote-feed',        label: 'External Feeds' },
-  { id: 'rss',                label: 'External RSS' },
-  { id: 'api',                label: 'External API' },
-  { id: 'listener',           label: 'Listener Endpoint' },
-  { id: 'global-fields',      label: 'Global Field Defaults' },
-  { id: 'general-ti-settings', label: 'General TI Settings' },
+const BASE_TABS: { id: Tab; label: string }[] = [
+  { id: 'threat-intel',  label: 'Open Threat Feeds' },
+  { id: 'local-feed',    label: 'Local Feed' },
+  { id: 'remote-feed',   label: 'External Feeds' },
+  { id: 'rss',           label: 'External RSS' },
+  { id: 'api',           label: 'External API' },
+  { id: 'listener',      label: 'Listener Endpoint' },
+  { id: 'global-fields', label: 'Global Field Defaults' },
+  { id: 'llm-providers', label: 'LLM Providers' },
+  { id: 'application',   label: 'Application' },
 ]
 
 const GROUP_LABELS: Record<Group, string> = {
@@ -148,30 +146,16 @@ export default function Configuration() {
       )}
 
       <div className="max-w-3xl">
-        {/* General group */}
-        {activeGroup === 'general' && activeTab === 'application' && <ApplicationTab />}
-
-        {/* Threat Intel group */}
-        {activeGroup === 'threat-intel' && activeTab === 'application'        && <ApplicationTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'listener'           && <ListenerTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'api'                && <ApiTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'rss'                && <RssTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'local-feed'         && <LocalFeedTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'remote-feed'        && <RemoteFeedTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'threat-intel'       && <ThreatIntelCatalog />}
-        {activeGroup === 'threat-intel' && activeTab === 'global-fields'      && <GlobalFieldsTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'general-ti-settings' && <GeneralTISettingsTab />}
-        {activeGroup === 'threat-intel' && activeTab === 'user-management'    && <UserManagementTab />}
-
-        {/* Threat Hunting group — no settings yet */}
-        {activeGroup === 'threat-hunting' && (
-          <div className="card space-y-2">
-            <h3 className="text-sm font-semibold text-gray-200">Threat Hunting Settings</h3>
-            <p className="text-sm text-gray-500">
-              No settings available yet. Threat Hunting settings will appear here in a future release.
-            </p>
-          </div>
-        )}
+        {activeTab === 'application'   && <ApplicationTab />}
+        {activeTab === 'listener'      && <ListenerTab />}
+        {activeTab === 'api'           && <ApiTab />}
+        {activeTab === 'rss'           && <RssTab />}
+        {activeTab === 'local-feed'    && <LocalFeedTab />}
+        {activeTab === 'remote-feed'   && <RemoteFeedTab />}
+        {activeTab === 'threat-intel'  && <ThreatIntelCatalog />}
+        {activeTab === 'global-fields' && <GlobalFieldsTab />}
+        {activeTab === 'llm-providers' && <div className="max-w-3xl"><LLMProvidersTab /></div>}
+        {activeTab === 'user-management' && <UserManagementTab />}
       </div>
     </div>
   )

@@ -83,12 +83,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const role = user?.role ?? null
   const value: AuthContextValue = {
     loading,
     authEnabled,
     user,
     isAuthenticated: !authEnabled || user !== null,
-    isAdmin: !authEnabled || user?.role === 'admin',
+    isAdmin: !authEnabled || role === 'admin',
+    isResearcher: !authEnabled || role === 'admin' || role === 'threat-researcher',
+    isViewer: !authEnabled || user !== null,
     passwordPolicy,
     login,
     logout,

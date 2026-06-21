@@ -28,7 +28,7 @@ class _FakeClient:
 
 @pytest.fixture
 def query_env(tmp_path, monkeypatch):
-    """Auth enabled, isolated users.db, an admin + a normal + a sender account."""
+    """Auth enabled, isolated users.db, an admin + a threat-viewer + a feed-sender account."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
     monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
     service._failures.clear()
@@ -36,8 +36,10 @@ def query_env(tmp_path, monkeypatch):
     async def _seed():
         await auth_db.init_users_db()
         await auth_db.create_user("admin", service.hash_password("Adminpass1"), role="admin")
-        await auth_db.create_user("viewer", service.hash_password("Viewerpass1"), role="normal")
-        await auth_db.create_user("bot", service.hash_password("Botpass123"), role="sender")
+        await auth_db.create_user(
+            "viewer", service.hash_password("Viewerpass1"), role="threat-viewer"
+        )
+        await auth_db.create_user("bot", service.hash_password("Botpass123"), role="feed-sender")
 
     asyncio.run(_seed())
     yield

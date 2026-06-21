@@ -92,7 +92,7 @@ async def test_count_admins_excludes_disabled_and_id():
     await init_users_db()
     a1 = await create_user("admin1", "h", role="admin")
     await create_user("admin2", "h", role="admin")
-    await create_user("normal", "h", role="normal")
+    await create_user("normal", "h", role="threat-viewer")
     assert await count_admins() == 2
     assert await count_admins(exclude_id=a1) == 1
     await set_enabled(a1, False)
@@ -262,7 +262,7 @@ async def test_migration_adds_must_change_password_to_legacy_db(tmp_path, monkey
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  username TEXT NOT NULL UNIQUE,"
             "  password_hash TEXT NOT NULL,"
-            "  role TEXT NOT NULL DEFAULT 'normal',"
+            "  role TEXT NOT NULL DEFAULT 'threat-viewer',"
             "  enabled INTEGER NOT NULL DEFAULT 1,"
             "  created_at TEXT NOT NULL)"
         )
@@ -283,5 +283,5 @@ async def test_migration_adds_must_change_password_to_legacy_db(tmp_path, monkey
 
     async with aiosqlite.connect(db_path) as conn:
         cur = await conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert (await cur.fetchone())[0] == 2  # version bumped
+        assert (await cur.fetchone())[0] == 3  # version bumped through v2 and v3
         await cur.close()

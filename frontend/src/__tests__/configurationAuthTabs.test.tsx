@@ -43,6 +43,8 @@ function mockAuth(user: AuthUser) {
     user,
     isAuthenticated: true,
     isAdmin: user.role === 'admin',
+    isResearcher: user.role === 'admin' || user.role === 'threat-researcher',
+    isViewer: true,
     passwordPolicy: { min_length: 8, required_classes: 3, max_bytes: 72 },
     login: vi.fn(),
     logout: vi.fn(),
@@ -63,7 +65,7 @@ beforeEach(() => {
 describe('UserManagementTab (prompts-045)', () => {
   const users: AuthUser[] = [
     selfAdmin,
-    { id: 2, username: 'analyst', role: 'normal', enabled: true },
+    { id: 2, username: 'analyst', role: 'threat-viewer', enabled: true },
   ]
 
   it('lists users and marks the current user', async () => {
@@ -118,7 +120,7 @@ describe('UserManagementTab (prompts-045)', () => {
   it('creates a new user (with confirm + policy, prompts-046)', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
     vi.mocked(api.auth.createUser).mockResolvedValue({
-      id: 3, username: 'newbie', role: 'normal', enabled: true,
+      id: 3, username: 'newbie', role: 'threat-viewer', enabled: true,
     })
     renderWithClient(<UserManagementTab />)
     await screen.findByRole('button', { name: /add user/i })
@@ -131,27 +133,27 @@ describe('UserManagementTab (prompts-045)', () => {
 
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
-        username: 'newbie', password: 'Secret123', role: 'normal',
+        username: 'newbie', password: 'Secret123', role: 'threat-viewer',
       })
     })
   })
 
-  it('creates a sender account via the role dropdown (prompts-054)', async () => {
+  it('creates a feed-sender account via the role dropdown (prompts-054)', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
     vi.mocked(api.auth.createUser).mockResolvedValue({
-      id: 4, username: 'bot', role: 'sender', enabled: true,
+      id: 4, username: 'bot', role: 'feed-sender', enabled: true,
     })
     renderWithClient(<UserManagementTab />)
     fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'bot' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Secret123' } })
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Secret123' } })
-    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'sender' } })
+    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'feed-sender' } })
     fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
-        username: 'bot', password: 'Secret123', role: 'sender',
+        username: 'bot', password: 'Secret123', role: 'feed-sender',
       })
     })
   })

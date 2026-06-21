@@ -331,7 +331,9 @@ export interface EntriesParams {
 
 // ── Auth (prompts-045) ───────────────────────────────────────────────────────
 
-export type UserRole = 'admin' | 'normal' | 'sender'
+// issue-local-002: expanded role model for Threat Hunting module.
+// 'normal' → 'threat-viewer', 'sender' → 'feed-sender'
+export type UserRole = 'admin' | 'threat-researcher' | 'threat-viewer' | 'feed-sender'
 
 export interface AuthUser {
   id: number
