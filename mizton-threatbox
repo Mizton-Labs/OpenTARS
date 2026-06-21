@@ -219,6 +219,22 @@ cmd_start() {
     # Setup backend venv
     setup_venv
 
+    # ── Playwright Chromium (idempotent) ──────────────────────────────────────
+    # Installs headless Chromium for the URL-fetch Playwright fallback (issue-006-A).
+    # playwright install chromium is idempotent and fast when already present (~0.1 s).
+    # --with-deps installs system-level libraries required by Chromium on first install.
+    # Wrapped in a check: skip entirely when playwright Python package is not installed
+    # (e.g. minimal/CI environments that stripped it from requirements.txt).
+    if "${VENV_DIR}/bin/python" -c "import playwright" &>/dev/null 2>&1; then
+        log "Ensuring Playwright Chromium browser is installed..."
+        if "${VENV_DIR}/bin/python" -m playwright install chromium --with-deps \
+                > /dev/null 2>&1; then
+            log "Playwright Chromium: ready."
+        else
+            log "WARNING: Playwright Chromium install failed — JS-page fallback disabled."
+        fi
+    fi
+
     # Build the env-var override array for uvicorn. Empty when the flag was
     # not passed, so the backend reads application.yaml as usual.
     local env_overrides=()

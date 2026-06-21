@@ -15,6 +15,11 @@ pymupdf>=1.24.0          # PDF text extraction (PyMuPDF / fitz)
 python-docx>=1.1.0       # DOCX extraction
 trafilatura>=1.12.0      # URL article/content extraction
 
+# Threat Hunting — URL fetch robustness (issue-local-006 Part A)
+tenacity>=8.2.0          # Retry with exponential backoff for transient fetch errors
+readability-lxml>=0.8.1  # HTML content extraction fallback (after trafilatura)
+playwright>=1.44.0       # Headless Chromium fallback for JS-heavy pages
+
 # Threat Hunting — report generation (issue-local-004)
 reportlab>=4.0           # PDF report generation (pure Python, no OS dependencies)
 
