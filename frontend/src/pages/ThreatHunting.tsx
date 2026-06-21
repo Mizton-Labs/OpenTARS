@@ -1,9 +1,13 @@
 /**
  * ThreatHunting — hunt package list page.
  *
- * issue-006-D: process-arrow card with horizontal phase button-cards showing
- * per-step status (green=done, red=error, pulse=active, gray=pending) and
- * total elapsed time. Gracefully falls back to a simple card when no run data.
+ * Phase/arrow card improvements (issue-008 review):
+ *   1. Live refresh — polls every 4s while any package is running; stops when idle.
+ *   2. Bigger cards — text-[11px], px-2.5 py-1.5, min-w-[68px].
+ *   3. Visible status colors — stronger contrast: bright green/red/blue/amber/gray
+ *      with a per-card status glyph (✓ · ✕ · ⟳ · ⊘ · ⋯) for color-independent scanning.
+ *   4. Fixed active-step detection — keep last entry per step (handles parallel fan-out
+ *      and duplicate step names); derive running step correctly.
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -14,7 +18,6 @@ import { useAuth } from '../auth/useAuth'
 import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
 
-// issue-006-D: completed mapped to green (was brand)
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
   planning: 'bg-blue-900/40 text-blue-400',
@@ -24,7 +27,6 @@ const STATUS_COLORS: Record<string, string> = {
   archived: 'bg-gray-800/40 text-gray-600',
 }
 
-// Abbreviated step labels for the process-arrow cards
 const STEP_SHORT_LABELS: Record<string, string> = {
   intake_classifier: 'Intake',
   threat_context_builder: 'Context',
@@ -35,7 +37,6 @@ const STEP_SHORT_LABELS: Record<string, string> = {
   query_drafting_agent: 'Queries',
 }
 
-// Canonical step order (drives the horizontal arrows even if phases is shorter)
 const STEP_ORDER = [
   'intake_classifier',
   'threat_context_builder',
@@ -46,6 +47,9 @@ const STEP_ORDER = [
   'query_drafting_agent',
 ]
 
+// Terminal statuses — a step with one of these is finished (not in-progress).
+const TERMINAL_STATUSES = new Set(['ok', 'partial', 'error', 'skipped'])
+
 interface PhaseCardProps {
   phase: THPhaseEntry | undefined
   stepId: string
@@ -55,67 +59,103 @@ interface PhaseCardProps {
 
 function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
   const isActive = currentStep === stepId
-  const isDone = phase?.status === 'ok' || phase?.status === 'partial'
+  const isPartial = phase?.status === 'partial'
+  const isDone = phase?.status === 'ok' || isPartial
   const isError = phase?.status === 'error'
   const isSkipped = phase?.status === 'skipped'
-  const isPending = !phase  // no step_log entry yet → pending/not-started
+  const isPending = !phase  // no step_log entry yet
 
-  // issue-008-2A: inline tools + counts always visible on done steps (not click-to-expand)
   const hasTools = (phase?.tools_used?.length ?? 0) > 0
   const hasCounts = phase?.item_count != null || phase?.ioc_count != null
 
+  // Status glyph — color-independent at-a-glance indicator
+  const glyph = isActive
+    ? '⟳'
+    : isDone
+      ? '✓'
+      : isError
+        ? '✕'
+        : isSkipped
+          ? '⊘'
+          : '⋯'
+
   return (
-    <div className="flex items-start gap-1">
+    <div className="flex items-start gap-1.5">
       <div className="flex flex-col">
+        {/* ── Card body ── */}
         <div
           className={clsx(
-            'px-2 py-1 rounded text-[9px] font-medium border transition-colors min-w-[52px] text-center',
+            // fix: bigger — text-[11px], px-2.5 py-1.5, min-w-[68px]
+            'px-2.5 py-1.5 rounded text-[11px] font-semibold border transition-colors min-w-[68px] text-center select-none',
             isActive
-              ? 'border-blue-500 bg-blue-900/20 text-blue-300 animate-pulse'
+              ? 'border-blue-400 bg-blue-900/50 text-blue-200 animate-pulse shadow-sm shadow-blue-900'
               : isDone
-                ? 'border-green-700/50 bg-green-900/20 text-green-400'
+                ? isPartial
+                  ? 'border-amber-500 bg-amber-900/40 text-amber-200'
+                  : 'border-green-500 bg-green-900/40 text-green-200'
                 : isError
-                  ? 'border-red-700/50 bg-red-900/20 text-red-400'
+                  ? 'border-red-500 bg-red-900/40 text-red-200'
                   : isSkipped
-                    ? 'border-gray-700/30 bg-gray-900/10 text-gray-600'
+                    // fix: was text-gray-800 (invisible) → text-gray-500
+                    ? 'border-gray-600/50 bg-gray-800/30 text-gray-500 opacity-70'
                     : isPending
-                      ? 'border-gray-800/30 bg-transparent text-gray-800'
-                      : 'border-gray-800/40 bg-transparent text-gray-700',
+                      // fix: was text-gray-800 (invisible) → text-gray-500, dashed border
+                      ? 'border-gray-600/40 border-dashed bg-transparent text-gray-500'
+                      : 'border-gray-700/40 bg-transparent text-gray-500',
           )}
           title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
         >
-          <span>{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
-          {phase?.elapsed_s != null && (
-            <span className="block text-[8px] opacity-60">{phase.elapsed_s}s</span>
+          {/* Glyph + label on one line */}
+          <div className="flex items-center justify-center gap-1">
+            <span className={clsx(
+              'text-[10px] leading-none',
+              isActive ? 'text-blue-300' :
+              isDone ? isPartial ? 'text-amber-300' : 'text-green-400' :
+              isError ? 'text-red-400' :
+              'text-gray-600',
+            )}>
+              {glyph}
+            </span>
+            <span className="leading-none">{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
+          </div>
+          {/* Elapsed time */}
+          {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
+            <span className="block text-[9px] opacity-70 mt-0.5 font-normal">
+              {phase.elapsed_s}s
+            </span>
           )}
         </div>
 
-        {/* issue-008-2A: inline detail always visible when done (not click-to-expand) */}
+        {/* ── Inline detail (done steps only) ── */}
         {isDone && (hasCounts || hasTools) && (
-          <div className="mt-0.5 space-y-0.5 max-w-[80px]" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="mt-1 space-y-0.5 max-w-[80px]"
+            onClick={(e) => e.stopPropagation()}
+          >
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
-                  <span className="text-[7px] font-mono text-brand-400 leading-none">
-                    {phase!.item_count}items
+                  <span className="text-[9px] font-mono text-brand-400 leading-none">
+                    {phase!.item_count} items
                   </span>
                 )}
                 {phase!.ioc_count != null && (
-                  <span className="text-[7px] font-mono text-blue-400 leading-none">
-                    {phase!.ioc_count}ioc{phase!.noisy_count ? `(${phase!.noisy_count}⚠)` : ''}
+                  <span className="text-[9px] font-mono text-blue-400 leading-none">
+                    {phase!.ioc_count} IOC{phase!.noisy_count ? ` (${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
               </div>
             )}
             {hasTools && (
               <div className="flex flex-wrap gap-0.5">
-                {phase!.tools_used!.map((t) => (
+                {/* Deduplicate tool names for display */}
+                {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[7px] font-mono bg-purple-900/30 text-purple-400 border border-purple-800/20 rounded px-0.5 leading-none"
+                    className="text-[9px] font-mono bg-purple-900/40 text-purple-300 border border-purple-700/40 rounded px-1 leading-none"
                     title={t}
                   >
-                    {t.slice(0, 8)}
+                    {t.replace(/_/g, ' ')}
                   </span>
                 ))}
               </div>
@@ -123,8 +163,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
           </div>
         )}
       </div>
+
+      {/* fix: brighter connector arrow */}
       {!isLast && (
-        <ChevronRight className="w-2.5 h-2.5 text-gray-800 shrink-0 mt-2" />
+        <ChevronRight className="w-3 h-3 text-gray-600 shrink-0 mt-2.5" />
       )}
     </div>
   )
@@ -135,17 +177,26 @@ interface ProcessArrowProps {
 }
 
 function ProcessArrow({ pkg }: ProcessArrowProps) {
-  // issue-008-2A: always render the 7-step rail, even for draft/never-run packages
+  // fix: keep the LAST entry per step so a re-run ok overrides an earlier error,
+  // and parallel steps (threat_context_builder / deep_retrohunt_planner) both appear.
   const phaseByStep: Record<string, THPhaseEntry> = {}
   for (const p of pkg.phases ?? []) {
+    // Always overwrite — last entry wins (handles retried / duplicate step names)
     phaseByStep[p.step] = p
   }
 
-  // Derive current step (first STEP_ORDER entry with no log yet)
   const isRunning = pkg.generation_status === 'running'
-  const runningStep = isRunning ? (STEP_ORDER.find((s) => !phaseByStep[s]) ?? null) : null
 
-  // issue-008-2A: live elapsed timer for in-progress runs
+  // fix: derive the active step as the first STEP_ORDER step that has no
+  // terminal status yet (ok/partial/error/skipped). Falls back to null.
+  const runningStep: string | null = isRunning
+    ? (STEP_ORDER.find((s) => {
+        const p = phaseByStep[s]
+        return !p || !TERMINAL_STATUSES.has(p.status)
+      }) ?? null)
+    : null
+
+  // Live elapsed timer while running
   const [liveElapsed, setLiveElapsed] = useState<number | null>(null)
   useEffect(() => {
     if (!isRunning || !pkg.run_created_at) {
@@ -163,36 +214,40 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
 
   return (
     <div className="mt-2">
-      {/* Status line */}
+      {/* Status + timer row */}
       {pkg.generation_status && (
-        <div className="flex items-center gap-1 mb-1">
+        <div className="flex items-center gap-1.5 mb-1.5">
           <span className={clsx(
-            'text-[8px] font-mono px-1 py-0.5 rounded',
-            pkg.generation_status === 'completed' ? 'bg-green-900/20 text-green-500' :
-            pkg.generation_status === 'running' ? 'bg-blue-900/20 text-blue-400' :
-            pkg.generation_status === 'awaiting_approval' ? 'bg-amber-900/20 text-amber-400' :
-            pkg.generation_status === 'error' ? 'bg-red-900/20 text-red-400' :
-            'bg-gray-800/30 text-gray-600',
+            'text-[9px] font-mono px-1.5 py-0.5 rounded font-semibold',
+            pkg.generation_status === 'completed'
+              ? 'bg-green-900/30 text-green-400 border border-green-700/40'
+              : pkg.generation_status === 'running'
+                ? 'bg-blue-900/30 text-blue-300 border border-blue-700/40'
+                : pkg.generation_status === 'awaiting_approval'
+                  ? 'bg-amber-900/30 text-amber-300 border border-amber-700/40'
+                  : pkg.generation_status === 'error'
+                    ? 'bg-red-900/30 text-red-400 border border-red-700/40'
+                    : 'bg-gray-800/40 text-gray-500 border border-gray-700/30',
           )}>
             {pkg.generation_status.replace(/_/g, ' ')}
           </span>
-          {/* Live timer (running) or total (finished) */}
+
           {isRunning && liveElapsed != null ? (
-            <span className="flex items-center gap-0.5 text-[8px] text-blue-400 font-mono">
-              <Timer className="w-2 h-2" />
+            <span className="flex items-center gap-0.5 text-[9px] text-blue-300 font-mono">
+              <Timer className="w-2.5 h-2.5" />
               {liveElapsed}s
             </span>
           ) : pkg.total_elapsed_s != null && !isRunning ? (
-            <span className="flex items-center gap-0.5 text-[8px] text-gray-600 font-mono">
-              <Timer className="w-2 h-2" />
-              {pkg.total_elapsed_s}s
+            <span className="flex items-center gap-0.5 text-[9px] text-gray-500 font-mono">
+              <Timer className="w-2.5 h-2.5" />
+              {pkg.total_elapsed_s}s total
             </span>
           ) : null}
         </div>
       )}
 
-      {/* Phase rail — always rendered (all-pending when no run yet) */}
-      <div className="flex items-start flex-wrap gap-0.5">
+      {/* Phase rail — always rendered */}
+      <div className="flex items-start flex-wrap gap-1">
         {STEP_ORDER.map((stepId, i) => (
           <PhaseCard
             key={stepId}
@@ -204,9 +259,8 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
         ))}
       </div>
 
-      {/* Never-run hint */}
       {!hasAnyData && (
-        <p className="text-[8px] text-gray-700 mt-1">No analysis run yet</p>
+        <p className="text-[9px] text-gray-600 mt-1">No analysis run yet</p>
       )}
     </div>
   )
@@ -221,6 +275,14 @@ export default function ThreatHunting() {
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
     queryFn: api.threatHunting.listPackages,
+    // fix: poll every 4s while any package is running; stop when all idle.
+    refetchInterval: (query) => {
+      const data = query.state.data as THuntPackage[] | undefined
+      const anyRunning = (data ?? []).some(
+        (p) => p.generation_status === 'running',
+      )
+      return anyRunning ? 4000 : false
+    },
   })
 
   const archiveMut = useMutation({
@@ -276,12 +338,11 @@ export default function ThreatHunting() {
             >
               <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-medium text-gray-100 truncate">{pkg.name}</p>
                     <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
                       {pkg.status}
                     </span>
-                    {/* generation_status badge (only when different from package status) */}
                     {pkg.generation_status && pkg.generation_status !== 'completed' && (
                       <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
                         {pkg.generation_status.replace(/_/g, ' ')}
@@ -295,7 +356,6 @@ export default function ThreatHunting() {
                     {pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''} ·{' '}
                     {new Date(pkg.created_at).toLocaleDateString()}
                   </p>
-                  {/* issue-006-D: process-arrow (only when run data exists) */}
                   <ProcessArrow pkg={pkg} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
