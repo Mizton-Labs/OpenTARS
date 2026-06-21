@@ -1,8 +1,9 @@
-"""Pydantic models for the Threat Hunting API (Phase 1 skeleton)."""
+"""Pydantic models for the Threat Hunting API (Phase 1 + 2)."""
 
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -36,3 +37,60 @@ class HuntPackageOut(BaseModel):
     created_at: str
     updated_at: str
     evidence_count: int = 0
+
+
+# ── Evidence ──────────────────────────────────────────────────────────────────
+
+
+class EvidenceItemOut(BaseModel):
+    id: str
+    hunt_package_id: str
+    item_type: str
+    label: str
+    source_ref: str
+    content_hash: str
+    mime_type: str
+    fetch_url: str
+    final_url: str
+    extracted_text: str
+    parser_used: str
+    parser_version: str
+    parse_status: str
+    parse_warnings: list[str]
+    fetch_metadata: dict[str, Any]
+    created_at: str
+    provenance_notes: str
+
+    model_config = {"from_attributes": True}
+
+
+class AddUrlBody(BaseModel):
+    url: str
+    label: str = ""
+
+
+class AddManualTextBody(BaseModel):
+    text: str
+    label: str = ""
+    source_ref: str = ""
+
+
+class AddWatcherBody(BaseModel):
+    watcher_id: str
+    label: str = ""
+    max_events: int = 500
+
+
+# ── IOCs ──────────────────────────────────────────────────────────────────────
+
+
+class ExtractedIOCOut(BaseModel):
+    id: str
+    evidence_item_id: str
+    hunt_package_id: str
+    ioc: str
+    ioc_type: str
+    ioc_description: str
+    noise_score: float
+    flagged_noisy: bool
+    created_at: str

@@ -1,0 +1,213 @@
+"""Artifact extraction dispatcher for Threat Hunting evidence items.
+
+Selects the appropriate extractor based on MIME type / file extension and
+the configured parser_mode (auto | pymupdf | marker).
+
+Marker (marker-pdf) is listed as a future option — not yet installed. When
+selected and unavailable, the dispatcher falls back to PyMuPDF with a warning.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import mimetypes
+
+logger = logging.getLogger(__name__)
+
+# Parser mode constants
+PARSER_AUTO = "auto"
+PARSER_PYMUPDF = "pymupdf"
+PARSER_MARKER = "marker"
+
+# File size limits for in-process extraction (50 MiB)
+_MAX_FILE_BYTES = 50 * 1024 * 1024
+
+# MIME type routing
+_PDF_TYPES = frozenset({"application/pdf", "application/x-pdf"})
+_DOCX_TYPES = frozenset(
+    {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }
+)
+_TEXT_TYPES = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "text/x-markdown",
+        "text/html",
+        "text/xml",
+        "application/xml",
+        "application/json",
+        "application/ld+json",
+        "application/ndjson",
+        "text/csv",
+        "text/tab-separated-values",
+    }
+)
+_CSV_TYPES = frozenset({"text/csv", "text/tab-separated-values"})
+_JSON_TYPES = frozenset({"application/json", "application/ld+json", "application/ndjson"})
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _guess_mime(filename: str) -> str:
+    mime, _ = mimetypes.guess_type(filename)
+    return mime or "application/octet-stream"
+
+
+def extract_file(
+    data: bytes,
+    filename: str,
+    mime_type: str = "",
+    parser_mode: str = PARSER_AUTO,
+) -> dict:
+    """Extract text from file bytes.
+
+    Returns a dict with:
+        extracted_text  str
+        parser_used     str
+        parser_version  str
+        parse_status    'ok' | 'partial' | 'error'
+        parse_warnings  list[str]
+        content_hash    str (sha256 hex)
+        mime_type       str (effective MIME)
+    """
+    warnings: list[str] = []
+
+    if len(data) > _MAX_FILE_BYTES:
+        warnings.append(
+            f"File truncated to {_MAX_FILE_BYTES // (1024 * 1024)} MiB limit "
+            f"(original size: {len(data) // (1024 * 1024)} MiB)"
+        )
+        data = data[:_MAX_FILE_BYTES]
+
+    content_hash = _sha256(data)
+    effective_mime = mime_type or _guess_mime(filename)
+
+    # Decompress if gzip or zip
+    if filename.endswith(".gz") or effective_mime == "application/gzip":
+        import gzip
+
+        try:
+            data = gzip.decompress(data)
+            effective_mime = (
+                _guess_mime(filename[:-3]) if filename.endswith(".gz") else "text/plain"
+            )
+            warnings.append("Decompressed gzip layer")
+        except Exception as exc:
+            warnings.append(f"gzip decompression failed: {exc}")
+
+    elif filename.endswith(".zip") or effective_mime == "application/zip":
+        import io
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                members = [m for m in zf.namelist() if not m.endswith("/")]
+                if len(members) == 1:
+                    data = zf.read(members[0])
+                    effective_mime = _guess_mime(members[0])
+                    warnings.append(f"Decompressed zip: {members[0]}")
+                else:
+                    warnings.append(
+                        f"ZIP contains {len(members)} members; reading first member only"
+                    )
+                    data = zf.read(members[0])
+                    effective_mime = _guess_mime(members[0])
+        except Exception as exc:
+            warnings.append(f"ZIP decompression failed: {exc}")
+
+    # Route to extractor
+    extracted_text = ""
+    parser_used = "none"
+    parser_version = ""
+    parse_status = "ok"
+
+    try:
+        if effective_mime in _PDF_TYPES or filename.lower().endswith(".pdf"):
+            extracted_text, parser_used, parser_version, warnings = _extract_pdf(
+                data, parser_mode, warnings
+            )
+
+        elif effective_mime in _DOCX_TYPES or filename.lower().endswith((".docx", ".doc")):
+            extracted_text, parser_used, parser_version, warnings = _extract_docx(data, warnings)
+
+        elif effective_mime in _CSV_TYPES or filename.lower().endswith((".csv", ".tsv")):
+            from backend.threat_hunting.extractors.text_extractor import extract_csv_text
+
+            extracted_text, w = extract_csv_text(data)
+            warnings.extend(w)
+            parser_used = "csv"
+            parser_version = "stdlib"
+
+        elif effective_mime in _JSON_TYPES or filename.lower().endswith((".json", ".ndjson")):
+            from backend.threat_hunting.extractors.text_extractor import extract_json_text
+
+            extracted_text, w = extract_json_text(data)
+            warnings.extend(w)
+            parser_used = "json"
+            parser_version = "stdlib"
+
+        else:
+            from backend.threat_hunting.extractors.text_extractor import extract_text
+
+            extracted_text, w = extract_text(data, effective_mime)
+            warnings.extend(w)
+            parser_used = "text"
+            parser_version = "stdlib"
+
+        if not extracted_text.strip():
+            parse_status = "partial"
+            warnings.append("Extraction produced no text content")
+
+    except Exception as exc:
+        parse_status = "error"
+        warnings.append(f"Extraction failed: {exc}")
+        logger.exception("Extraction error for %r (mime=%r)", filename, effective_mime)
+
+    return {
+        "extracted_text": extracted_text,
+        "parser_used": parser_used,
+        "parser_version": parser_version,
+        "parse_status": parse_status,
+        "parse_warnings": warnings,
+        "content_hash": content_hash,
+        "mime_type": effective_mime,
+    }
+
+
+def _extract_pdf(
+    data: bytes, parser_mode: str, warnings: list[str]
+) -> tuple[str, str, str, list[str]]:
+    """Route PDF extraction to PyMuPDF or Marker based on parser_mode."""
+    if parser_mode == PARSER_MARKER:
+        # Marker not yet installed — fall back to PyMuPDF with warning
+        warnings.append("Marker parser selected but not installed; falling back to PyMuPDF")
+
+    # Default / auto / pymupdf / fallback from marker all use PyMuPDF
+    from backend.threat_hunting.extractors.pdf_extractor import extract_pdf, is_available
+
+    if not is_available():
+        warnings.append("PyMuPDF not available; returning raw bytes as text")
+        return data.decode("utf-8", errors="replace"), "none", "", warnings
+
+    text, version, parse_warnings = extract_pdf(data)
+    warnings.extend(parse_warnings)
+    return text, "pymupdf", version, warnings
+
+
+def _extract_docx(data: bytes, warnings: list[str]) -> tuple[str, str, str, list[str]]:
+    """Extract DOCX content using python-docx."""
+    from backend.threat_hunting.extractors.docx_extractor import extract_docx, is_available
+
+    if not is_available():
+        warnings.append("python-docx not available; returning empty text")
+        return "", "none", "", warnings
+
+    text, version, parse_warnings = extract_docx(data)
+    warnings.extend(parse_warnings)
+    return text, "python-docx", version, warnings

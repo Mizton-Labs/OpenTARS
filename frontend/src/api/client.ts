@@ -899,6 +899,75 @@ export const api = {
       return request<{ fields: string[] }>(`/watchers/meta/fields?${q.toString()}`)
     },
   },
+
+  // Threat Hunting (issue-local-002, Phase 2)
+  threatHunting: {
+    // Hunt Packages
+    listPackages: () =>
+      request<THuntPackage[]>('/threat-hunting/packages'),
+    createPackage: (body: { name: string; description?: string }) =>
+      request<THuntPackage>('/threat-hunting/packages', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getPackage: (id: string) =>
+      request<THuntPackage>(`/threat-hunting/packages/${encodeURIComponent(id)}`),
+    updatePackage: (id: string, body: { name?: string; description?: string; status?: string }) =>
+      request<THuntPackage>(`/threat-hunting/packages/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    archivePackage: (id: string) =>
+      request<void>(`/threat-hunting/packages/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+
+    // Evidence — file upload (multipart)
+    addEvidenceFile: async (pkgId: string, file: File, parserMode = 'auto'): Promise<THEvidenceItem> => {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(
+        `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/file?parser_mode=${parserMode}`,
+        { method: 'POST', body: form, credentials: 'include' },
+      )
+      if (!res.ok) {
+        if (res.status === 401) _notifyUnauthorized()
+        throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
+      }
+      return res.json()
+    },
+    // Evidence — URL
+    addEvidenceUrl: (pkgId: string, body: { url: string; label?: string }) =>
+      request<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/url`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    // Evidence — manual text
+    addEvidenceText: (pkgId: string, body: { text: string; label?: string; source_ref?: string }) =>
+      request<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/text`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    // Evidence — watcher import
+    addEvidenceWatcher: (pkgId: string, body: { watcher_id: string; label?: string; max_events?: number }) =>
+      request<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/watcher`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    listEvidence: (pkgId: string) =>
+      request<THEvidenceItem[]>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence`,
+      ),
+    deleteEvidence: (pkgId: string, itemId: string) =>
+      request<void>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
+        { method: 'DELETE' },
+      ),
+    listIocs: (pkgId: string) =>
+      request<THExtractedIOC[]>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs`,
+      ),
+  },
 }
 
 // ── Smart mappings types ───────────────────────────────────────────────────
@@ -1337,4 +1406,57 @@ export interface WatcherTriggerResult {
   evaluated: number
   triggered: number
   delivery: { delivered: number; failed: number }
+}
+
+// ── Threat Hunting (issue-local-002) ──────────────────────────────────────
+
+export type THuntPackageStatus =
+  | 'draft'
+  | 'planning'
+  | 'approved'
+  | 'executing'
+  | 'completed'
+  | 'archived'
+
+export interface THuntPackage {
+  id: string
+  name: string
+  description: string
+  status: THuntPackageStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  evidence_count: number
+}
+
+export interface THEvidenceItem {
+  id: string
+  hunt_package_id: string
+  item_type: 'file' | 'url' | 'manual_text' | 'watcher_feed'
+  label: string
+  source_ref: string
+  content_hash: string
+  mime_type: string
+  fetch_url: string
+  final_url: string
+  extracted_text: string
+  parser_used: string
+  parser_version: string
+  parse_status: 'ok' | 'partial' | 'error'
+  parse_warnings: string[]
+  fetch_metadata: Record<string, unknown>
+  created_at: string
+  provenance_notes: string
+}
+
+export interface THExtractedIOC {
+  id: string
+  evidence_item_id: string
+  hunt_package_id: string
+  ioc: string
+  ioc_type: string
+  ioc_description: string
+  noise_score: number
+  flagged_noisy: boolean
+  created_at: string
 }

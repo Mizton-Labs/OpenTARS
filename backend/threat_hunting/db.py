@@ -244,3 +244,166 @@ async def update_hunt_package(
         )
         await db.commit()
     return await get_hunt_package(pkg_id)
+
+
+# ── Evidence Item CRUD ────────────────────────────────────────────────────────
+
+
+async def add_evidence_item(
+    hunt_package_id: str,
+    *,
+    item_type: str,
+    label: str = "",
+    source_ref: str = "",
+    content_hash: str = "",
+    mime_type: str = "",
+    fetch_url: str = "",
+    final_url: str = "",
+    extracted_text: str = "",
+    parser_used: str = "",
+    parser_version: str = "",
+    parse_status: str = "ok",
+    parse_warnings: list[str] | None = None,
+    fetch_metadata: dict | None = None,
+    watcher_snapshot: dict | None = None,
+    provenance_notes: str = "",
+    blob_data: bytes | None = None,
+) -> dict[str, Any]:
+    import json
+
+    item_id = _new_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO evidence_items
+              (id, hunt_package_id, item_type, label, source_ref, content_hash,
+               mime_type, fetch_url, final_url, extracted_text, parser_used,
+               parser_version, parse_status, parse_warnings, fetch_metadata,
+               watcher_snapshot, created_at, provenance_notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                item_id,
+                hunt_package_id,
+                item_type,
+                label,
+                source_ref,
+                content_hash,
+                mime_type,
+                fetch_url,
+                final_url,
+                extracted_text,
+                parser_used,
+                parser_version,
+                parse_status,
+                json.dumps(parse_warnings or []),
+                json.dumps(fetch_metadata or {}),
+                json.dumps(watcher_snapshot or {}),
+                now,
+                provenance_notes,
+            ),
+        )
+        if blob_data is not None:
+            await db.execute(
+                "INSERT INTO evidence_blobs (evidence_item_id, data) VALUES (?, ?)",
+                (item_id, blob_data),
+            )
+        await db.commit()
+    return await get_evidence_item(item_id)  # type: ignore[return-value]
+
+
+async def get_evidence_item(item_id: str) -> dict[str, Any] | None:
+    import json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM evidence_items WHERE id = ?", (item_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    d = dict(row)
+    for field in ("parse_warnings", "fetch_metadata", "watcher_snapshot"):
+        try:
+            d[field] = json.loads(d.get(field) or "null") or (
+                [] if field == "parse_warnings" else {}
+            )
+        except Exception:
+            d[field] = [] if field == "parse_warnings" else {}
+    return d
+
+
+async def list_evidence_items(hunt_package_id: str) -> list[dict[str, Any]]:
+    import json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM evidence_items WHERE hunt_package_id = ? ORDER BY created_at",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    result = []
+    for row in rows:
+        d = dict(row)
+        for field in ("parse_warnings", "fetch_metadata", "watcher_snapshot"):
+            try:
+                d[field] = json.loads(d.get(field) or "null") or (
+                    [] if field == "parse_warnings" else {}
+                )
+            except Exception:
+                d[field] = [] if field == "parse_warnings" else {}
+        result.append(d)
+    return result
+
+
+async def delete_evidence_item(item_id: str) -> bool:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute("DELETE FROM evidence_blobs WHERE evidence_item_id = ?", (item_id,))
+        cur = await db.execute("DELETE FROM evidence_items WHERE id = ?", (item_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def add_extracted_iocs(
+    hunt_package_id: str,
+    evidence_item_id: str,
+    iocs: list[dict[str, Any]],
+) -> None:
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        for ioc in iocs:
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO extracted_iocs
+                  (id, evidence_item_id, hunt_package_id, ioc, ioc_type,
+                   ioc_description, noise_score, flagged_noisy, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    _new_id(),
+                    evidence_item_id,
+                    hunt_package_id,
+                    ioc.get("ioc", ""),
+                    ioc.get("ioc_type", "other"),
+                    ioc.get("ioc_description", ""),
+                    float(ioc.get("noise_score", 0.0)),
+                    1 if ioc.get("flagged_noisy") else 0,
+                    now,
+                ),
+            )
+        await db.commit()
+
+
+async def list_extracted_iocs(hunt_package_id: str) -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM extracted_iocs WHERE hunt_package_id = ? ORDER BY ioc_type, ioc",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    return [dict(r) for r in rows]
