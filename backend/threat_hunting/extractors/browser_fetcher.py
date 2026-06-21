@@ -20,11 +20,8 @@ Security notes:
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import re
-import socket
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -42,56 +39,37 @@ except ImportError:
     _PLAYWRIGHT_AVAILABLE = False
 
 
-def _is_private_host(hostname: str) -> bool:
-    """Return True if *hostname* resolves to a private/loopback/link-local IP.
-
-    Used inside the Playwright route interception callback to block any in-page
-    navigation that would reach internal network hosts.
-    """
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-    except OSError:
-        return True  # If we can't resolve it, block it
-    for _family, _type, _proto, _canonname, sockaddr in infos:
-        ip_str = sockaddr[0]
-        try:
-            addr = ipaddress.ip_address(ip_str)
-            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-                return True
-        except ValueError:
-            return True  # Unparseable → block
-    return False
-
-
 def _ssrf_check_url(url: str) -> bool:
-    """Lightweight SSRF check suitable for use inside Playwright route callbacks.
+    """Synchronous SSRF check for use inside Playwright route callbacks.
 
-    Returns True (safe) / False (blocked). This is a best-effort check; the
-    primary SSRF enforcement is done by backend.threat_hunting.ssrf before
-    navigation starts.
+    Delegates to the authoritative ``backend.threat_hunting.ssrf.validate_url``
+    via a synchronous call. Returns True (safe) / False (blocked).
+
+    This replaces the previous independent implementation that diverged from the
+    authoritative blocklist (e.g., lacked CGNAT 100.64.0.0/10).
     """
     try:
-        parsed = urlparse(url)
+
+        # validate_url is synchronous under the hood (uses socket.getaddrinfo)
+        # but is an async def for consistent API with url_fetcher. We call the
+        # underlying synchronous validation directly.
+        from urllib.parse import urlparse as _urlparse
+
+        from backend.threat_hunting.ssrf import _is_blocked_ip, _resolve_hostname
+
+        parsed = _urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False
-        host = parsed.hostname or ""
-        if not host:
+        hostname = parsed.hostname or ""
+        if not hostname:
             return False
-        # Strip IPv6 brackets
-        host = host.strip("[]")
-        # Try direct IP parse first
-        try:
-            addr = ipaddress.ip_address(host)
-            return not (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_reserved
-            )
-        except ValueError:
-            pass
-        # Hostname — resolve and check
-        return not _is_private_host(host)
+        resolved = _resolve_hostname(hostname)
+        if not resolved:
+            return False  # Unresolvable → block
+        for ip_str in resolved:
+            if _is_blocked_ip(ip_str):
+                return False
+        return True
     except Exception:  # noqa: BLE001
         return False
 
@@ -152,10 +130,12 @@ async def _run_browser_fetch(url: str) -> str | None:
                     "Accept-Language": "en-US,en;q=0.9",
                 },
                 java_script_enabled=True,
+                service_workers="block",  # Prevent service worker fetch bypass
             )
             page = await context.new_page()
 
-            # Route interception: block navigation to private IPs from in-page JS.
+            # Route interception on context (covers all frames + workers, not just main page).
+            # Blocks any in-page navigation to private/internal IP ranges.
             async def _intercept_route(route, request):  # type: ignore[no-untyped-def]
                 req_url = request.url
                 if not _ssrf_check_url(req_url):
@@ -165,10 +145,10 @@ async def _run_browser_fetch(url: str) -> str | None:
                     )
                     await route.abort("blockedbyclient")
                     return
-                # Block tracking/ad URLs (optional hardening, non-security)
                 await route.continue_()
 
-            await page.route("**/*", _intercept_route)
+            # Use context.route instead of page.route — applies to all frames and workers.
+            await context.route("**/*", _intercept_route)
 
             try:
                 await page.goto(

@@ -329,10 +329,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         if req_param not in arguments:
             raise ValueError(f"Tool {name!r} requires parameter {req_param!r}")
 
+    # Strip extra keys not in the schema to prevent unexpected-kwarg injection.
+    # The LLM may hallucinate extra parameters; filtering here makes dispatch safe.
+    allowed_keys = set(spec["parameters"].get("properties", {}).keys())
+    safe_args = {k: v for k, v in arguments.items() if k in allowed_keys}
+
     # Dispatch
     if name in _ASYNC_TOOLS:
-        return await _ASYNC_TOOLS[name](**arguments)
+        return await _ASYNC_TOOLS[name](**safe_args)
     elif name in _SYNC_TOOLS:
-        return _SYNC_TOOLS[name](**arguments)
+        return _SYNC_TOOLS[name](**safe_args)
     else:
         raise ValueError(f"Tool {name!r} has no implementation")  # pragma: no cover
