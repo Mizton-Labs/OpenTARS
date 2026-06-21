@@ -668,6 +668,37 @@ class LLMClient(ABC):
         model: str | None = None,
     ) -> str: ...
 
+    @property
+    def supports_tools(self) -> bool:
+        """Return True if this client supports LLM tool-calling / function-calling.
+
+        OpenAI, Anthropic, and OpenAI-compatible clients support it.
+        Ollama does not (at least not via the /api/chat endpoint we use).
+        """
+        return False
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Call the LLM with tool definitions and return (text_response, tool_calls).
+
+        ``tool_calls`` is a list of dicts with keys: ``name``, ``arguments`` (dict).
+        Returns (text, []) when the model responds with plain text instead of tool calls.
+
+        Default implementation: fall back to complete() (no tool calling).
+        Subclasses that support_tools override this.
+        """
+        return self.complete(prompt, system=system, max_tokens=max_tokens,
+                             temperature=temperature, timeout=timeout, model=model), []
+
     def list_models(self) -> list[str] | None:
         """Return available model names, or None if the provider has no
         well-known list endpoint. Used for token-free smoke tests."""
@@ -678,6 +709,99 @@ class LLMClient(ABC):
 
 
 class OpenAIClient(LLMClient):
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """OpenAI function-calling: returns (text, tool_calls_list).
+
+        ``tool_calls`` is a list of {name: str, arguments: dict} dicts.
+        """
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        # Convert tool specs to OpenAI function format
+        functions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["parameters"],
+                },
+            }
+            for t in tools
+        ]
+
+        payload: dict = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+            "tools": functions,
+            "tool_choice": "auto",
+        }
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        status, _, resp = self._send(
+            "POST",
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete_with_tools",
+        )
+        body_str = resp.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-JSON response",
+                status=status,
+                body=body_str,
+            ) from exc
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+
+        # Extract tool calls
+        raw_calls = message.get("tool_calls") or []
+        tool_calls: list[dict] = []
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            fn_name = fn.get("name", "")
+            fn_args_str = fn.get("arguments", "{}")
+            try:
+                fn_args = json.loads(fn_args_str)
+            except json.JSONDecodeError:
+                fn_args = {}
+            tool_calls.append({"name": fn_name, "arguments": fn_args})
+
+        # Text content (may be empty when tool calls are present)
+        text = message.get("content") or ""
+        return text, tool_calls
+
     def complete(
         self,
         prompt: str,
@@ -789,6 +913,76 @@ class OpenAIClient(LLMClient):
 
 class AnthropicClient(LLMClient):
     _ANTHROPIC_VERSION = "2023-06-01"
+
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Anthropic tool-use: returns (text, tool_calls_list)."""
+        # Convert OpenAI-style tool specs to Anthropic tool format
+        anthropic_tools = [
+            {
+                "name": t["name"],
+                "description": t["description"],
+                "input_schema": t["parameters"],
+            }
+            for t in tools
+        ]
+
+        payload: dict = {
+            "model": model or self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": anthropic_tools,
+        }
+        if system:
+            payload["system"] = system
+
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": self._ANTHROPIC_VERSION,
+        }
+        status, _, resp = self._send(
+            "POST",
+            f"{self.base_url}/v1/messages",
+            headers=headers,
+            body=body,
+            timeout=timeout,
+            step="complete_with_tools",
+        )
+        data = _parse_json_or_raise(
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="complete_with_tools",
+        )
+
+        blocks = data.get("content", [])
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        for block in blocks:
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "tool_use":
+                tool_calls.append({
+                    "name": block.get("name", ""),
+                    "arguments": block.get("input", {}),
+                })
+        return "".join(text_parts), tool_calls
 
     def complete(
         self,

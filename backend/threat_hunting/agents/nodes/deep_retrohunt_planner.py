@@ -1,4 +1,4 @@
-"""LangGraph node: deep_retrohunt_planner
+"""LangGraph node: deep_retrohunt_planner (with tool-calling, issue-006-B)
 
 Produces the Deep Retrohunt lead for a hunt package.
 
@@ -374,7 +374,14 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     if not atomic_iocs:
         logger.info("deep_retrohunt_planner: no atomic IOCs found — skipping")
         elapsed = time.monotonic() - start
-        logs.append({"step": step, "status": "skipped", "elapsed_s": round(elapsed, 2)})
+        logs.append({
+            "step": step,
+            "status": "skipped",
+            "elapsed_s": round(elapsed, 2),
+            "tools_used": [],
+            "decision": "No atomic IOCs — skipped.",
+            "debug_lines": [],
+        })
         completed.append(step)
         return {
             "current_step": step,
@@ -400,9 +407,14 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         logger.exception("deep_retrohunt_planner: deterministic stage failed: %s", exc)
         errors.append(f"{step} (sanitization): {exc}")
         elapsed = time.monotonic() - start
-        logs.append(
-            {"step": step, "status": "error", "elapsed_s": round(elapsed, 2), "error": str(exc)}
-        )
+        logs.append({
+            "step": step,
+            "status": "error",
+            "elapsed_s": round(elapsed, 2),
+            "error": str(exc),
+            "tools_used": [],
+            "debug_lines": [],
+        })
         return {
             "current_step": step,
             "completed_steps": completed,
@@ -459,6 +471,47 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         llm_parse_error=llm_parse_error,
     )
 
+    # ── Tool-calling: validate SPL draft if LLM supports tools ──────────────
+    tools_used: list[str] = []
+    debug_lines: list[str] = []
+    decision = ""
+    if spl_draft and not llm_parse_error:
+        try:
+            from backend.threat_hunting.agents.llm_bridge import call_llm_with_tools
+            from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
+
+            _validate_tools = [
+                TOOL_SPEC_BY_NAME[n]
+                for n in ("validate_spl", "defang_ioc", "noise_score")
+                if n in TOOL_SPEC_BY_NAME
+            ]
+            if _validate_tools:
+                spl_validate_prompt = (
+                    f"Validate the following SPL query for syntax issues:\n{spl_draft[:2000]}\n"
+                    f"Also check the top 5 IOCs for noise score. "
+                    "Respond with a brief assessment."
+                )
+                _text, tool_calls = await call_llm_with_tools(
+                    spl_validate_prompt,
+                    _validate_tools,
+                    provider_name=state.get("provider_name"),
+                    model=state.get("model_name"),
+                    max_tokens=400,
+                )
+                decision = _text or "SPL validation complete."
+                for tc in tool_calls:
+                    tool_name = tc.get("name", "")
+                    tool_args = tc.get("arguments", {})
+                    debug_lines.append(f"TOOL_CALL: {tool_name}({tool_args})")
+                    try:
+                        result_val = await call_tool(tool_name, tool_args)
+                        tools_used.append(tool_name)
+                        debug_lines.append(f"TOOL_RESULT: {str(result_val)[:300]}")
+                    except Exception as tool_exc:  # noqa: BLE001
+                        debug_lines.append(f"TOOL_ERROR: {tool_exc}")
+        except Exception as llm_exc:  # noqa: BLE001
+            debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
+
     elapsed = time.monotonic() - start
     logs.append(
         {
@@ -468,6 +521,9 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             "ioc_count": len(sanitized),
             "noisy_count": noisy_count,
             "effort": state.get("research_effort", "medium"),
+            "tools_used": tools_used,
+            "decision": decision,
+            "debug_lines": debug_lines,
         }
     )
     completed.append(step)

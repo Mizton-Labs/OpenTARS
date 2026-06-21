@@ -13,7 +13,12 @@ import logging
 import time
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
-from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
+from backend.threat_hunting.agents.llm_bridge import (
+    build_prompt,
+    call_llm,
+    call_llm_with_tools,
+    parse_json_response,
+)
 from backend.threat_hunting.agents.state import HuntPipelineState
 
 logger = logging.getLogger(__name__)
@@ -40,14 +45,21 @@ _OUTPUT_FORMAT = """[
 ]"""
 
 
+_TOOL_NAMES = ["validate_spl", "mitre_lookup"]
+
+
 async def query_drafting_agent(state: HuntPipelineState) -> dict:
     start = time.monotonic()
     step = "query_drafting_agent"
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
+    tools_used: list[str] = []
+    debug_lines: list[str] = []
+    decision = ""
     try:
         from backend.llm.errors import LLMDisabledError
+        from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
 
         profile = get_effort_profile(state.get("research_effort"))
         ioc_sample_limit = profile["ioc_sample_limit"]
@@ -119,6 +131,41 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             errors.append(f"{step}: unexpected LLM response type, using empty list")
             query_drafts = []
 
+        # ── Post-draft tool validation ─────────────────────────────────────
+        # Validate SPL queries and look up MITRE references using tool-calling.
+        if query_drafts:
+            tool_specs = [TOOL_SPEC_BY_NAME[n] for n in _TOOL_NAMES if n in TOOL_SPEC_BY_NAME]
+            if tool_specs:
+                spl_queries = [q.get("query", "") for q in query_drafts if q.get("language") == "spl"]
+                spl_preview = "\n---\n".join(spl_queries[:3])[:1500]
+                validate_prompt = (
+                    f"Validate these {len(spl_queries)} SPL queries for syntax issues "
+                    f"and look up any MITRE technique IDs referenced in the hunting leads. "
+                    f"SPL queries:\n{spl_preview}\n"
+                    "Respond with a brief validation summary."
+                )
+                try:
+                    _text, tool_calls = await call_llm_with_tools(
+                        validate_prompt,
+                        tool_specs,
+                        provider_name=state.get("provider_name"),
+                        model=state.get("model_name"),
+                        max_tokens=400,
+                    )
+                    decision = _text or "Query validation complete."
+                    for tc in tool_calls:
+                        tool_name = tc.get("name", "")
+                        tool_args = tc.get("arguments", {})
+                        debug_lines.append(f"TOOL_CALL: {tool_name}({tool_args})")
+                        try:
+                            result_val = await call_tool(tool_name, tool_args)
+                            tools_used.append(tool_name)
+                            debug_lines.append(f"TOOL_RESULT: {str(result_val)[:300]}")
+                        except Exception as tool_exc:  # noqa: BLE001
+                            debug_lines.append(f"TOOL_ERROR: {tool_exc}")
+                except Exception as llm_exc:  # noqa: BLE001
+                    debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
+
         elapsed = time.monotonic() - start
         logs.append(
             {
@@ -127,6 +174,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
                 "elapsed_s": round(elapsed, 2),
                 "item_count": len(query_drafts),
                 "effort": state.get("research_effort", "medium"),
+                "tools_used": tools_used,
+                "decision": decision,
+                "debug_lines": debug_lines,
             }
         )
         completed.append(step)
@@ -146,9 +196,14 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             logger.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
-        logs.append(
-            {"step": step, "status": "error", "elapsed_s": round(elapsed, 2), "error": str(exc)}
-        )
+        logs.append({
+            "step": step,
+            "status": "error",
+            "elapsed_s": round(elapsed, 2),
+            "error": str(exc),
+            "tools_used": tools_used,
+            "debug_lines": debug_lines,
+        })
         return {
             "current_step": step,
             "completed_steps": completed,
