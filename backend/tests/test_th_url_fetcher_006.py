@@ -22,6 +22,7 @@ import pytest
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
+
 def _make_response(status: int, body: bytes, content_type: str = "text/html") -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status
@@ -31,6 +32,7 @@ def _make_response(status: int, body: bytes, content_type: str = "text/html") ->
 
 
 # ─── url_fetcher: browser-like User-Agent ─────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_fetch_uses_browser_headers() -> None:
@@ -42,14 +44,21 @@ async def test_fetch_uses_browser_headers() -> None:
     async def _fake_get(url, headers=None, **kwargs):  # noqa: ANN001
         captured_headers.append(dict(headers or {}))
         resp = _make_response(200, b"<html><body>Hello world content here.</body></html>")
+
         # Provide an aiter_bytes iterator for the streaming path
         async def _aiter(*a, **kw):  # noqa: ANN001
             yield b"<html><body>Hello world content here.</body></html>"
+
         resp.aiter_bytes = _aiter
         return resp
 
     with (
-        patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: asyncio.get_event_loop().run_in_executor(None, f, *a, **kw)),
+        patch(
+            "asyncio.to_thread",
+            side_effect=lambda f, *a, **kw: asyncio.get_event_loop().run_in_executor(
+                None, f, *a, **kw
+            ),
+        ),
         patch.object(url_fetcher, "validate_url", return_value="https://example.com/page"),
         patch.object(url_fetcher, "validate_redirect", return_value="https://example.com/page"),
         patch("httpx.AsyncClient") as mock_client_cls,
@@ -67,6 +76,7 @@ async def test_fetch_uses_browser_headers() -> None:
 
 
 # ─── url_fetcher: error status raises instead of extracting error HTML ────────
+
 
 @pytest.mark.asyncio
 async def test_fetch_raises_on_404() -> None:
@@ -112,6 +122,7 @@ async def test_fetch_raises_on_500() -> None:
 
 # ─── url_fetcher: extractor fallback chain ───────────────────────────────────
 
+
 def test_extract_article_text_trafilatura_preferred() -> None:
     """trafilatura result is used when it returns enough text."""
     from backend.threat_hunting.extractors.url_fetcher import _extract_article_text
@@ -119,7 +130,9 @@ def test_extract_article_text_trafilatura_preferred() -> None:
     long_text = "A" * 500
     with patch("backend.threat_hunting.extractors.url_fetcher.trafilatura") as mock_tf:
         mock_tf.extract.return_value = long_text
-        text, parser = _extract_article_text(b"<html><body>...</body></html>", "https://example.com/")
+        text, parser = _extract_article_text(
+            b"<html><body>...</body></html>", "https://example.com/"
+        )
 
     assert text == long_text
     assert "trafilatura" in parser
@@ -144,7 +157,9 @@ def test_extract_article_text_falls_back_to_readability() -> None:
     try:
         with patch.object(url_fetcher, "trafilatura") as mock_tf:
             mock_tf.extract.return_value = "short"  # < MIN_USEFUL_TEXT_CHARS
-            text, parser = url_fetcher._extract_article_text(b"<html></html>", "https://example.com/")
+            text, parser = url_fetcher._extract_article_text(
+                b"<html></html>", "https://example.com/"
+            )
     finally:
         url_fetcher._READABILITY_AVAILABLE = orig_available
         if orig_cls is not None:
@@ -188,6 +203,7 @@ def test_extract_article_text_no_trafilatura() -> None:
 
 
 # ─── url_fetcher: Playwright fallback triggered on short text ─────────────────
+
 
 @pytest.mark.asyncio
 async def test_playwright_fallback_triggered_on_short_text() -> None:
@@ -283,6 +299,7 @@ async def test_playwright_fallback_degrades_gracefully() -> None:
 
 # ─── browser_fetcher: SSRF check ─────────────────────────────────────────────
 
+
 def test_browser_fetcher_ssrf_blocks_localhost() -> None:
     """_ssrf_check_url must reject localhost addresses."""
     from backend.threat_hunting.extractors.browser_fetcher import _ssrf_check_url
@@ -326,6 +343,7 @@ def test_browser_fetcher_ssrf_allows_public_ip() -> None:
 
 # ─── browser_fetcher: graceful degradation without playwright ─────────────────
 
+
 @pytest.mark.asyncio
 async def test_browser_fetcher_returns_none_when_playwright_unavailable() -> None:
     """fetch_url_with_browser returns None (not raises) when playwright is missing."""
@@ -349,6 +367,7 @@ async def test_browser_fetcher_returns_none_on_ssrf_blocked_url() -> None:
 
 
 # ─── _is_bot_wall_status helper ───────────────────────────────────────────────
+
 
 def test_is_bot_wall_status() -> None:
     from backend.threat_hunting.extractors.url_fetcher import _is_bot_wall_status

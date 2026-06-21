@@ -608,18 +608,22 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             ["Evidence Types", ", ".join(ev.get("item_types", []) or [])],
         ]
         ev_table = Table(ev_rows, colWidths=[5 * cm, None])
-        ev_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-            ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-            ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
+        ev_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
         story.append(ev_table)
     except Exception:  # noqa: BLE001
         _p(f"Items: {ev.get('total_items', 0)}  |  IOCs: {ev.get('ioc_count', 0)}")
@@ -703,27 +707,31 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             try:
                 ttp_rows = [["ID", "Name", "Tactic", "Detection"]]
                 for t in techniques:
-                    ttp_rows.append([
-                        t.get("technique_id", ""),
-                        t.get("technique_name", ""),
-                        t.get("tactic", ""),
-                        t.get("description", "")[:80],
-                    ])
+                    ttp_rows.append(
+                        [
+                            t.get("technique_id", ""),
+                            t.get("technique_name", ""),
+                            t.get("tactic", ""),
+                            t.get("description", "")[:80],
+                        ]
+                    )
                 ttp_table = Table(ttp_rows, colWidths=[2.2 * cm, 4 * cm, 3 * cm, None])
-                ttp_style = TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("WORDWRAP", (3, 1), (3, -1), "CJK"),
-                ])
+                ttp_style = TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+                        ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("WORDWRAP", (3, 1), (3, -1), "CJK"),
+                    ]
+                )
                 ttp_table.setStyle(ttp_style)
                 story.append(ttp_table)
             except Exception:  # noqa: BLE001
@@ -745,26 +753,30 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             er_rows = [["Run ID", "Status", "Events", "Findings"]]
             for r in exec_results:
                 status = r.get("status", "")
-                er_rows.append([
-                    str(r.get("id", ""))[:12],
-                    status,
-                    str(r.get("event_count", 0)),
-                    (r.get("interpreted_findings") or "")[:80],
-                ])
+                er_rows.append(
+                    [
+                        str(r.get("id", ""))[:12],
+                        status,
+                        str(r.get("event_count", 0)),
+                        (r.get("interpreted_findings") or "")[:80],
+                    ]
+                )
             er_table = Table(er_rows, colWidths=[3 * cm, 2.5 * cm, 2 * cm, None])
-            er_style = TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-                ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-                ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ])
+            er_style = TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
             er_table.setStyle(er_style)
             story.append(er_table)
         except Exception:  # noqa: BLE001

@@ -341,16 +341,19 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
             total_elapsed: float = 0.0
             try:
                 import json as _json
+
                 step_logs: list[dict[str, Any]] = _json.loads(run["step_logs_json"] or "[]")
                 for log in step_logs:
                     step_name = log.get("step", "")
                     if step_name:
                         elapsed = log.get("elapsed_s") or 0.0
-                        phases.append({
-                            "step": step_name,
-                            "status": log.get("status", "unknown"),
-                            "elapsed_s": elapsed,
-                        })
+                        phases.append(
+                            {
+                                "step": step_name,
+                                "status": log.get("status", "unknown"),
+                                "elapsed_s": elapsed,
+                            }
+                        )
                         total_elapsed += float(elapsed)
             except Exception:  # noqa: BLE001
                 pass

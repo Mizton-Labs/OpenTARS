@@ -49,7 +49,6 @@ def _ssrf_check_url(url: str) -> bool:
     authoritative blocklist (e.g., lacked CGNAT 100.64.0.0/10).
     """
     try:
-
         # validate_url is synchronous under the hood (uses socket.getaddrinfo)
         # but is an async def for consistent API with url_fetcher. We call the
         # underlying synchronous validation directly.

@@ -106,7 +106,9 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
                     except Exception as tool_exc:  # noqa: BLE001
                         debug_lines.append(f"TOOL_ERROR: {tool_exc}")
                 if extra_context_parts:
-                    corpus_snippet += "\n\n## Tool-enriched context\n" + "\n".join(extra_context_parts)
+                    corpus_snippet += "\n\n## Tool-enriched context\n" + "\n".join(
+                        extra_context_parts
+                    )
             except Exception as llm_exc:  # noqa: BLE001
                 debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
 
@@ -149,14 +151,16 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
             )
 
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "ok",
-            "elapsed_s": round(elapsed, 2),
-            "tools_used": tools_used,
-            "decision": decision,
-            "debug_lines": debug_lines,
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "tools_used": tools_used,
+                "decision": decision,
+                "debug_lines": debug_lines,
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,
@@ -174,14 +178,16 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
             logger.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "error",
-            "elapsed_s": round(elapsed, 2),
-            "error": str(exc),
-            "tools_used": tools_used,
-            "debug_lines": debug_lines,
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "tools_used": tools_used,
+                "debug_lines": debug_lines,
+            }
+        )
         return {
             "current_step": step,
             "completed_steps": completed,

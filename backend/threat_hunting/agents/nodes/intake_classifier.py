@@ -51,11 +51,13 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             text = item.get("extracted_text") or ""
             if text.strip():
                 texts.append(f"=== {label} ===\n{text.strip()}")
-            intake_sources.append({
-                "label": label,
-                "item_type": item.get("item_type", ""),
-                "text_length": len(text),
-            })
+            intake_sources.append(
+                {
+                    "label": label,
+                    "item_type": item.get("item_type", ""),
+                    "text_length": len(text),
+                }
+            )
         evidence_text_corpus = "\n\n".join(texts) if texts else ""
 
         # Load IOCs
@@ -65,7 +67,8 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         # When evidence is thin (< 500 chars) and there are URL-type items,
         # ask the LLM whether it wants to re-fetch or extract additional IOCs.
         url_items = [
-            i for i in evidence_items
+            i
+            for i in evidence_items
             if i.get("item_type") in ("url", "page") and len(i.get("extracted_text") or "") < 500
         ]
         if url_items:
@@ -95,7 +98,11 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         tools_used.append(tool_name)
                         debug_lines.append(f"TOOL_RESULT: {str(result)[:500]}")
                         # Integrate refetch results into corpus
-                        if tool_name == "refetch_url" and isinstance(result, str) and result.strip():
+                        if (
+                            tool_name == "refetch_url"
+                            and isinstance(result, str)
+                            and result.strip()
+                        ):
                             url_val = tool_args.get("url", "")
                             texts.append(f"=== refetched: {url_val} ===\n{result.strip()}")
                             evidence_text_corpus = "\n\n".join(texts)
@@ -139,15 +146,17 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         )
 
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "ok",
-            "elapsed_s": round(elapsed, 2),
-            "tools_used": tools_used,
-            "decision": decision,
-            "debug_lines": debug_lines,
-            "intake_sources": intake_sources,
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "tools_used": tools_used,
+                "decision": decision,
+                "debug_lines": debug_lines,
+                "intake_sources": intake_sources,
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,
@@ -162,14 +171,16 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         logger.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "error",
-            "elapsed_s": round(elapsed, 2),
-            "error": str(exc),
-            "tools_used": tools_used,
-            "debug_lines": debug_lines,
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "tools_used": tools_used,
+                "debug_lines": debug_lines,
+            }
+        )
         return {
             "current_step": step,
             "completed_steps": completed,

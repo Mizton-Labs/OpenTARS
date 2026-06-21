@@ -136,7 +136,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
         if query_drafts:
             tool_specs = [TOOL_SPEC_BY_NAME[n] for n in _TOOL_NAMES if n in TOOL_SPEC_BY_NAME]
             if tool_specs:
-                spl_queries = [q.get("query", "") for q in query_drafts if q.get("language") == "spl"]
+                spl_queries = [
+                    q.get("query", "") for q in query_drafts if q.get("language") == "spl"
+                ]
                 spl_preview = "\n---\n".join(spl_queries[:3])[:1500]
                 validate_prompt = (
                     f"Validate these {len(spl_queries)} SPL queries for syntax issues "
@@ -196,14 +198,16 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             logger.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "error",
-            "elapsed_s": round(elapsed, 2),
-            "error": str(exc),
-            "tools_used": tools_used,
-            "debug_lines": debug_lines,
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "tools_used": tools_used,
+                "debug_lines": debug_lines,
+            }
+        )
         return {
             "current_step": step,
             "completed_steps": completed,

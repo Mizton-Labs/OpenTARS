@@ -54,9 +54,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         ),
         "parameters": {
             "type": "object",
-            "properties": {
-                "ioc": {"type": "string", "description": "Raw IOC value to defang."}
-            },
+            "properties": {"ioc": {"type": "string", "description": "Raw IOC value to defang."}},
             "required": ["ioc"],
         },
     },
@@ -194,7 +192,10 @@ _MITRE_MAP: dict[str, dict[str, str]] = {
     "T1566": {"name": "Phishing", "tactic": "Initial Access"},
     "T1566.001": {"name": "Spearphishing Attachment", "tactic": "Initial Access"},
     "T1566.002": {"name": "Spearphishing Link", "tactic": "Initial Access"},
-    "T1078": {"name": "Valid Accounts", "tactic": "Defense Evasion, Persistence, Privilege Escalation, Initial Access"},
+    "T1078": {
+        "name": "Valid Accounts",
+        "tactic": "Defense Evasion, Persistence, Privilege Escalation, Initial Access",
+    },
     "T1110": {"name": "Brute Force", "tactic": "Credential Access"},
     "T1110.001": {"name": "Password Guessing", "tactic": "Credential Access"},
     "T1110.003": {"name": "Password Spraying", "tactic": "Credential Access"},
@@ -217,9 +218,18 @@ _MITRE_MAP: dict[str, dict[str, str]] = {
     "T1003.001": {"name": "LSASS Memory", "tactic": "Credential Access"},
     "T1562": {"name": "Impair Defenses", "tactic": "Defense Evasion"},
     "T1562.001": {"name": "Disable or Modify Tools", "tactic": "Defense Evasion"},
-    "T1547": {"name": "Boot or Logon Autostart Execution", "tactic": "Persistence, Privilege Escalation"},
-    "T1547.001": {"name": "Registry Run Keys / Startup Folder", "tactic": "Persistence, Privilege Escalation"},
-    "T1574": {"name": "Hijack Execution Flow", "tactic": "Defense Evasion, Persistence, Privilege Escalation"},
+    "T1547": {
+        "name": "Boot or Logon Autostart Execution",
+        "tactic": "Persistence, Privilege Escalation",
+    },
+    "T1547.001": {
+        "name": "Registry Run Keys / Startup Folder",
+        "tactic": "Persistence, Privilege Escalation",
+    },
+    "T1574": {
+        "name": "Hijack Execution Flow",
+        "tactic": "Defense Evasion, Persistence, Privilege Escalation",
+    },
     "T1105": {"name": "Ingress Tool Transfer", "tactic": "Command and Control"},
     "T1219": {"name": "Remote Access Software", "tactic": "Command and Control"},
     "T1190": {"name": "Exploit Public-Facing Application", "tactic": "Initial Access"},

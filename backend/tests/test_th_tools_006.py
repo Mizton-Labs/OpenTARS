@@ -21,6 +21,7 @@ import pytest
 
 # ─── tool_defang_ioc ─────────────────────────────────────────────────────────
 
+
 def test_defang_ioc_normalizes_defanged_ip() -> None:
     """tool_defang_ioc normalizes a defanged/fanged IOC to its canonical form."""
     from backend.threat_hunting.agents.tools import tool_defang_ioc
@@ -41,6 +42,7 @@ def test_defang_ioc_returns_string() -> None:
 
 
 # ─── tool_noise_score ─────────────────────────────────────────────────────────
+
 
 def test_noise_score_returns_dict() -> None:
     from backend.threat_hunting.agents.tools import tool_noise_score
@@ -69,6 +71,7 @@ def test_noise_score_public_hash_low_noise() -> None:
 
 
 # ─── tool_mitre_lookup ───────────────────────────────────────────────────────
+
 
 def test_mitre_lookup_known_technique() -> None:
     from backend.threat_hunting.agents.tools import tool_mitre_lookup
@@ -111,6 +114,7 @@ def test_mitre_lookup_no_t_prefix() -> None:
 
 # ─── tool_validate_spl ───────────────────────────────────────────────────────
 
+
 def test_validate_spl_valid_query() -> None:
     from backend.threat_hunting.agents.tools import tool_validate_spl
 
@@ -151,6 +155,7 @@ def test_validate_spl_no_commands() -> None:
 
 # ─── tool_extract_iocs ───────────────────────────────────────────────────────
 
+
 def test_extract_iocs_returns_list() -> None:
     from backend.threat_hunting.agents.tools import tool_extract_iocs
 
@@ -177,6 +182,7 @@ def test_extract_iocs_result_shape() -> None:
 
 
 # ─── call_tool dispatcher ────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_call_tool_unknown_raises() -> None:
@@ -246,6 +252,7 @@ async def test_call_tool_refetch_url_delegates_to_fetcher() -> None:
 
 # ─── LLM client: supports_tools property ─────────────────────────────────────
 
+
 def test_openai_client_supports_tools() -> None:
     from backend.llm.client import OpenAIClient
 
@@ -296,6 +303,7 @@ def test_openai_compatible_client_supports_tools() -> None:
 
 # ─── OpenAI complete_with_tools parsing ──────────────────────────────────────
 
+
 def test_openai_complete_with_tools_parses_tool_calls() -> None:
     """OpenAIClient.complete_with_tools should parse tool_calls from response."""
     from backend.llm.client import OpenAIClient
@@ -309,32 +317,42 @@ def test_openai_complete_with_tools_parses_tool_calls() -> None:
 
     # Mock the _send method to return a tool-calling response
     tool_response = {
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": "call_123",
-                    "type": "function",
-                    "function": {
-                        "name": "mitre_lookup",
-                        "arguments": '{"technique_id": "T1059"}',
-                    },
-                }],
-            },
-            "finish_reason": "tool_calls",
-        }]
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "mitre_lookup",
+                                "arguments": '{"technique_id": "T1059"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
     }
     mock_resp = json.dumps(tool_response).encode()
 
     with patch.object(client, "_send", return_value=(200, {}, mock_resp)):
         text, tool_calls = client.complete_with_tools(
             "What MITRE technique is this?",
-            tools=[{
-                "name": "mitre_lookup",
-                "description": "Look up MITRE",
-                "parameters": {"type": "object", "properties": {"technique_id": {"type": "string"}}, "required": ["technique_id"]},
-            }],
+            tools=[
+                {
+                    "name": "mitre_lookup",
+                    "description": "Look up MITRE",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"technique_id": {"type": "string"}},
+                        "required": ["technique_id"],
+                    },
+                }
+            ],
         )
 
     assert text == "" or text is None or True  # content is None in this response
@@ -355,10 +373,12 @@ def test_openai_complete_with_tools_plain_text() -> None:
     )
 
     plain_response = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "No tools needed."},
-            "finish_reason": "stop",
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "No tools needed."},
+                "finish_reason": "stop",
+            }
+        ]
     }
     mock_resp = json.dumps(plain_response).encode()
 
@@ -373,6 +393,7 @@ def test_openai_complete_with_tools_plain_text() -> None:
 
 
 # ─── Anthropic complete_with_tools parsing ────────────────────────────────────
+
 
 def test_anthropic_complete_with_tools_parses_tool_calls() -> None:
     from backend.llm.client import AnthropicClient
@@ -401,11 +422,17 @@ def test_anthropic_complete_with_tools_parses_tool_calls() -> None:
     with patch.object(client, "_send", return_value=(200, {}, mock_resp)):
         text, tool_calls = client.complete_with_tools(
             "What is this technique?",
-            tools=[{
-                "name": "mitre_lookup",
-                "description": "Look up MITRE",
-                "parameters": {"type": "object", "properties": {"technique_id": {"type": "string"}}, "required": ["technique_id"]},
-            }],
+            tools=[
+                {
+                    "name": "mitre_lookup",
+                    "description": "Look up MITRE",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"technique_id": {"type": "string"}},
+                        "required": ["technique_id"],
+                    },
+                }
+            ],
         )
 
     assert "Let me check" in text
@@ -416,6 +443,7 @@ def test_anthropic_complete_with_tools_parses_tool_calls() -> None:
 
 # ─── call_llm_with_tools: capable provider ────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_call_llm_with_tools_capable_provider() -> None:
     """call_llm_with_tools delegates to client.complete_with_tools for capable providers."""
@@ -423,7 +451,12 @@ async def test_call_llm_with_tools_capable_provider() -> None:
 
     mock_client = MagicMock()
     mock_client.supports_tools = True
-    mock_client.complete_with_tools = MagicMock(return_value=("analysis done", [{"name": "mitre_lookup", "arguments": {"technique_id": "T1059"}}]))
+    mock_client.complete_with_tools = MagicMock(
+        return_value=(
+            "analysis done",
+            [{"name": "mitre_lookup", "arguments": {"technique_id": "T1059"}}],
+        )
+    )
 
     with patch("backend.threat_hunting.agents.llm_bridge.get_client", return_value=mock_client):
         text, tool_calls = await llm_bridge.call_llm_with_tools(

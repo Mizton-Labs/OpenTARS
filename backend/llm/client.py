@@ -696,8 +696,14 @@ class LLMClient(ABC):
         Default implementation: fall back to complete() (no tool calling).
         Subclasses that support_tools override this.
         """
-        return self.complete(prompt, system=system, max_tokens=max_tokens,
-                             temperature=temperature, timeout=timeout, model=model), []
+        return self.complete(
+            prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+            model=model,
+        ), []
 
     def list_models(self) -> list[str] | None:
         """Return available model names, or None if the provider has no
@@ -978,10 +984,12 @@ class AnthropicClient(LLMClient):
             if block.get("type") == "text":
                 text_parts.append(block.get("text", ""))
             elif block.get("type") == "tool_use":
-                tool_calls.append({
-                    "name": block.get("name", ""),
-                    "arguments": block.get("input", {}),
-                })
+                tool_calls.append(
+                    {
+                        "name": block.get("name", ""),
+                        "arguments": block.get("input", {}),
+                    }
+                )
         return "".join(text_parts), tool_calls
 
     def complete(

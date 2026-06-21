@@ -374,14 +374,16 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     if not atomic_iocs:
         logger.info("deep_retrohunt_planner: no atomic IOCs found — skipping")
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "skipped",
-            "elapsed_s": round(elapsed, 2),
-            "tools_used": [],
-            "decision": "No atomic IOCs — skipped.",
-            "debug_lines": [],
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "skipped",
+                "elapsed_s": round(elapsed, 2),
+                "tools_used": [],
+                "decision": "No atomic IOCs — skipped.",
+                "debug_lines": [],
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,
@@ -407,14 +409,16 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         logger.exception("deep_retrohunt_planner: deterministic stage failed: %s", exc)
         errors.append(f"{step} (sanitization): {exc}")
         elapsed = time.monotonic() - start
-        logs.append({
-            "step": step,
-            "status": "error",
-            "elapsed_s": round(elapsed, 2),
-            "error": str(exc),
-            "tools_used": [],
-            "debug_lines": [],
-        })
+        logs.append(
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "tools_used": [],
+                "debug_lines": [],
+            }
+        )
         return {
             "current_step": step,
             "completed_steps": completed,

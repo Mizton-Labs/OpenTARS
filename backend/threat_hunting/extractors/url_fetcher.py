@@ -53,9 +53,7 @@ _ALLOWED_CONTENT_TYPE_PREFIXES = (
 
 # HTTP status codes that should be treated as permanent failures rather than
 # silently returning the error HTML as content.
-_ERROR_STATUS_CODES = frozenset(
-    range(400, 600)
-) - frozenset({429})  # 429 is handled by retry
+_ERROR_STATUS_CODES = frozenset(range(400, 600)) - frozenset({429})  # 429 is handled by retry
 
 # Realistic browser-like headers to reduce bot-blocking.
 _BROWSER_HEADERS: dict[str, str] = {
@@ -65,8 +63,7 @@ _BROWSER_HEADERS: dict[str, str] = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,*/*;q=0.8"
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
@@ -234,6 +231,7 @@ async def fetch_url(
     ) as client:
         # Build a retry-wrapped fetch function if tenacity is available
         if _TENACITY_AVAILABLE:
+
             @retry(
                 retry=retry_if_exception_type(
                     (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError)
@@ -246,6 +244,7 @@ async def fetch_url(
                 return await _do_single_fetch(client, u)
 
         else:
+
             async def _fetch_with_retry(u: str) -> httpx.Response:  # type: ignore[misc]
                 return await _do_single_fetch(client, u)
 
