@@ -11,6 +11,7 @@ import json
 import logging
 import time
 
+from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import HuntPipelineState
 
@@ -65,12 +66,13 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
             ),
         )
 
+        profile = get_effort_profile(state.get("research_effort"))
         response = await call_llm(
             user,
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
-            max_tokens=2000,
+            max_tokens=profile["ttp_tokens"],
         )
 
         parsed = parse_json_response(response, context=step)
@@ -83,7 +85,14 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
             ttp_analysis = {"raw_response": str(parsed), "parse_error": True}
 
         elapsed = time.monotonic() - start
-        logs.append({"step": step, "status": "ok", "elapsed_s": round(elapsed, 2)})
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "effort": state.get("research_effort", "medium"),
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,

@@ -212,12 +212,14 @@ def build_initial_state(
     *,
     provider_name: str | None = None,
     model_name: str | None = None,
+    research_effort: str = "medium",
 ) -> HuntPipelineState:
     """Build the initial pipeline state for a new generation run."""
     return HuntPipelineState(
         hunt_package_id=hunt_package_id,
         provider_name=provider_name,
         model_name=model_name,
+        research_effort=research_effort,
         approved=False,
         rejected=False,
         approval_notes="",

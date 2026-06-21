@@ -12,12 +12,11 @@ import json
 import logging
 import time
 
+from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import HuntPipelineState
 
 logger = logging.getLogger(__name__)
-
-_IOC_SAMPLE_LIMIT = 20  # cap IOCs sent in the query-drafting prompt
 
 _OUTPUT_FORMAT = """[
   {
@@ -50,6 +49,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
     try:
         from backend.llm.errors import LLMDisabledError
 
+        profile = get_effort_profile(state.get("research_effort"))
+        ioc_sample_limit = profile["ioc_sample_limit"]
+
         hunting_leads = state.get("hunting_leads") or []
         ttp_analysis = state.get("ttp_analysis") or {}
         raw_ioc_list = state.get("raw_ioc_list") or []
@@ -58,7 +60,7 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
         ttp_analysis_text = json.dumps(ttp_analysis, indent=2)
 
         # Use a capped sample of IOCs to keep prompt size manageable
-        ioc_sample = raw_ioc_list[:_IOC_SAMPLE_LIMIT]
+        ioc_sample = raw_ioc_list[:ioc_sample_limit]
         ioc_sample_text = json.dumps(
             [
                 {
@@ -81,7 +83,7 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             context_sections=[
                 ("Hunting Leads", hunting_leads_text),
                 ("TTP Analysis", ttp_analysis_text),
-                ("IOC Sample (first 20)", ioc_sample_text),
+                (f"IOC Sample (first {ioc_sample_limit})", ioc_sample_text),
             ],
             output_format=_OUTPUT_FORMAT,
             additional_instructions=(
@@ -99,7 +101,7 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
-            max_tokens=3000,
+            max_tokens=profile["query_tokens"],
         )
 
         parsed = parse_json_response(response, context=step)
@@ -118,7 +120,15 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             query_drafts = []
 
         elapsed = time.monotonic() - start
-        logs.append({"step": step, "status": "ok", "elapsed_s": round(elapsed, 2)})
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "item_count": len(query_drafts),
+                "effort": state.get("research_effort", "medium"),
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,

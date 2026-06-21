@@ -33,6 +33,7 @@ import re
 import time
 from typing import Any
 
+from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import DeepRetrohuntLead, HuntPipelineState, SanitizedIOC
 from backend.threat_hunting.iocs import _defang, _noise_score, _normalize_ioc  # noqa: PLC2701
@@ -268,6 +269,9 @@ async def _enrich_with_llm(
     *,
     provider_name: str | None,
     model_name: str | None,
+    retrohunt_ioc_cap: int = 50,
+    retrohunt_csv_cap: int = 3000,
+    retrohunt_tokens: int = 3000,
 ) -> dict[str, str]:
     """Call the LLM to generate SPL draft, search hint, and analyst notes.
 
@@ -279,7 +283,7 @@ async def _enrich_with_llm(
     hunt_id_short = hunt_package_id[:8]
 
     ioc_summary_lines = []
-    for s in sanitized[:50]:  # cap prompt size
+    for s in sanitized[:retrohunt_ioc_cap]:  # cap prompt size
         flag = " [NOISY]" if s["noise_score"] >= 0.5 else ""
         ioc_summary_lines.append(
             f"  {s['ioc_type']}: {s['ioc']} (noise={s['noise_score']:.2f}{flag})"
@@ -301,8 +305,8 @@ async def _enrich_with_llm(
                 "IOC Statistics",
                 f"Total: {len(sanitized)} | Clean (<0.5 noise): {len(clean)} | Noisy (≥0.5 noise): {len(noisy)}",
             ),
-            ("IOC Summary (first 50)", ioc_summary_text),
-            ("IOC CSV (canonical)", ioc_csv[:3000]),  # cap to avoid token overflow
+            (f"IOC Summary (first {retrohunt_ioc_cap})", ioc_summary_text),
+            ("IOC CSV (canonical)", ioc_csv[:retrohunt_csv_cap]),  # cap to avoid token overflow
         ],
         output_format=_LLM_OUTPUT_FORMAT,
         additional_instructions=(
@@ -326,7 +330,7 @@ async def _enrich_with_llm(
         system=system,
         provider_name=provider_name,
         model=model_name,
-        max_tokens=3000,
+        max_tokens=retrohunt_tokens,
     )
 
     parsed = parse_json_response(response, context="deep_retrohunt_planner")
@@ -359,6 +363,8 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
+
+    profile = get_effort_profile(state.get("research_effort"))
 
     raw_iocs: list[dict[str, Any]] = list(state.get("raw_ioc_list") or [])
 
@@ -421,6 +427,9 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             state.get("hunt_package_id", "unknown"),
             provider_name=state.get("provider_name"),
             model_name=state.get("model_name"),
+            retrohunt_ioc_cap=profile["retrohunt_ioc_cap"],
+            retrohunt_csv_cap=profile["retrohunt_csv_cap"],
+            retrohunt_tokens=profile["retrohunt_tokens"],
         )
         spl_draft = enrichment["spl_draft"]
         spl_macro_name = enrichment["spl_macro_name"] or spl_macro_name
@@ -458,6 +467,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             "elapsed_s": round(elapsed, 2),
             "ioc_count": len(sanitized),
             "noisy_count": noisy_count,
+            "effort": state.get("research_effort", "medium"),
         }
     )
     completed.append(step)

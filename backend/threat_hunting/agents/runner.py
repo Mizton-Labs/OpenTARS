@@ -73,7 +73,8 @@ async def _save_generation_state(
                    threat_context=?, hypotheses=?, hunting_leads=?,
                    deep_retrohunt=?, ttp_analysis=?, query_drafts=?,
                    llm_provider=?, llm_model=?,
-                   generation_status=?, generation_errors=?
+                   generation_status=?, generation_errors=?,
+                   current_step=?, completed_steps=?, step_logs=?, research_effort=?
                    WHERE hunt_package_id=?""",
                 (
                     await _to_json(state.get("threat_context")),
@@ -86,6 +87,10 @@ async def _save_generation_state(
                     state.get("model_name"),
                     status,
                     await _to_json(state.get("errors")),
+                    state.get("current_step", ""),
+                    await _to_json(state.get("completed_steps") or []),
+                    await _to_json(state.get("step_logs") or []),
+                    state.get("research_effort", "medium"),
                     pkg_id,
                 ),
             )
@@ -96,8 +101,9 @@ async def _save_generation_state(
                    (id, hunt_package_id, threat_context, hypotheses,
                     hunting_leads, deep_retrohunt, ttp_analysis, query_drafts,
                     llm_provider, llm_model,
-                    generation_status, generation_errors, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    generation_status, generation_errors, created_at,
+                    current_step, completed_steps, step_logs, research_effort)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     row_id,
                     pkg_id,
@@ -112,6 +118,10 @@ async def _save_generation_state(
                     status,
                     await _to_json(state.get("errors")),
                     now,
+                    state.get("current_step", ""),
+                    await _to_json(state.get("completed_steps") or []),
+                    await _to_json(state.get("step_logs") or []),
+                    state.get("research_effort", "medium"),
                 ),
             )
         await db.commit()
@@ -141,6 +151,8 @@ async def _get_generation_record(pkg_id: str) -> dict[str, Any] | None:
         "ttp_analysis",
         "query_drafts",
         "generation_errors",
+        "completed_steps",
+        "step_logs",
     ):
         raw = d.get(field)
         if raw and isinstance(raw, str):
@@ -165,6 +177,7 @@ async def _load_pipeline_state(pkg_id: str) -> dict[str, Any] | None:
         "hunt_package_id": pkg_id,
         "provider_name": record.get("llm_provider"),
         "model_name": record.get("llm_model"),
+        "research_effort": record.get("research_effort") or "medium",
         "threat_context": record.get("threat_context"),
         "hypotheses": record.get("hypotheses") or [],
         "hunting_leads": record.get("hunting_leads") or [],
@@ -172,9 +185,9 @@ async def _load_pipeline_state(pkg_id: str) -> dict[str, Any] | None:
         "ttp_analysis": record.get("ttp_analysis"),
         "query_drafts": record.get("query_drafts") or [],
         "errors": record.get("generation_errors") or [],
-        "step_logs": [],
-        "completed_steps": [],
-        "current_step": "",
+        "step_logs": record.get("step_logs") or [],
+        "completed_steps": record.get("completed_steps") or [],
+        "current_step": record.get("current_step") or "",
         "approved": False,
         "rejected": False,
         "approval_notes": "",
@@ -251,6 +264,7 @@ async def start_generation(
     *,
     provider_name: str | None = None,
     model_name: str | None = None,
+    research_effort: str = "medium",
 ) -> dict[str, Any]:
     """Start the generation pipeline for a hunt package.
 
@@ -263,7 +277,12 @@ async def start_generation(
         existing = await _get_generation_record(pkg_id)
         return existing or {"generation_status": "running", "hunt_package_id": pkg_id}
 
-    initial_state = build_initial_state(pkg_id, provider_name=provider_name, model_name=model_name)
+    initial_state = build_initial_state(
+        pkg_id,
+        provider_name=provider_name,
+        model_name=model_name,
+        research_effort=research_effort,
+    )
     task = asyncio.create_task(_run_pipeline(pkg_id, dict(initial_state)))
     _ACTIVE_JOBS[pkg_id] = task
 
@@ -272,6 +291,7 @@ async def start_generation(
         "generation_status": "running",
         "provider_name": provider_name,
         "model_name": model_name,
+        "research_effort": research_effort,
     }
 
 
