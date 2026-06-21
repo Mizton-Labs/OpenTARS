@@ -332,7 +332,7 @@ function HuntingPackageDraft({
         <CollapsibleSection title={`Hypotheses (${record.hypotheses.length})`} icon={Brain} defaultOpen>
           <div className="space-y-3">
             {record.hypotheses.map((h: THHypothesis) => (
-              <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1">
+              <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1.5">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-brand-400 font-mono">{h.id}</span>
                   <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', h.relevance === 'high' ? 'bg-red-900/30 text-red-400' : h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
@@ -342,6 +342,25 @@ function HuntingPackageDraft({
                 <p className="text-sm font-medium text-gray-200">{h.title}</p>
                 <p className="text-xs text-gray-400">{h.description}</p>
                 {h.justification && <p className="text-xs text-gray-500 italic">{h.justification}</p>}
+                {/* issue-006-E: ioc_basis */}
+                {h.ioc_basis && h.ioc_basis.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {h.ioc_basis.map((ioc) => (
+                      <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
+                        {ioc}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* issue-006-E: suggested_actions */}
+                {h.suggested_actions && h.suggested_actions.length > 0 && (
+                  <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-0.5">
+                    <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+                    {h.suggested_actions.map((action, i) => (
+                      <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

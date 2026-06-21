@@ -1681,6 +1681,8 @@ export interface THHypothesis {
   justification: string
   relevance: 'high' | 'medium' | 'low'
   ioc_basis: string[]
+  /** Specific detection tools/artifacts/query fragments (issue-006-E). */
+  suggested_actions?: string[]
 }
 
 export interface THHuntTask {

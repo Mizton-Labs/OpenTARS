@@ -377,6 +377,14 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
             _p(h.get("description", ""))
             if h.get("justification"):
                 _p(f"*Justification: {h['justification']}*")
+            if h.get("ioc_basis"):
+                _p(f"*IOC Basis: {', '.join(str(i) for i in h['ioc_basis'][:5])}*")
+            # issue-006-E: suggested_actions
+            if h.get("suggested_actions"):
+                lines.append("**Suggested Actions:**")
+                for action in h["suggested_actions"]:
+                    lines.append(f"  - `{action}`")
+                lines.append("")
 
     hunting_leads = full_report.get("hunting_leads") or []
     if hunting_leads:
@@ -547,6 +555,13 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             _p(h.get("description", ""))
             if h.get("justification"):
                 _p(f"<i>Justification: {h['justification']}</i>")
+            if h.get("ioc_basis"):
+                _p(f"<i>IOC Basis: {', '.join(str(i) for i in h['ioc_basis'][:5])}</i>")
+            # issue-006-E: suggested_actions
+            if h.get("suggested_actions"):
+                _p("<b>Suggested Actions:</b>")
+                for action in h["suggested_actions"]:
+                    _p(f"• {action}")
             _sp()
 
     hunting_leads = full_report.get("hunting_leads") or []
