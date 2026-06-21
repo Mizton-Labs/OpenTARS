@@ -277,10 +277,8 @@ sys.exit(asyncio.run(_main()))
     if [ "${dev_mode}" = true ]; then
         log "DEV mode: frontend built and served; uvicorn runs in foreground (Ctrl+C to stop)"
         log "Building frontend..."
-        if [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
-            log "Installing frontend dependencies..."
-            npm --prefix "${FRONTEND_DIR}" install
-        fi
+        log "Installing/syncing frontend dependencies..."
+        npm --prefix "${FRONTEND_DIR}" install
         local git_commit
         git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
         GIT_COMMIT="${git_commit}" npm --prefix "${FRONTEND_DIR}" run build
@@ -326,10 +324,8 @@ sys.exit(asyncio.run(_main()))
     log "API docs → http://${bind_addr}:${BACKEND_PORT}${cli_base_prefix}/docs"
 
     log "Building frontend..."
-    if [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
-        log "Installing frontend dependencies..."
-        npm --prefix "${FRONTEND_DIR}" install
-    fi
+    log "Installing/syncing frontend dependencies..."
+    npm --prefix "${FRONTEND_DIR}" install
     local git_commit
     git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
     GIT_COMMIT="${git_commit}" npm --prefix "${FRONTEND_DIR}" run build
