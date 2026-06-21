@@ -651,6 +651,32 @@ export const api = {
   },
   deleteLogo: () => request<{ has_logo: boolean }>('/app/logo', { method: 'DELETE' }),
 
+  // Agent workflow settings (issue-local-004)
+  getAgentVerbosity: () => request<{ agent_workflow_verbosity: string }>('/app/agent-verbosity'),
+  setAgentVerbosity: (value: string) =>
+    request<{ agent_workflow_verbosity: string }>('/app/agent-verbosity', {
+      method: 'PUT',
+      body: JSON.stringify({ agent_workflow_verbosity: value }),
+    }),
+  getAgentVisualization: () => request<{ agent_workflow_visualization: string }>('/app/agent-visualization'),
+  setAgentVisualization: (value: string) =>
+    request<{ agent_workflow_visualization: string }>('/app/agent-visualization', {
+      method: 'PUT',
+      body: JSON.stringify({ agent_workflow_visualization: value }),
+    }),
+  getThResearchEffort: () => request<{ th_research_effort: string }>('/app/th-research-effort'),
+  setThResearchEffort: (value: string) =>
+    request<{ th_research_effort: string }>('/app/th-research-effort', {
+      method: 'PUT',
+      body: JSON.stringify({ th_research_effort: value }),
+    }),
+  getThReportFormats: () => request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats'),
+  setThReportFormats: (value: { pdf: boolean; markdown: boolean }) =>
+    request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats', {
+      method: 'PUT',
+      body: JSON.stringify({ th_report_formats: value }),
+    }),
+
   // Normalizer
   getNormalizerConfig: () => request<Record<string, unknown>>('/normalizer/config'),
   updateNormalizerConfig: (cfg: Record<string, unknown>) =>
@@ -969,7 +995,7 @@ export const api = {
       ),
 
     // Generation (Phase 3)
-    startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string } = {}) =>
+    startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string; research_effort?: string } = {}) =>
       request<THGenerationRecord>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/generate`,
         { method: 'POST', body: JSON.stringify(body) },
@@ -1026,13 +1052,17 @@ export const api = {
     // ── Phase 6: Reports ────────────────────────────────────────────────────
     getReport: (pkgId: string) =>
       request<THHuntReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report`),
-    generateReport: (pkgId: string, body: { provider_name?: string | null; model_name?: string | null } = {}) =>
+    generateReport: (pkgId: string, body: { provider_name?: string | null; model_name?: string | null; report_formats?: { pdf: boolean; markdown: boolean } } = {}) =>
       request<THHuntReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
     listReports: (pkgId: string) =>
       request<THHuntReport[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/list`),
+    downloadReportMarkdown: (pkgId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/markdown`,
+    downloadReportPdf: (pkgId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/pdf`,
   },
 }
 
@@ -1527,6 +1557,19 @@ export interface THExtractedIOC {
   created_at: string
 }
 
+export interface THStepLog {
+  step: string
+  status: 'ok' | 'error' | 'partial' | 'skipped'
+  elapsed_s: number
+  item_count?: number
+  ioc_count?: number
+  noisy_count?: number
+  effort?: string
+  error?: string
+  /** Debug log lines captured during this step. */
+  debug_lines?: string[]
+}
+
 export interface THGenerationRecord {
   id?: string
   hunt_package_id: string
@@ -1540,10 +1583,13 @@ export interface THGenerationRecord {
   is_running?: boolean
   provider_name?: string | null
   model_name?: string | null
+  research_effort?: string | null
   /** Agent pipeline step currently executing (Phase 3 progress tracking). */
   current_step?: string | null
   /** Agent pipeline steps already completed (Phase 3 progress tracking). */
   completed_steps?: string[] | null
+  /** Per-step telemetry (Phase 4+ verbosity). */
+  step_logs?: THStepLog[] | null
   threat_context?: Record<string, unknown> | null
   hypotheses?: THHypothesis[] | null
   hunting_leads?: THHuntingLead[] | null

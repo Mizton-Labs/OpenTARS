@@ -171,6 +171,7 @@ class HuntPipelineState(TypedDict, total=False):
     hunt_package_id: str
     provider_name: str | None  # override LLM provider; None = use default
     model_name: str | None  # override model; None = provider default
+    research_effort: str  # 'high' | 'medium' | 'low' (default 'medium')
 
     # ── Evidence summary (set by intake_classifier) ───────────────────────────
     evidence_text_corpus: str  # concatenated extracted text from all evidence

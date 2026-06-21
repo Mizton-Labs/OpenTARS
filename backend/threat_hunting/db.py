@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 2
+_TH_SCHEMA_VERSION = 3
 
 
 def _utc_now_iso() -> str:
@@ -102,7 +102,11 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     llm_model           TEXT,
     generation_status   TEXT,
     generation_errors   TEXT,
-    created_at          TEXT NOT NULL
+    created_at          TEXT NOT NULL,
+    current_step        TEXT,
+    completed_steps     TEXT,
+    step_logs           TEXT,
+    research_effort     TEXT
 );
 """
 
@@ -164,6 +168,24 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         except Exception:
             # Column already exists — safe to ignore
             pass
+    if current_version < 3:
+        # v3: step telemetry + research effort columns added to hunting_packages.
+        # These power the live verbosity visualization and per-run effort control.
+        for col_def in (
+            "ADD COLUMN current_step TEXT",
+            "ADD COLUMN completed_steps TEXT",
+            "ADD COLUMN step_logs TEXT",
+            "ADD COLUMN research_effort TEXT",
+        ):
+            try:
+                await db.execute(f"ALTER TABLE hunting_packages {col_def}")
+            except Exception:
+                # Column already exists — safe to ignore
+                pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v3 "
+            "(added current_step, completed_steps, step_logs, research_effort)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -749,6 +771,8 @@ async def get_generation_record_public(hunt_package_id: str) -> dict[str, Any] |
         "ttp_analysis",
         "query_drafts",
         "generation_errors",
+        "completed_steps",
+        "step_logs",
     ):
         raw = d.get(field)
         if raw and isinstance(raw, str):

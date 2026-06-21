@@ -416,6 +416,141 @@ def save_watcher_max_events(value: int) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Agent workflow verbosity (issue-local-004) ───────────────────────────────
+# Controls how much live pipeline telemetry is surfaced in the UI.
+#   info    — clean summary; show current step only
+#   verbose — animated pipeline card: per-step status, tools, timing, item counts
+#   debug   — verbose + scoped backend log buffer in a bottom textbox
+
+_AGENT_VERBOSITY_DEFAULT = "info"
+_AGENT_VERBOSITY_VALUES = frozenset({"info", "verbose", "debug"})
+
+
+def load_agent_verbosity() -> str:
+    """Return the configured agentic workflow verbosity level (default 'info')."""
+    raw = load_app_config().get("agent_workflow_verbosity", _AGENT_VERBOSITY_DEFAULT)
+    if raw not in _AGENT_VERBOSITY_VALUES:
+        logger.warning(
+            "agent_workflow_verbosity %r is not valid; using default %r",
+            raw,
+            _AGENT_VERBOSITY_DEFAULT,
+        )
+        return _AGENT_VERBOSITY_DEFAULT
+    return str(raw)
+
+
+def save_agent_verbosity(value: str) -> None:
+    """Persist the agentic workflow verbosity level to application.yaml."""
+    if not isinstance(value, str) or value not in _AGENT_VERBOSITY_VALUES:
+        raise ValueError(
+            f"agent_workflow_verbosity must be one of: {sorted(_AGENT_VERBOSITY_VALUES)}"
+        )
+    data = load_app_config()
+    data["agent_workflow_verbosity"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+# ── Agent workflow visualization style (issue-local-004) ─────────────────────
+# Controls which rendering mode is used for Verbose / Debug views.
+#   timeline  — animated vertical node list (no extra deps, default)
+#   mermaid   — live Mermaid flowchart diagram (lazy-loaded)
+#   reactflow — interactive ReactFlow node/edge graph (lazy-loaded)
+
+_AGENT_VISUALIZATION_DEFAULT = "timeline"
+_AGENT_VISUALIZATION_VALUES = frozenset({"timeline", "mermaid", "reactflow"})
+
+
+def load_agent_visualization() -> str:
+    """Return the configured workflow visualization style (default 'timeline')."""
+    raw = load_app_config().get("agent_workflow_visualization", _AGENT_VISUALIZATION_DEFAULT)
+    if raw not in _AGENT_VISUALIZATION_VALUES:
+        logger.warning(
+            "agent_workflow_visualization %r is not valid; using default %r",
+            raw,
+            _AGENT_VISUALIZATION_DEFAULT,
+        )
+        return _AGENT_VISUALIZATION_DEFAULT
+    return str(raw)
+
+
+def save_agent_visualization(value: str) -> None:
+    """Persist the workflow visualization style to application.yaml."""
+    if not isinstance(value, str) or value not in _AGENT_VISUALIZATION_VALUES:
+        raise ValueError(
+            f"agent_workflow_visualization must be one of: {sorted(_AGENT_VISUALIZATION_VALUES)}"
+        )
+    data = load_app_config()
+    data["agent_workflow_visualization"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+# ── Threat Hunting research effort (issue-local-004) ─────────────────────────
+# Controls how deeply agents analyse evidence.
+#   high   — more hypotheses/leads, larger token budgets, bigger IOC caps
+#   medium — current defaults (balanced)
+#   low    — minimal output; always runs IOC extraction + deep retrohunt
+
+_TH_RESEARCH_EFFORT_DEFAULT = "medium"
+_TH_RESEARCH_EFFORT_VALUES = frozenset({"high", "medium", "low"})
+
+
+def load_th_research_effort() -> str:
+    """Return the configured TH research effort level (default 'medium')."""
+    raw = load_app_config().get("th_research_effort", _TH_RESEARCH_EFFORT_DEFAULT)
+    if raw not in _TH_RESEARCH_EFFORT_VALUES:
+        logger.warning(
+            "th_research_effort %r is not valid; using default %r",
+            raw,
+            _TH_RESEARCH_EFFORT_DEFAULT,
+        )
+        return _TH_RESEARCH_EFFORT_DEFAULT
+    return str(raw)
+
+
+def save_th_research_effort(value: str) -> None:
+    """Persist the TH research effort level to application.yaml."""
+    if not isinstance(value, str) or value not in _TH_RESEARCH_EFFORT_VALUES:
+        raise ValueError(f"th_research_effort must be one of: {sorted(_TH_RESEARCH_EFFORT_VALUES)}")
+    data = load_app_config()
+    data["th_research_effort"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+# ── Threat Hunting report formats (issue-local-004) ──────────────────────────
+# Which formats to generate when a hunt report is created.
+# Both default to True.
+
+_TH_REPORT_FORMATS_DEFAULT: dict[str, bool] = {"pdf": True, "markdown": True}
+_TH_REPORT_FORMAT_KEYS = frozenset({"pdf", "markdown"})
+
+
+def load_th_report_formats() -> dict[str, bool]:
+    """Return the configured report-format toggles (both default True)."""
+    raw = load_app_config().get("th_report_formats", {})
+    if not isinstance(raw, dict):
+        logger.warning("th_report_formats in %s is not a dict; using defaults", APP_CONFIG_PATH)
+        return dict(_TH_REPORT_FORMATS_DEFAULT)
+    result = dict(_TH_REPORT_FORMATS_DEFAULT)
+    for key in _TH_REPORT_FORMAT_KEYS:
+        if key in raw:
+            result[key] = bool(raw[key])
+    return result
+
+
+def save_th_report_formats(value: dict[str, bool]) -> None:
+    """Persist the report-format toggles to application.yaml."""
+    if not isinstance(value, dict):
+        raise ValueError("th_report_formats must be a dict with keys: pdf, markdown")
+    for key in value:
+        if key not in _TH_REPORT_FORMAT_KEYS:
+            raise ValueError(f"Unknown report format key: {key!r}. Allowed: pdf, markdown")
+        if not isinstance(value[key], bool):
+            raise ValueError(f"th_report_formats[{key!r}] must be a boolean")
+    data = load_app_config()
+    data["th_report_formats"] = dict(value)
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Authentication toggle (prompts-045) ──────────────────────────────────────
 # Env-var override set by mizton-threatbox --enable-auth at uvicorn
 # invocation time. Takes precedence over application.yaml on read.

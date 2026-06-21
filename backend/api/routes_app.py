@@ -15,15 +15,23 @@ from fastapi.responses import FileResponse
 
 from backend.auth.dependencies import require_admin_when_enabled
 from backend.config.loader import (
+    load_agent_verbosity,
+    load_agent_visualization,
     load_app_base_prefix,
     load_app_pagination_max,
     load_app_title,
     load_logo_path,
+    load_th_report_formats,
+    load_th_research_effort,
     load_watcher_max_events,
+    save_agent_verbosity,
+    save_agent_visualization,
     save_app_base_prefix,
     save_app_pagination_max,
     save_app_title,
     save_logo_path,
+    save_th_report_formats,
+    save_th_research_effort,
     save_watcher_max_events,
 )
 
@@ -196,6 +204,127 @@ async def set_watcher_max_events(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"watcher_max_events": value}
+
+
+# ── Agent workflow verbosity (issue-local-004) ───────────────────────────────
+
+
+@router.get("/agent-verbosity")
+async def get_agent_verbosity() -> dict[str, str]:
+    """Return the configured agentic workflow verbosity level."""
+    return {"agent_workflow_verbosity": load_agent_verbosity()}
+
+
+@router.put("/agent-verbosity")
+async def set_agent_verbosity(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the agentic workflow verbosity level.
+
+    Body: {"agent_workflow_verbosity": "info" | "verbose" | "debug"}
+    """
+    value = body.get("agent_workflow_verbosity")
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'agent_workflow_verbosity' as a string",
+        )
+    try:
+        save_agent_verbosity(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"agent_workflow_verbosity": value}
+
+
+@router.get("/agent-visualization")
+async def get_agent_visualization() -> dict[str, str]:
+    """Return the configured workflow visualization style."""
+    return {"agent_workflow_visualization": load_agent_visualization()}
+
+
+@router.put("/agent-visualization")
+async def set_agent_visualization(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the workflow visualization style.
+
+    Body: {"agent_workflow_visualization": "timeline" | "mermaid" | "reactflow"}
+    """
+    value = body.get("agent_workflow_visualization")
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'agent_workflow_visualization' as a string",
+        )
+    try:
+        save_agent_visualization(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"agent_workflow_visualization": value}
+
+
+# ── Threat Hunting research effort (issue-local-004) ─────────────────────────
+
+
+@router.get("/th-research-effort")
+async def get_th_research_effort() -> dict[str, str]:
+    """Return the configured TH research effort level."""
+    return {"th_research_effort": load_th_research_effort()}
+
+
+@router.put("/th-research-effort")
+async def set_th_research_effort(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the TH research effort level.
+
+    Body: {"th_research_effort": "high" | "medium" | "low"}
+    """
+    value = body.get("th_research_effort")
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_research_effort' as a string",
+        )
+    try:
+        save_th_research_effort(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_research_effort": value}
+
+
+# ── Threat Hunting report formats (issue-local-004) ──────────────────────────
+
+
+@router.get("/th-report-formats")
+async def get_th_report_formats() -> dict[str, Any]:
+    """Return the configured report-format toggles."""
+    return {"th_report_formats": load_th_report_formats()}
+
+
+@router.put("/th-report-formats")
+async def set_th_report_formats(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the report-format toggles.
+
+    Body: {"th_report_formats": {"pdf": true, "markdown": true}}
+    """
+    value = body.get("th_report_formats")
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_report_formats' as an object with pdf/markdown booleans",
+        )
+    try:
+        save_th_report_formats(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_report_formats": value}
 
 
 # ── Branding logo endpoints (prompts-045) ────────────────────────────────────

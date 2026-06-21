@@ -22,6 +22,8 @@ import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
 import LLMProvidersTab from './configuration/LLMProvidersTab'
 import SiemConnectorsTab from './configuration/SiemConnectorsTab'
+import AgentsConfigTab from './configuration/AgentsConfigTab'
+import ThreatHuntingSettingsTab from './configuration/ThreatHuntingSettingsTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
 import { getAppBasePrefix } from '../utils/basePrefix'
@@ -44,6 +46,8 @@ type Tab =
   | 'user-management'
   | 'general-ti'
   | 'siem-connectors'
+  | 'agents-config'
+  | 'th-settings'
 
 // General group: infrastructure / platform settings
 const GENERAL_TABS: { id: Tab; label: string }[] = [
@@ -73,8 +77,14 @@ const GROUP_LABELS: Record<Group, string> = {
 const DEFAULT_TAB: Record<Group, Tab> = {
   'general':        'application',
   'threat-intel':   'threat-intel',
-  'threat-hunting': 'application', // group has no sub-tabs; value unused
+  'threat-hunting': 'agents-config',
 }
+
+// Threat Hunting group: agents and hunt settings
+const THREAT_HUNTING_TABS: { id: Tab; label: string }[] = [
+  { id: 'agents-config', label: 'Agents Configuration' },
+  { id: 'th-settings',   label: 'Threat Hunting Settings' },
+]
 
 export default function Configuration() {
   const { authEnabled, isAdmin } = useAuth()
@@ -96,7 +106,7 @@ export default function Configuration() {
   const tabsForGroup: Record<Group, { id: Tab; label: string }[]> = {
     'general':        GENERAL_TABS,
     'threat-intel':   threatIntelTabs,
-    'threat-hunting': [],
+    'threat-hunting': THREAT_HUNTING_TABS,
   }
 
   const currentTabs = tabsForGroup[activeGroup]
@@ -168,6 +178,8 @@ export default function Configuration() {
         {activeTab === 'user-management'  && <UserManagementTab />}
         {activeTab === 'general-ti'       && <GeneralTISettingsTab />}
         {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}
+        {activeTab === 'agents-config'    && <AgentsConfigTab />}
+        {activeTab === 'th-settings'      && <ThreatHuntingSettingsTab />}
       </div>
     </div>
   )

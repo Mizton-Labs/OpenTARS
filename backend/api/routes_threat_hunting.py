@@ -41,6 +41,7 @@ import json
 import logging
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from backend.threat_hunting import db as th_db
@@ -372,6 +373,7 @@ async def list_iocs(pkg_id: str) -> list[dict]:
 class GenerateBody(BaseModel):
     provider_name: str | None = None
     model_name: str | None = None
+    research_effort: str | None = None  # 'high'|'medium'|'low'; None = use global default
 
 
 class ApproveBody(BaseModel):
@@ -399,12 +401,17 @@ async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
             detail="Hunt package has no evidence items. Add at least one before generating.",
         )
 
+    from backend.config.loader import load_th_research_effort
     from backend.threat_hunting.agents.runner import start_generation as _start
+
+    # Resolve research effort: per-request override → global default
+    effort = body.research_effort or load_th_research_effort()
 
     record = await _start(
         pkg_id,
         provider_name=body.provider_name,
         model_name=body.model_name,
+        research_effort=effort,
     )
     return record
 
@@ -658,6 +665,7 @@ async def get_result(pkg_id: str, result_id: str) -> dict:
 class ReportGenerateBody(BaseModel):
     provider_name: str | None = None
     model_name: str | None = None
+    report_formats: dict[str, bool] | None = None  # {"pdf": True, "markdown": True}
 
 
 @router.get("/packages/{pkg_id}/report")
@@ -702,12 +710,23 @@ async def generate_report(pkg_id: str, body: ReportGenerateBody, request: Reques
     except Exception:
         pass
 
+    # Resolve report formats: per-request → global default
+    report_formats = body.report_formats
+    if report_formats is None:
+        try:
+            from backend.config.loader import load_th_report_formats
+
+            report_formats = load_th_report_formats()
+        except Exception:
+            report_formats = {"pdf": True, "markdown": True}
+
     try:
         return await write_report(
             pkg_id,
             provider_name=body.provider_name,
             model_name=body.model_name,
             created_by=created_by,
+            report_formats=report_formats,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -718,3 +737,77 @@ async def list_reports(pkg_id: str) -> list[dict]:
     """List all historical reports for a package (newest first)."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
     return await th_db.list_hunt_reports(pkg_id)
+
+
+@router.get("/packages/{pkg_id}/report/markdown")
+async def download_report_markdown(pkg_id: str) -> Response:
+    """Download the latest hunt report as a Markdown document."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report(pkg_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found.")
+
+    full_report = report.get("full_report") or {}
+    if isinstance(full_report, str):
+        import json as _json
+
+        try:
+            full_report = _json.loads(full_report)
+        except Exception:
+            full_report = {}
+
+    # Use pre-rendered markdown if available, otherwise render on demand
+    markdown_content = full_report.get("_markdown")
+    if not markdown_content:
+        from backend.threat_hunting.agents.nodes.report_writer import render_report_markdown
+
+        markdown_content = render_report_markdown(full_report)
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_report_{hunt_name}.md"
+    return Response(
+        content=markdown_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/packages/{pkg_id}/report/pdf")
+async def download_report_pdf(pkg_id: str) -> StreamingResponse:
+    """Download the latest hunt report as a PDF document (generated on demand)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report(pkg_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found.")
+
+    full_report = report.get("full_report") or {}
+    if isinstance(full_report, str):
+        import json as _json
+
+        try:
+            full_report = _json.loads(full_report)
+        except Exception:
+            full_report = {}
+
+    try:
+        from backend.threat_hunting.agents.nodes.report_writer import render_report_pdf
+
+        pdf_bytes = render_report_pdf(full_report)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="PDF generation requires reportlab. Install it with: pip install reportlab",
+        )
+    except Exception as exc:
+        logger.exception("PDF render failed for %s: %s", pkg_id[:8], exc)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_report_{hunt_name}.pdf"
+    from io import BytesIO
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -10,6 +10,7 @@ import json
 import logging
 import time
 
+from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import HuntPipelineState
 
@@ -36,6 +37,9 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
     try:
         from backend.llm.errors import LLMDisabledError
 
+        profile = get_effort_profile(state.get("research_effort"))
+        h_min, h_max = profile["hypotheses_range"]
+
         threat_context = state.get("threat_context") or {}
         ioc_summary = state.get("ioc_summary") or {}
 
@@ -44,7 +48,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
 
         system, user = build_prompt(
             task_description=(
-                "Generate 3-6 actionable threat hunting hypotheses derived from the "
+                f"Generate {h_min}-{h_max} actionable threat hunting hypotheses derived from the "
                 "threat context and IOC summary. Each hypothesis should be testable "
                 "and grounded in the available evidence."
             ),
@@ -54,7 +58,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             ],
             output_format=_OUTPUT_FORMAT,
             additional_instructions=(
-                "Return a JSON array with 3-6 hypothesis objects. "
+                f"Return a JSON array with {h_min}-{h_max} hypothesis objects. "
                 "Assign sequential IDs: H1, H2, H3, etc. "
                 "Prioritize hypotheses that can be hunted with available IOCs."
             ),
@@ -65,7 +69,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
-            max_tokens=2000,
+            max_tokens=profile["hypothesis_tokens"],
         )
 
         parsed = parse_json_response(response, context=step)
@@ -84,7 +88,15 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             hypotheses = []
 
         elapsed = time.monotonic() - start
-        logs.append({"step": step, "status": "ok", "elapsed_s": round(elapsed, 2)})
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "item_count": len(hypotheses),
+                "effort": state.get("research_effort", "medium"),
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,

@@ -10,6 +10,7 @@ import json
 import logging
 import time
 
+from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import HuntPipelineState
 
@@ -44,6 +45,9 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
     try:
         from backend.llm.errors import LLMDisabledError
 
+        profile = get_effort_profile(state.get("research_effort"))
+        l_min, l_max = profile["leads_range"]
+
         threat_context = state.get("threat_context") or {}
         hypotheses = state.get("hypotheses") or []
 
@@ -52,7 +56,7 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
 
         system, user = build_prompt(
             task_description=(
-                "Generate 2-4 concrete, actionable threat hunting leads from the "
+                f"Generate {l_min}-{l_max} concrete, actionable threat hunting leads from the "
                 "provided hypotheses and threat context. Each lead must include "
                 "specific sub-tasks with data source guidance and query hints."
             ),
@@ -62,7 +66,7 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
             ],
             output_format=_OUTPUT_FORMAT,
             additional_instructions=(
-                "Return a JSON array with 2-4 hunting lead objects. "
+                f"Return a JSON array with {l_min}-{l_max} hunting lead objects. "
                 "Assign sequential IDs: L1, L2, etc. "
                 "Task IDs should follow the pattern T<lead_num>.<task_num> (e.g. T1.1, T1.2). "
                 "Each lead must reference an existing hypothesis_id. "
@@ -75,7 +79,7 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
-            max_tokens=2500,
+            max_tokens=profile["leads_tokens"],
         )
 
         parsed = parse_json_response(response, context=step)
@@ -94,7 +98,15 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
             hunting_leads = []
 
         elapsed = time.monotonic() - start
-        logs.append({"step": step, "status": "ok", "elapsed_s": round(elapsed, 2)})
+        logs.append(
+            {
+                "step": step,
+                "status": "ok",
+                "elapsed_s": round(elapsed, 2),
+                "item_count": len(hunting_leads),
+                "effort": state.get("research_effort", "medium"),
+            }
+        )
         completed.append(step)
         return {
             "current_step": step,

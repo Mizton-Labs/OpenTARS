@@ -210,6 +210,7 @@ async def write_report(
     provider_name: str | None = None,
     model_name: str | None = None,
     created_by: str | None = None,
+    report_formats: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Assemble and persist the Hunt Report for a completed/approved package.
 
@@ -257,7 +258,30 @@ async def write_report(
 
     full_report["executive_summary"] = executive_summary
 
-    # Stage 3: persist
+    # Stage 3: resolve which formats to generate (default from loader if not provided)
+    if report_formats is None:
+        try:
+            from backend.config.loader import load_th_report_formats
+
+            report_formats = load_th_report_formats()
+        except Exception:
+            report_formats = {"pdf": True, "markdown": True}
+
+    # Render ancillary formats — stored as metadata fields for download endpoints
+    markdown_content: str | None = None
+    if report_formats.get("markdown", True):
+        try:
+            markdown_content = render_report_markdown(full_report)
+        except Exception as exc:
+            logger.warning("report_writer: markdown render failed: %s", exc)
+
+    # PDF is generated on-demand at the download endpoint (not stored as a blob)
+    # to keep DB lean. We still note whether it was requested.
+    full_report["_report_formats"] = report_formats
+    if markdown_content:
+        full_report["_markdown"] = markdown_content
+
+    # Stage 4: persist
     report = await th_db.create_hunt_report(
         hunt_package_id,
         executive_summary=executive_summary,
@@ -272,6 +296,302 @@ async def write_report(
     elapsed = time.monotonic() - start
     logger.info("report_writer: report generated for %s in %.2fs", hunt_package_id[:8], elapsed)
     return report
+
+
+# ── Markdown renderer ─────────────────────────────────────────────────────────
+
+
+def render_report_markdown(full_report: dict[str, Any]) -> str:
+    """Render the full_report dict as a Markdown document string."""
+    lines: list[str] = []
+
+    def _h(level: int, text: str) -> None:
+        lines.append(f"{'#' * level} {text}\n")
+
+    def _p(text: str) -> None:
+        if text:
+            lines.append(f"{text}\n")
+
+    def _li(text: str) -> None:
+        lines.append(f"- {text}")
+
+    def _code(text: str, lang: str = "") -> None:
+        lines.append(f"```{lang}")
+        lines.append(text)
+        lines.append("```\n")
+
+    _h(1, f"Threat Hunt Report: {full_report.get('hunt_name', 'Unnamed Hunt')}")
+    lines.append(f"**Hunt ID:** {full_report.get('hunt_id', '')}")
+    lines.append(f"**Generated At:** {full_report.get('generated_at', '')}")
+    lines.append(f"**Status:** {full_report.get('package_status', '')}\n")
+
+    exec_summary = full_report.get("executive_summary", "")
+    if exec_summary:
+        _h(2, "Executive Summary")
+        _p(exec_summary)
+
+    ev = full_report.get("evidence_summary") or {}
+    _h(2, "Evidence Summary")
+    lines.append(f"- Evidence items: {ev.get('total_items', 0)}")
+    lines.append(f"- IOCs extracted: {ev.get('ioc_count', 0)}")
+    lines.append(f"- Item types: {', '.join(ev.get('item_types', []) or [])}\n")
+
+    tc = full_report.get("threat_context") or {}
+    if tc and not tc.get("parse_error"):
+        _h(2, "Threat Context")
+        if tc.get("summary"):
+            _p(tc["summary"])
+        for k, label in [
+            ("threat_actor", "Threat Actor"),
+            ("campaign_name", "Campaign"),
+            ("attack_vector", "Attack Vector"),
+            ("confidence", "Confidence"),
+        ]:
+            if tc.get(k):
+                lines.append(f"- **{label}:** {tc[k]}")
+        for family in tc.get("malware_families") or []:
+            lines.append(f"- **Malware Family:** {family}")
+        lines.append("")
+
+    hypotheses = full_report.get("hypotheses") or []
+    if hypotheses:
+        _h(2, f"Hypotheses ({len(hypotheses)})")
+        for h in hypotheses:
+            _h(3, f"[{h.get('id', '')}] {h.get('title', '')}")
+            lines.append(f"**Relevance:** {h.get('relevance', '')}")
+            _p(h.get("description", ""))
+            if h.get("justification"):
+                _p(f"*Justification: {h['justification']}*")
+
+    hunting_leads = full_report.get("hunting_leads") or []
+    if hunting_leads:
+        _h(2, f"Hunting Leads ({len(hunting_leads)})")
+        for lead in hunting_leads:
+            _h(3, f"[{lead.get('id', '')}] {lead.get('title', '')}")
+            lines.append(
+                f"**Priority:** {lead.get('priority', '')}  **Hypothesis:** {lead.get('hypothesis_id', '')}"
+            )
+            _p(lead.get("description", ""))
+            for task in lead.get("tasks") or []:
+                lines.append(
+                    f"  - **{task.get('id', '')} {task.get('title', '')}** — {task.get('description', '')}"
+                )
+            lines.append("")
+
+    retro = full_report.get("deep_retrohunt_summary") or {}
+    if retro:
+        _h(2, "Deep Retrohunt Summary")
+        lines.append(
+            f"- IOCs: {retro.get('total_iocs', 0)} total, {retro.get('noisy_iocs', 0)} noisy, {retro.get('high_noise_iocs', 0)} high-noise"
+        )
+        if retro.get("spl_macro_name"):
+            lines.append(f"- SPL Macro: `{retro['spl_macro_name']}`")
+        if retro.get("search_hint"):
+            lines.append(f"- Search hint: {retro['search_hint']}")
+        lines.append("")
+
+    ttp = full_report.get("ttp_analysis") or {}
+    if ttp and not ttp.get("parse_error"):
+        _h(2, "TTP Analysis")
+        if ttp.get("summary"):
+            _p(ttp["summary"])
+        for t in ttp.get("techniques") or []:
+            lines.append(
+                f"- **{t.get('technique_id', '')} {t.get('technique_name', '')}** ({t.get('tactic', '')}): {t.get('description', '')}"
+            )
+        for opp in ttp.get("detection_opportunities") or []:
+            lines.append(f"  - Detection: {opp}")
+        lines.append("")
+
+    exec_results = full_report.get("execution_results") or []
+    if exec_results:
+        _h(2, f"Execution Results ({len(exec_results)} run(s))")
+        for r in exec_results:
+            lines.append(
+                f"- **{r.get('id', '')}** status={r.get('status', '')} events={r.get('event_count', 0)}"
+            )
+            if r.get("interpreted_findings"):
+                _p(f"  *{r['interpreted_findings']}*")
+        lines.append("")
+
+    recs = full_report.get("recommendations") or []
+    if recs:
+        _h(2, "Recommendations")
+        for rec in recs:
+            _li(rec)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── PDF renderer ──────────────────────────────────────────────────────────────
+
+
+def render_report_pdf(full_report: dict[str, Any]) -> bytes:
+    """Render the full_report dict as a PDF byte string using reportlab."""
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        HRFlowable,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+    )
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=2 * cm,
+        leftMargin=2 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+    )
+    styles = getSampleStyleSheet()
+    h1 = styles["Heading1"]
+    h2 = styles["Heading2"]
+    h3 = styles["Heading3"]
+    body = styles["BodyText"]
+    code_style = ParagraphStyle(
+        "Code",
+        parent=body,
+        fontName="Courier",
+        fontSize=8,
+        leftIndent=12,
+        spaceAfter=4,
+    )
+
+    story = []
+
+    def _h1(text: str) -> None:
+        story.append(Paragraph(text, h1))
+
+    def _h2(text: str) -> None:
+        story.append(Spacer(1, 6))
+        story.append(HRFlowable(width="100%", thickness=0.5, color="grey"))
+        story.append(Paragraph(text, h2))
+
+    def _h3(text: str) -> None:
+        story.append(Paragraph(text, h3))
+
+    def _p(text: str, style: ParagraphStyle = body) -> None:
+        if text:
+            # Escape XML special chars for reportlab
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            story.append(Paragraph(text, style))
+
+    def _sp() -> None:
+        story.append(Spacer(1, 4))
+
+    hunt_name = full_report.get("hunt_name", "Unnamed Hunt")
+    _h1(f"Threat Hunt Report: {hunt_name}")
+    _p(
+        f"<b>Hunt ID:</b> {full_report.get('hunt_id', '')}  |  "
+        f"<b>Generated:</b> {full_report.get('generated_at', '')}  |  "
+        f"<b>Status:</b> {full_report.get('package_status', '')}"
+    )
+    _sp()
+
+    exec_summary = full_report.get("executive_summary", "")
+    if exec_summary:
+        _h2("Executive Summary")
+        _p(exec_summary)
+
+    ev = full_report.get("evidence_summary") or {}
+    _h2("Evidence Summary")
+    _p(
+        f"Items: {ev.get('total_items', 0)}  |  IOCs extracted: {ev.get('ioc_count', 0)}  |  "
+        f"Types: {', '.join(ev.get('item_types', []) or [])}"
+    )
+
+    tc = full_report.get("threat_context") or {}
+    if tc and not tc.get("parse_error"):
+        _h2("Threat Context")
+        if tc.get("summary"):
+            _p(tc["summary"])
+        for k, label in [
+            ("threat_actor", "Threat Actor"),
+            ("campaign_name", "Campaign"),
+            ("attack_vector", "Attack Vector"),
+            ("confidence", "Confidence"),
+        ]:
+            if tc.get(k):
+                _p(f"<b>{label}:</b> {tc[k]}")
+        for f in tc.get("malware_families") or []:
+            _p(f"<b>Malware Family:</b> {f}")
+
+    hypotheses = full_report.get("hypotheses") or []
+    if hypotheses:
+        _h2(f"Hypotheses ({len(hypotheses)})")
+        for h in hypotheses:
+            _h3(f"[{h.get('id', '')}] {h.get('title', '')}")
+            _p(f"<b>Relevance:</b> {h.get('relevance', '')}")
+            _p(h.get("description", ""))
+            if h.get("justification"):
+                _p(f"<i>Justification: {h['justification']}</i>")
+            _sp()
+
+    hunting_leads = full_report.get("hunting_leads") or []
+    if hunting_leads:
+        _h2(f"Hunting Leads ({len(hunting_leads)})")
+        for lead in hunting_leads:
+            _h3(f"[{lead.get('id', '')}] {lead.get('title', '')}")
+            _p(
+                f"<b>Priority:</b> {lead.get('priority', '')}  <b>Hypothesis:</b> {lead.get('hypothesis_id', '')}"
+            )
+            _p(lead.get("description", ""))
+            for task in lead.get("tasks") or []:
+                _p(
+                    f"• <b>{task.get('id', '')} {task.get('title', '')}</b> — {task.get('description', '')}"
+                )
+            _sp()
+
+    retro = full_report.get("deep_retrohunt_summary") or {}
+    if retro:
+        _h2("Deep Retrohunt Summary")
+        _p(
+            f"IOCs: {retro.get('total_iocs', 0)} total, {retro.get('noisy_iocs', 0)} noisy, "
+            f"{retro.get('high_noise_iocs', 0)} high-noise"
+        )
+        if retro.get("spl_macro_name"):
+            _p(f"<b>SPL Macro:</b> {retro['spl_macro_name']}", code_style)
+        if retro.get("search_hint"):
+            _p(f"Search hint: {retro['search_hint']}")
+
+    ttp = full_report.get("ttp_analysis") or {}
+    if ttp and not ttp.get("parse_error"):
+        _h2("TTP Analysis")
+        if ttp.get("summary"):
+            _p(ttp["summary"])
+        for t in ttp.get("techniques") or []:
+            _p(
+                f"• <b>{t.get('technique_id', '')} {t.get('technique_name', '')}</b> "
+                f"({t.get('tactic', '')}): {t.get('description', '')}"
+            )
+        for opp in ttp.get("detection_opportunities") or []:
+            _p(f"  Detection: {opp}")
+
+    exec_results = full_report.get("execution_results") or []
+    if exec_results:
+        _h2(f"Execution Results ({len(exec_results)} run(s))")
+        for r in exec_results:
+            _p(
+                f"• <b>{r.get('id', '')}</b> status={r.get('status', '')} events={r.get('event_count', 0)}"
+            )
+            if r.get("interpreted_findings"):
+                _p(f"  <i>{r['interpreted_findings']}</i>")
+
+    recs = full_report.get("recommendations") or []
+    if recs:
+        _h2("Recommendations")
+        for rec in recs:
+            _p(f"• {rec}")
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 def _build_fallback_summary(full_report: dict[str, Any]) -> str:

@@ -15,12 +15,21 @@ import {
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
+import WorkflowVisualizer from './WorkflowVisualizer'
 
 export default function AnalysisTab({ pkgId }: { pkgId: string }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
   const [approvalNotes, setApprovalNotes] = useState('')
   const [showApproveForm, setShowApproveForm] = useState(false)
+  const [selectedEffort, setSelectedEffort] = useState<string>('')
+
+  // Load global default effort for the Generate screen
+  const { data: effortData } = useQuery({
+    queryKey: ['th-research-effort'],
+    queryFn: () => api.getThResearchEffort(),
+    staleTime: 30_000,
+  })
 
   // Poll generation status - refetch every 3s when running
   const { data: genRecord, isLoading } = useQuery({
@@ -33,7 +42,10 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
   })
 
   const startMut = useMutation({
-    mutationFn: () => api.threatHunting.startGeneration(pkgId),
+    mutationFn: () => {
+      const effort = selectedEffort || effortData?.th_research_effort || 'medium'
+      return api.threatHunting.startGeneration(pkgId, { research_effort: effort })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['th-generation', pkgId] })
     },
@@ -86,14 +98,37 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
             </p>
           </div>
           {isResearcher ? (
-            <button
-              className="btn-primary flex items-center gap-2 mx-auto"
-              disabled={startMut.isPending}
-              onClick={() => startMut.mutate()}
-            >
-              {startMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {startMut.isPending ? 'Starting...' : 'Generate'}
-            </button>
+            <div className="space-y-3">
+              {/* Research effort selector */}
+              <div className="flex items-center gap-2 justify-center text-xs">
+                <span className="text-gray-500">Research effort:</span>
+                {(['low', 'medium', 'high'] as const).map((e) => {
+                  const active = (selectedEffort || effortData?.th_research_effort || 'medium') === e
+                  return (
+                    <button
+                      key={e}
+                      onClick={() => setSelectedEffort(e)}
+                      className={clsx(
+                        'px-2.5 py-1 rounded text-xs border transition-colors capitalize',
+                        active
+                          ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                          : 'border-gray-700 text-gray-500 hover:border-gray-500',
+                      )}
+                    >
+                      {e}
+                    </button>
+                  )
+                })}
+              </div>
+              <button
+                className="btn-primary flex items-center gap-2 mx-auto"
+                disabled={startMut.isPending}
+                onClick={() => startMut.mutate()}
+              >
+                {startMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {startMut.isPending ? 'Starting...' : 'Generate'}
+              </button>
+            </div>
           ) : (
             <p className="text-xs text-gray-600">Requires threat-researcher or admin role.</p>
           )}
@@ -111,28 +146,15 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
           <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
           <div>
             <p className="text-sm font-medium text-gray-200">Generating hunt package...</p>
-            <p className="text-xs text-gray-500">Current step: <span className="text-blue-400">{currentStep.replace(/_/g, ' ')}</span></p>
+            <p className="text-xs text-gray-500">
+              Current step: <span className="text-blue-400">{currentStep.replace(/_/g, ' ')}</span>
+              {genRecord?.research_effort && (
+                <span className="ml-2 text-gray-600">· effort: {genRecord.research_effort}</span>
+              )}
+            </p>
           </div>
         </div>
-        <div className="space-y-1.5">
-          {[
-            'intake_classifier',
-            'threat_context_builder',
-            'hypothesis_generator',
-            'hunting_lead_planner',
-            'ttp_analyst',
-            'query_drafting_agent',
-          ].map((step) => {
-            const completed = genRecord?.completed_steps?.includes(step)
-            const active = genRecord?.current_step === step
-            return (
-              <div key={step} className={clsx('flex items-center gap-2 text-xs', completed ? 'text-green-400' : active ? 'text-blue-400' : 'text-gray-600')}>
-                {completed ? <CheckCircle className="w-3.5 h-3.5" /> : active ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <div className="w-3.5 h-3.5 rounded-full border border-gray-700" />}
-                {step.replace(/_/g, ' ')}
-              </div>
-            )
-          })}
-        </div>
+        {genRecord && <WorkflowVisualizer genRecord={genRecord} />}
       </div>
     )
   }
