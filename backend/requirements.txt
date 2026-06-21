@@ -19,12 +19,16 @@ pymupdf>=1.24.0          # PDF text extraction (PyMuPDF / fitz)
 python-docx>=1.1.0       # DOCX extraction
 trafilatura>=1.12.0      # URL article/content extraction
 
-# Threat Hunting — Marker PDF parser (issue-007 Part 2C)
-# WARNING: marker-pdf pulls PyTorch + surya-ocr models.
-# First install: ~2-3 GB download; first parse: model download (several minutes).
-# The Marker toggle in Agents Configuration must be ON for Marker to be used.
-# Disable the toggle to always fall back to PyMuPDF (fast, no model required).
-marker-pdf>=1.6.0        # High-quality PDF → Markdown (ML-based, optional heavy dep)
+# Threat Hunting — Docling PDF parser (issue-007 Part 2C)
+# Docling converts PDFs to high-quality Markdown using ML layout + table models.
+# WARNING: docling[standard] pulls PyTorch (~2-3 GB) on first install.
+# ML models are prefetched at startup (see mizton-threatbox startup script) so
+# the first PDF parse does not stall. Models are cached under ~/.cache/docling/.
+# pillow<13.0.0,>=10.0.0 (docling-core requirement) is COMPATIBLE with our
+# pillow>=12.2.0 security pin — no CVE regression. This is why Docling was
+# chosen over marker-pdf (which capped pillow<11.0.0, forcing CVE regression).
+# Disable the 'docling' toggle in Configuration → Agents to fall back to PyMuPDF.
+docling>=2.104.0         # High-quality PDF → Markdown (ML-based; pulls PyTorch)
 
 # Threat Hunting — URL fetch robustness (issue-local-006 Part A)
 tenacity>=8.2.0          # Retry with exponential backoff for transient fetch errors

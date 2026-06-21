@@ -260,27 +260,30 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
         ),
         "available": True,
     },
-    "marker": {
-        "label": "Marker PDF Parser",
+    "docling": {
+        "label": "Docling PDF Parser",
         "category": "document_parser",
         "description": (
-            "Converts PDF documents to high-quality Markdown using the marker-pdf ML "
-            "library (PyTorch-based). Produces significantly better layout preservation, "
-            "table extraction, and equation rendering compared to PyMuPDF's plain-text "
-            "extraction — at the cost of higher CPU/memory usage and a multi-GB model "
-            "download on first use."
+            "Converts PDF documents to high-quality Markdown using the Docling ML "
+            "pipeline (IBM DocLayNet layout model + TableFormer table-structure model). "
+            "Produces significantly better layout preservation, table extraction, "
+            "heading detection, and reading-order reconstruction compared to PyMuPDF's "
+            "plain-text extraction. "
+            "Requires docling (installed automatically via requirements.txt); "
+            "ML models are prefetched at startup and cached under ~/.cache/docling/. "
+            "Compatible with pillow>=12.2.0 — no CVE regression vs PyMuPDF."
         ),
         "used_by": ["evidence_intake"],
         "used_by_description": (
-            "Evidence intake — used when parser_mode='marker' or parser_mode='auto' "
-            "(when Marker is installed and this toggle is enabled, auto-mode prefers "
-            "Marker over PyMuPDF for PDF files)."
+            "Evidence intake — used when parser_mode='docling' or parser_mode='auto' "
+            "(when Docling is installed and this toggle is enabled, auto-mode prefers "
+            "Docling over PyMuPDF for PDF files)."
         ),
         "implication_if_disabled": (
             "PDF uploads will always use PyMuPDF regardless of the selected parser mode. "
-            "Existing evidence extracted by Marker is unaffected."
+            "Existing evidence extracted by Docling is unaffected."
         ),
-        # 'available' is overridden at catalog-response time based on runtime check
+        # 'available' is overridden at catalog-response time based on is_docling_available()
         "available": False,
     },
 }

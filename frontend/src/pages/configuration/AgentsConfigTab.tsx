@@ -376,13 +376,13 @@ export default function AgentsConfigTab() {
                     </div>
                   )}
 
-                  {/* Not-installed note for marker */}
+                  {/* Not-installed note for docling */}
                   {isUnavailable && (
                     <div className="flex items-start gap-1.5 rounded border border-gray-700/30 bg-gray-900/10 px-2 py-1.5">
                       <AlertTriangle className="w-3 h-3 text-gray-600 shrink-0 mt-0.5" />
                       <p className="text-[10px] text-gray-600 leading-relaxed">
-                        {tool.name === 'marker'
-                          ? 'Install marker-pdf to enable this parser: pip install marker-pdf'
+                        {tool.name === 'docling'
+                          ? 'Docling is installed automatically at startup via requirements.txt. If unavailable, restart the app to trigger installation.'
                           : 'This tool is not available in the current environment.'}
                       </p>
                     </div>
