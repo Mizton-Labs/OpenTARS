@@ -58,8 +58,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
     debug_lines: list[str] = []
     decision = ""
     try:
+        from backend.config.loader import load_agent_tools
         from backend.llm.errors import LLMDisabledError
-        from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
+        from backend.threat_hunting.agents.tools import call_tool, get_enabled_tool_specs
 
         profile = get_effort_profile(state.get("research_effort"))
         ioc_sample_limit = profile["ioc_sample_limit"]
@@ -131,10 +132,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             errors.append(f"{step}: unexpected LLM response type, using empty list")
             query_drafts = []
 
-        # ── Post-draft tool validation ─────────────────────────────────────
-        # Validate SPL queries and look up MITRE references using tool-calling.
+        # ── Post-draft tool validation (issue-007: gated by enabled toggles) ──
         if query_drafts:
-            tool_specs = [TOOL_SPEC_BY_NAME[n] for n in _TOOL_NAMES if n in TOOL_SPEC_BY_NAME]
+            tool_specs = get_enabled_tool_specs(_TOOL_NAMES, load_agent_tools())
             if tool_specs:
                 spl_queries = [
                     q.get("query", "") for q in query_drafts if q.get("language") == "spl"

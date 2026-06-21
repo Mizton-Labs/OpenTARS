@@ -7,7 +7,7 @@
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Shield, Trash2, ChevronRight, Timer } from 'lucide-react'
+import { Plus, Shield, Trash2, ChevronRight, Timer, ChevronDown } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -54,35 +54,103 @@ interface PhaseCardProps {
 }
 
 function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
+  const [expanded, setExpanded] = useState(false)
   const isActive = currentStep === stepId
   const isDone = phase?.status === 'ok' || phase?.status === 'partial'
   const isError = phase?.status === 'error'
   const isSkipped = phase?.status === 'skipped'
 
+  // Only show expand button when there's richer data to show
+  const hasDetail =
+    (phase?.tools_used?.length ?? 0) > 0 ||
+    !!phase?.decision ||
+    phase?.item_count != null ||
+    phase?.ioc_count != null
+
   return (
-    <div className="flex items-center gap-1">
-      <div
-        className={clsx(
-          'px-2 py-1 rounded text-[9px] font-medium border transition-colors min-w-[48px] text-center',
-          isActive
-            ? 'border-blue-500 bg-blue-900/20 text-blue-300 animate-pulse'
-            : isDone
-              ? 'border-green-700/50 bg-green-900/20 text-green-400'
-              : isError
-                ? 'border-red-700/50 bg-red-900/20 text-red-400'
-                : isSkipped
-                  ? 'border-gray-700/30 bg-gray-900/10 text-gray-600'
-                  : 'border-gray-800/40 bg-transparent text-gray-700',
-        )}
-        title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ''}`}
-      >
-        {STEP_SHORT_LABELS[stepId] ?? stepId}
-        {phase?.elapsed_s != null && (
-          <span className="block text-[8px] opacity-60">{phase.elapsed_s}s</span>
+    <div className="flex items-start gap-1">
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (hasDetail) setExpanded((v) => !v)
+          }}
+          className={clsx(
+            'px-2 py-1 rounded text-[9px] font-medium border transition-colors min-w-[48px] text-center',
+            hasDetail ? 'cursor-pointer' : 'cursor-default',
+            isActive
+              ? 'border-blue-500 bg-blue-900/20 text-blue-300 animate-pulse'
+              : isDone
+                ? 'border-green-700/50 bg-green-900/20 text-green-400'
+                : isError
+                  ? 'border-red-700/50 bg-red-900/20 text-red-400'
+                  : isSkipped
+                    ? 'border-gray-700/30 bg-gray-900/10 text-gray-600'
+                    : 'border-gray-800/40 bg-transparent text-gray-700',
+          )}
+          title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ''}${hasDetail ? ' — click to expand' : ''}`}
+        >
+          <div className="flex items-center justify-center gap-0.5">
+            <span>{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
+            {hasDetail && (
+              <ChevronDown
+                className={clsx('w-2 h-2 transition-transform', expanded && 'rotate-180')}
+              />
+            )}
+          </div>
+          {phase?.elapsed_s != null && (
+            <span className="block text-[8px] opacity-60">{phase.elapsed_s}s</span>
+          )}
+        </button>
+
+        {/* Expanded detail panel */}
+        {expanded && phase && (
+          <div
+            className="mt-1 rounded border border-gray-700/50 bg-gray-900/60 px-2 py-1.5 space-y-1 min-w-[120px] max-w-[200px] z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Counts */}
+            {(phase.item_count != null || phase.ioc_count != null) && (
+              <div className="flex flex-wrap gap-1">
+                {phase.item_count != null && (
+                  <span className="text-[8px] font-mono text-brand-400">
+                    {phase.item_count} items
+                  </span>
+                )}
+                {phase.ioc_count != null && (
+                  <span className="text-[8px] font-mono text-blue-400">
+                    {phase.ioc_count} IOCs
+                    {phase.noisy_count ? ` (${phase.noisy_count} noisy)` : ''}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Tools used */}
+            {(phase.tools_used?.length ?? 0) > 0 && (
+              <div className="flex flex-wrap gap-0.5">
+                {phase.tools_used!.map((t) => (
+                  <span
+                    key={t}
+                    className="text-[8px] font-mono bg-purple-900/30 text-purple-300 border border-purple-800/30 rounded px-1"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Decision text */}
+            {phase.decision && (
+              <p className="text-[8px] text-gray-500 italic leading-relaxed">
+                {phase.decision.slice(0, 120)}
+                {phase.decision.length > 120 ? '…' : ''}
+              </p>
+            )}
+          </div>
         )}
       </div>
       {!isLast && (
-        <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0" />
+        <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0 mt-2" />
       )}
     </div>
   )
@@ -108,7 +176,7 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
 
   return (
     <div className="mt-2">
-      <div className="flex items-center flex-wrap gap-0.5">
+      <div className="flex items-start flex-wrap gap-0.5">
         {STEP_ORDER.map((stepId, i) => (
           <PhaseCard
             key={stepId}

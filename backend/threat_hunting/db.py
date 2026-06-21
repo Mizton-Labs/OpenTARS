@@ -347,13 +347,23 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
                     step_name = log.get("step", "")
                     if step_name:
                         elapsed = log.get("elapsed_s") or 0.0
-                        phases.append(
-                            {
-                                "step": step_name,
-                                "status": log.get("status", "unknown"),
-                                "elapsed_s": elapsed,
-                            }
-                        )
+                        # issue-007: widen projection with richer step-log fields
+                        phase_entry: dict[str, Any] = {
+                            "step": step_name,
+                            "status": log.get("status", "unknown"),
+                            "elapsed_s": elapsed,
+                        }
+                        if log.get("tools_used") is not None:
+                            phase_entry["tools_used"] = log["tools_used"]
+                        if log.get("decision"):
+                            phase_entry["decision"] = log["decision"]
+                        if log.get("item_count") is not None:
+                            phase_entry["item_count"] = log["item_count"]
+                        if log.get("ioc_count") is not None:
+                            phase_entry["ioc_count"] = log["ioc_count"]
+                        if log.get("noisy_count") is not None:
+                            phase_entry["noisy_count"] = log["noisy_count"]
+                        phases.append(phase_entry)
                         total_elapsed += float(elapsed)
             except Exception:  # noqa: BLE001
                 pass

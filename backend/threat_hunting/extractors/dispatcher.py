@@ -3,8 +3,12 @@
 Selects the appropriate extractor based on MIME type / file extension and
 the configured parser_mode (auto | pymupdf | marker).
 
-Marker (marker-pdf) is listed as a future option — not yet installed. When
-selected and unavailable, the dispatcher falls back to PyMuPDF with a warning.
+parser_mode routing for PDFs (issue-007):
+  - ``pymupdf`` — always use PyMuPDF (plain text, fast).
+  - ``marker``  — use marker-pdf when available + enabled in agent_tools config;
+                  otherwise fall back to PyMuPDF with a warning.
+  - ``auto``    — prefer marker-pdf when it is installed AND the "marker"
+                  agent_tools toggle is enabled; otherwise use PyMuPDF.
 """
 
 from __future__ import annotations
@@ -183,14 +187,61 @@ def extract_file(
 def _extract_pdf(
     data: bytes, parser_mode: str, warnings: list[str]
 ) -> tuple[str, str, str, list[str]]:
-    """Route PDF extraction to PyMuPDF or Marker based on parser_mode."""
+    """Route PDF extraction to PyMuPDF or Marker based on parser_mode.
+
+    Routing logic (issue-007):
+      - ``pymupdf`` - always PyMuPDF.
+      - ``marker``  - Marker when installed + toggle enabled; else PyMuPDF + warning.
+      - ``auto``    - Marker when installed + toggle enabled; else PyMuPDF.
+    """
+    from backend.threat_hunting.extractors.pdf_extractor import (
+        extract_pdf,
+        extract_pdf_marker,
+        is_available,
+        is_marker_available,
+    )
+
+    def _marker_toggle_enabled() -> bool:
+        """Return whether the Marker toggle is on in agent_tools config."""
+        try:
+            from backend.config.loader import load_agent_tools
+
+            return bool(load_agent_tools().get("marker", True))
+        except Exception:  # noqa: BLE001
+            return True  # conservative default
+
+    use_marker = is_marker_available() and _marker_toggle_enabled()
+
     if parser_mode == PARSER_MARKER:
-        # Marker not yet installed — fall back to PyMuPDF with warning
-        warnings.append("Marker parser selected but not installed; falling back to PyMuPDF")
+        if not is_marker_available():
+            warnings.append(
+                "Marker parser selected but marker-pdf is not installed; "
+                "falling back to PyMuPDF. Install with: pip install marker-pdf"
+            )
+        elif not _marker_toggle_enabled():
+            warnings.append(
+                "Marker parser selected but disabled in agent tools configuration; "
+                "falling back to PyMuPDF."
+            )
+        else:
+            try:
+                text, version, parse_warnings = extract_pdf_marker(data)
+                warnings.extend(parse_warnings)
+                return text, "marker", version, warnings
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"Marker extraction failed ({exc}); falling back to PyMuPDF")
 
-    # Default / auto / pymupdf / fallback from marker all use PyMuPDF
-    from backend.threat_hunting.extractors.pdf_extractor import extract_pdf, is_available
+    elif parser_mode == PARSER_AUTO and use_marker:
+        # Auto-mode prefers Marker when available + enabled (issue-007)
+        try:
+            text, version, parse_warnings = extract_pdf_marker(data)
+            warnings.extend(parse_warnings)
+            warnings.append("auto: used marker-pdf for Markdown extraction")
+            return text, "marker", version, warnings
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"Marker auto-mode failed ({exc}); falling back to PyMuPDF")
 
+    # Fall through: PyMuPDF
     if not is_available():
         warnings.append("PyMuPDF not available; returning raw bytes as text")
         return data.decode("utf-8", errors="replace"), "none", "", warnings

@@ -12,6 +12,12 @@ Security notes:
   - No shell execution. All tools are pure Python.
   - Tool inputs are type-validated by the JSON schema before dispatch.
   - LLM tool-choice cannot call arbitrary code — only the registered tools below.
+
+Tooling config (issue-007):
+  ``TOOL_METADATA`` provides operator-facing descriptions, per-tool agent
+  assignments, and implications of disabling each tool.  The
+  ``get_enabled_tool_specs()`` helper filters the offered tool set against
+  operator-configured toggles so disabled tools are never presented to the LLM.
 """
 
 from __future__ import annotations
@@ -132,6 +138,173 @@ TOOL_SPECS: list[dict[str, Any]] = [
 
 # Build a quick lookup by name
 TOOL_SPEC_BY_NAME: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOL_SPECS}
+
+# ── Tool metadata (issue-007) ─────────────────────────────────────────────────
+# Operator-facing descriptions, per-tool agent assignments, and disable
+# implications.  Used by the catalog API endpoint so the UI stays in sync with
+# the actual tool registry without duplicating descriptions in the frontend.
+#
+# ``category`` distinguishes LLM-callable agent tools from document parsers
+# that are toggled through the same config system (e.g. "marker").
+#
+# ``available`` is always True for the 6 agent tools (they are pure Python
+# built-ins); it is overridden at catalog-response time for "marker" based on
+# whether marker-pdf is installed.
+
+TOOL_METADATA: dict[str, dict[str, Any]] = {
+    "extract_iocs": {
+        "label": "IOC Extractor",
+        "category": "agent_tool",
+        "description": (
+            "Scans a text string for Indicators of Compromise (IPs, domains, hashes, "
+            "CVEs, emails, registry keys) and returns a structured list. Used when the "
+            "LLM determines that additional text needs scanning beyond pre-loaded evidence."
+        ),
+        "used_by": ["intake_classifier"],
+        "used_by_description": "intake_classifier — enriches thin URL evidence with fresh IOC scans.",
+        "implication_if_disabled": (
+            "Intake Classifier will no longer ask the LLM to scan additional text snippets "
+            "for IOCs. Existing IOCs extracted at upload time are unaffected."
+        ),
+        "available": True,
+    },
+    "defang_ioc": {
+        "label": "IOC Defanger",
+        "category": "agent_tool",
+        "description": (
+            "Normalizes a defanged IOC value (e.g. converts `evil[.]com` back to "
+            "`evil.com`) for consistent SIEM query construction."
+        ),
+        "used_by": ["deep_retrohunt_planner"],
+        "used_by_description": "deep_retrohunt_planner — normalizes IOC notation before SPL macro drafting.",
+        "implication_if_disabled": (
+            "Deep Retrohunt Planner will not normalize defanged IOC notation during the "
+            "SPL validation pass. IOCs may appear in defanged form in draft queries."
+        ),
+        "available": True,
+    },
+    "noise_score": {
+        "label": "IOC Noise Scorer",
+        "category": "agent_tool",
+        "description": (
+            "Returns a 0.0–1.0 noise score and human-readable reasons for a single IOC. "
+            "Higher score means higher likelihood of producing excessive false positives "
+            "in SIEM searches. Covers known CDN ranges, common process names, private IPs, "
+            "and short/generic tokens."
+        ),
+        "used_by": ["deep_retrohunt_planner"],
+        "used_by_description": "deep_retrohunt_planner — checks individual IOC noise levels during SPL validation.",
+        "implication_if_disabled": (
+            "Deep Retrohunt Planner will not call the noise scorer during its validation "
+            "pass. Deterministic noise scoring at ingestion time is unaffected; only the "
+            "LLM-directed per-IOC re-check is skipped."
+        ),
+        "available": True,
+    },
+    "mitre_lookup": {
+        "label": "MITRE ATT&CK Lookup",
+        "category": "agent_tool",
+        "description": (
+            "Resolves a MITRE ATT&CK technique ID (e.g. T1059.001) to its name, "
+            "associated tactic(s), and a short description from a built-in 40-entry map. "
+            "Allows agents to annotate their output with verified technique references."
+        ),
+        "used_by": ["threat_context_builder", "query_drafting_agent"],
+        "used_by_description": (
+            "threat_context_builder — enriches context with verified ATT&CK names; "
+            "query_drafting_agent — confirms technique references in query drafts."
+        ),
+        "implication_if_disabled": (
+            "Threat Context Builder and Query Drafting Agent will not resolve MITRE "
+            "technique IDs during their processing pass. Technique IDs may still appear "
+            "in outputs but will not be cross-checked against the built-in map."
+        ),
+        "available": True,
+    },
+    "validate_spl": {
+        "label": "SPL Query Validator",
+        "category": "agent_tool",
+        "description": (
+            "Performs a basic syntax check on a Splunk SPL query: balanced brackets, "
+            "empty double-pipe, and presence of at least one recognized SPL command. "
+            "Returns {valid, issues} so the model can self-correct before finalizing output."
+        ),
+        "used_by": ["deep_retrohunt_planner", "query_drafting_agent"],
+        "used_by_description": (
+            "deep_retrohunt_planner — validates the SPL macro draft; "
+            "query_drafting_agent — validates each drafted search query."
+        ),
+        "implication_if_disabled": (
+            "SPL query drafts will not be self-validated before being written to the hunt "
+            "package. Syntactically incorrect queries may reach the operator for review."
+        ),
+        "available": True,
+    },
+    "refetch_url": {
+        "label": "URL Re-fetcher",
+        "category": "agent_tool",
+        "description": (
+            "Re-fetches a URL and returns its extracted text. Subject to full SSRF "
+            "validation — private and internal IPs are blocked. Used when evidence "
+            "from a URL was thin (e.g. JavaScript-rendered page) at upload time."
+        ),
+        "used_by": ["intake_classifier", "threat_context_builder"],
+        "used_by_description": (
+            "intake_classifier — re-fetches thin URL evidence for a richer corpus; "
+            "threat_context_builder — fetches additional context from identified URLs."
+        ),
+        "implication_if_disabled": (
+            "Agents will not attempt to re-fetch URLs during the pipeline run. "
+            "Evidence quality depends entirely on what was captured at upload time. "
+            "SSRF protection and the upload-time URL fetcher are unaffected."
+        ),
+        "available": True,
+    },
+    "marker": {
+        "label": "Marker PDF Parser",
+        "category": "document_parser",
+        "description": (
+            "Converts PDF documents to high-quality Markdown using the marker-pdf ML "
+            "library (PyTorch-based). Produces significantly better layout preservation, "
+            "table extraction, and equation rendering compared to PyMuPDF's plain-text "
+            "extraction — at the cost of higher CPU/memory usage and a multi-GB model "
+            "download on first use."
+        ),
+        "used_by": ["evidence_intake"],
+        "used_by_description": (
+            "Evidence intake — used when parser_mode='marker' or parser_mode='auto' "
+            "(when Marker is installed and this toggle is enabled, auto-mode prefers "
+            "Marker over PyMuPDF for PDF files)."
+        ),
+        "implication_if_disabled": (
+            "PDF uploads will always use PyMuPDF regardless of the selected parser mode. "
+            "Existing evidence extracted by Marker is unaffected."
+        ),
+        # 'available' is overridden at catalog-response time based on runtime check
+        "available": False,
+    },
+}
+
+
+def get_enabled_tool_specs(
+    names: list[str] | tuple[str, ...],
+    enabled: dict[str, bool],
+) -> list[dict[str, Any]]:
+    """Return the subset of tool specs from *names* that are currently enabled.
+
+    Args:
+        names:   Tool names the caller wants to offer (e.g. a node's _TOOL_NAMES).
+        enabled: Dict mapping tool name → bool (from ``load_agent_tools()``).
+                 Missing keys default to True (conservative: don't silently disable
+                 a tool just because the config key is absent).
+
+    Returns:
+        List of TOOL_SPEC_BY_NAME entries for tools that are both in *names* and
+        have ``enabled.get(name, True) == True``.  Empty list is valid — callers
+        already guard with ``if tool_specs:``.
+    """
+    return [TOOL_SPEC_BY_NAME[n] for n in names if n in TOOL_SPEC_BY_NAME and enabled.get(n, True)]
+
 
 # ── Tool implementations ───────────────────────────────────────────────────────
 

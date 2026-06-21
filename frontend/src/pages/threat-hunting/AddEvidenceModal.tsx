@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X, FileUp, Globe, MessageSquare, Rss, Loader2, CheckCircle, AlertTriangle } from 'lucide-react'
 import { api, type THEvidenceItem } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
+import { clsx } from 'clsx'
 
 type AddMode = 'file' | 'url' | 'text' | 'watcher' | null
 
@@ -38,6 +39,17 @@ export default function AddEvidenceModal({
     queryFn: api.watchers.list,
     enabled: addMode === 'watcher',
   })
+
+  // issue-007: fetch agent-tools catalog to check marker availability + enabled
+  const { data: catalogData } = useQuery({
+    queryKey: ['agent-tools-catalog'],
+    queryFn: () => api.getAgentToolsCatalog(),
+    staleTime: 60_000,
+    enabled: addMode === 'file',
+  })
+  const markerEntry = catalogData?.catalog?.find((e) => e.name === 'marker')
+  const markerAvailable = markerEntry?.available ?? false
+  const markerEnabled = markerEntry != null // present in catalog means it's recognized
 
   async function submit() {
     setBusy(true)
@@ -96,11 +108,27 @@ export default function AddEvidenceModal({
             <div className="space-y-3">
               <input type="file" className="input w-full text-sm" accept=".pdf,.doc,.docx,.txt,.md,.csv,.tsv,.json,.ndjson,.xml,.gz,.zip" onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f && !fileLabel) setFileLabel(f.name) }} />
               <input className="input w-full text-sm" placeholder="Label" value={fileLabel} onChange={(e) => setFileLabel(e.target.value)} />
-              <select className="input w-full text-sm" value={parserMode} onChange={(e) => setParserMode(e.target.value)}>
-                <option value="auto">Parser: auto</option>
-                <option value="pymupdf">PyMuPDF</option>
-                <option value="marker">Marker</option>
+              <select
+                className="input w-full text-sm"
+                value={parserMode}
+                onChange={(e) => setParserMode(e.target.value)}
+              >
+                <option value="auto">Parser: auto{markerAvailable ? ' (prefers Marker)' : ' (PyMuPDF)'}</option>
+                <option value="pymupdf">PyMuPDF — fast, plain text</option>
+                <option
+                  value="marker"
+                  disabled={!markerAvailable}
+                  className={clsx(!markerAvailable && 'text-gray-600')}
+                >
+                  Marker — high-quality Markdown{!markerAvailable ? ' (not installed)' : ''}
+                </option>
               </select>
+              {parserMode === 'marker' && !markerAvailable && (
+                <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  marker-pdf is not installed — selection will fall back to PyMuPDF.
+                </div>
+              )}
             </div>
           )}
           {addMode === 'url' && (

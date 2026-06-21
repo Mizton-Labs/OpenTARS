@@ -55,8 +55,9 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
     debug_lines: list[str] = []
     decision = ""
     try:
+        from backend.config.loader import load_agent_tools
         from backend.llm.errors import LLMDisabledError
-        from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
+        from backend.threat_hunting.agents.tools import call_tool, get_enabled_tool_specs
 
         corpus: str = state.get("evidence_text_corpus") or ""
         ioc_summary = state.get("ioc_summary") or {}
@@ -68,10 +69,8 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
 
         ioc_summary_text = json.dumps(ioc_summary, indent=2)
 
-        # ── Pre-context tool enrichment ────────────────────────────────────
-        # Allow the model to look up MITRE techniques or re-fetch URLs before
-        # producing the final context summary.
-        tool_specs = [TOOL_SPEC_BY_NAME[n] for n in _TOOL_NAMES if n in TOOL_SPEC_BY_NAME]
+        # ── Pre-context tool enrichment (issue-007: gated by enabled toggles) ──
+        tool_specs = get_enabled_tool_specs(_TOOL_NAMES, load_agent_tools())
         if tool_specs:
             enrich_prompt = (
                 f"You are building a threat context. "
