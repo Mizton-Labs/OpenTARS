@@ -5,9 +5,9 @@
  * per-step status (green=done, red=error, pulse=active, gray=pending) and
  * total elapsed time. Gracefully falls back to a simple card when no run data.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Shield, Trash2, ChevronRight, Timer, ChevronDown } from 'lucide-react'
+import { Plus, Shield, Trash2, ChevronRight, Timer } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -54,31 +54,22 @@ interface PhaseCardProps {
 }
 
 function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
-  const [expanded, setExpanded] = useState(false)
   const isActive = currentStep === stepId
   const isDone = phase?.status === 'ok' || phase?.status === 'partial'
   const isError = phase?.status === 'error'
   const isSkipped = phase?.status === 'skipped'
+  const isPending = !phase  // no step_log entry yet → pending/not-started
 
-  // Only show expand button when there's richer data to show
-  const hasDetail =
-    (phase?.tools_used?.length ?? 0) > 0 ||
-    !!phase?.decision ||
-    phase?.item_count != null ||
-    phase?.ioc_count != null
+  // issue-008-2A: inline tools + counts always visible on done steps (not click-to-expand)
+  const hasTools = (phase?.tools_used?.length ?? 0) > 0
+  const hasCounts = phase?.item_count != null || phase?.ioc_count != null
 
   return (
     <div className="flex items-start gap-1">
       <div className="flex flex-col">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (hasDetail) setExpanded((v) => !v)
-          }}
+        <div
           className={clsx(
-            'px-2 py-1 rounded text-[9px] font-medium border transition-colors min-w-[48px] text-center',
-            hasDetail ? 'cursor-pointer' : 'cursor-default',
+            'px-2 py-1 rounded text-[9px] font-medium border transition-colors min-w-[52px] text-center',
             isActive
               ? 'border-blue-500 bg-blue-900/20 text-blue-300 animate-pulse'
               : isDone
@@ -87,70 +78,53 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
                   ? 'border-red-700/50 bg-red-900/20 text-red-400'
                   : isSkipped
                     ? 'border-gray-700/30 bg-gray-900/10 text-gray-600'
-                    : 'border-gray-800/40 bg-transparent text-gray-700',
+                    : isPending
+                      ? 'border-gray-800/30 bg-transparent text-gray-800'
+                      : 'border-gray-800/40 bg-transparent text-gray-700',
           )}
-          title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ''}${hasDetail ? ' — click to expand' : ''}`}
+          title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
         >
-          <div className="flex items-center justify-center gap-0.5">
-            <span>{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
-            {hasDetail && (
-              <ChevronDown
-                className={clsx('w-2 h-2 transition-transform', expanded && 'rotate-180')}
-              />
-            )}
-          </div>
+          <span>{STEP_SHORT_LABELS[stepId] ?? stepId}</span>
           {phase?.elapsed_s != null && (
             <span className="block text-[8px] opacity-60">{phase.elapsed_s}s</span>
           )}
-        </button>
+        </div>
 
-        {/* Expanded detail panel */}
-        {expanded && phase && (
-          <div
-            className="mt-1 rounded border border-gray-700/50 bg-gray-900/60 px-2 py-1.5 space-y-1 min-w-[120px] max-w-[200px] z-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Counts */}
-            {(phase.item_count != null || phase.ioc_count != null) && (
-              <div className="flex flex-wrap gap-1">
-                {phase.item_count != null && (
-                  <span className="text-[8px] font-mono text-brand-400">
-                    {phase.item_count} items
+        {/* issue-008-2A: inline detail always visible when done (not click-to-expand) */}
+        {isDone && (hasCounts || hasTools) && (
+          <div className="mt-0.5 space-y-0.5 max-w-[80px]" onClick={(e) => e.stopPropagation()}>
+            {hasCounts && (
+              <div className="flex flex-wrap gap-0.5">
+                {phase!.item_count != null && (
+                  <span className="text-[7px] font-mono text-brand-400 leading-none">
+                    {phase!.item_count}items
                   </span>
                 )}
-                {phase.ioc_count != null && (
-                  <span className="text-[8px] font-mono text-blue-400">
-                    {phase.ioc_count} IOCs
-                    {phase.noisy_count ? ` (${phase.noisy_count} noisy)` : ''}
+                {phase!.ioc_count != null && (
+                  <span className="text-[7px] font-mono text-blue-400 leading-none">
+                    {phase!.ioc_count}ioc{phase!.noisy_count ? `(${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
               </div>
             )}
-            {/* Tools used */}
-            {(phase.tools_used?.length ?? 0) > 0 && (
+            {hasTools && (
               <div className="flex flex-wrap gap-0.5">
-                {phase.tools_used!.map((t) => (
+                {phase!.tools_used!.map((t) => (
                   <span
                     key={t}
-                    className="text-[8px] font-mono bg-purple-900/30 text-purple-300 border border-purple-800/30 rounded px-1"
+                    className="text-[7px] font-mono bg-purple-900/30 text-purple-400 border border-purple-800/20 rounded px-0.5 leading-none"
+                    title={t}
                   >
-                    {t}
+                    {t.slice(0, 8)}
                   </span>
                 ))}
               </div>
-            )}
-            {/* Decision text */}
-            {phase.decision && (
-              <p className="text-[8px] text-gray-500 italic leading-relaxed">
-                {phase.decision.slice(0, 120)}
-                {phase.decision.length > 120 ? '…' : ''}
-              </p>
             )}
           </div>
         )}
       </div>
       {!isLast && (
-        <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0 mt-2" />
+        <ChevronRight className="w-2.5 h-2.5 text-gray-800 shrink-0 mt-2" />
       )}
     </div>
   )
@@ -161,39 +135,78 @@ interface ProcessArrowProps {
 }
 
 function ProcessArrow({ pkg }: ProcessArrowProps) {
-  if (!pkg.phases?.length) return null
-
+  // issue-008-2A: always render the 7-step rail, even for draft/never-run packages
   const phaseByStep: Record<string, THPhaseEntry> = {}
-  for (const p of pkg.phases) {
+  for (const p of pkg.phases ?? []) {
     phaseByStep[p.step] = p
   }
 
-  // Derive current step from generation_status (running packages may still be active)
-  const runningStep =
-    pkg.generation_status === 'running'
-      ? STEP_ORDER.find((s) => !phaseByStep[s])
-      : null
+  // Derive current step (first STEP_ORDER entry with no log yet)
+  const isRunning = pkg.generation_status === 'running'
+  const runningStep = isRunning ? (STEP_ORDER.find((s) => !phaseByStep[s]) ?? null) : null
+
+  // issue-008-2A: live elapsed timer for in-progress runs
+  const [liveElapsed, setLiveElapsed] = useState<number | null>(null)
+  useEffect(() => {
+    if (!isRunning || !pkg.run_created_at) {
+      setLiveElapsed(null)
+      return
+    }
+    const startMs = new Date(pkg.run_created_at).getTime()
+    const tick = () => setLiveElapsed(Math.floor((Date.now() - startMs) / 1000))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [isRunning, pkg.run_created_at])
+
+  const hasAnyData = pkg.generation_status != null || (pkg.phases?.length ?? 0) > 0
 
   return (
     <div className="mt-2">
+      {/* Status line */}
+      {pkg.generation_status && (
+        <div className="flex items-center gap-1 mb-1">
+          <span className={clsx(
+            'text-[8px] font-mono px-1 py-0.5 rounded',
+            pkg.generation_status === 'completed' ? 'bg-green-900/20 text-green-500' :
+            pkg.generation_status === 'running' ? 'bg-blue-900/20 text-blue-400' :
+            pkg.generation_status === 'awaiting_approval' ? 'bg-amber-900/20 text-amber-400' :
+            pkg.generation_status === 'error' ? 'bg-red-900/20 text-red-400' :
+            'bg-gray-800/30 text-gray-600',
+          )}>
+            {pkg.generation_status.replace(/_/g, ' ')}
+          </span>
+          {/* Live timer (running) or total (finished) */}
+          {isRunning && liveElapsed != null ? (
+            <span className="flex items-center gap-0.5 text-[8px] text-blue-400 font-mono">
+              <Timer className="w-2 h-2" />
+              {liveElapsed}s
+            </span>
+          ) : pkg.total_elapsed_s != null && !isRunning ? (
+            <span className="flex items-center gap-0.5 text-[8px] text-gray-600 font-mono">
+              <Timer className="w-2 h-2" />
+              {pkg.total_elapsed_s}s
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {/* Phase rail — always rendered (all-pending when no run yet) */}
       <div className="flex items-start flex-wrap gap-0.5">
         {STEP_ORDER.map((stepId, i) => (
           <PhaseCard
             key={stepId}
             phase={phaseByStep[stepId]}
             stepId={stepId}
-            currentStep={runningStep ?? null}
+            currentStep={runningStep}
             isLast={i === STEP_ORDER.length - 1}
           />
         ))}
       </div>
-      {pkg.total_elapsed_s != null && (
-        <div className="flex items-center gap-1 mt-1">
-          <Timer className="w-2.5 h-2.5 text-gray-600" />
-          <span className="text-[9px] text-gray-600 font-mono">
-            {pkg.total_elapsed_s}s total
-          </span>
-        </div>
+
+      {/* Never-run hint */}
+      {!hasAnyData && (
+        <p className="text-[8px] text-gray-700 mt-1">No analysis run yet</p>
       )}
     </div>
   )

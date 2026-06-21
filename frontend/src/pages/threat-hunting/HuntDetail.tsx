@@ -201,12 +201,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           >
             Evidence ({evidence.length})
           </button>
-          <button
-            onClick={() => setActiveTab('iocs')}
-            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'iocs' ? 'tab-active' : 'tab-inactive')}
-          >
-            IOCs ({(iocs as THExtractedIOC[]).length})
-          </button>
+          {/* issue-008-2B: IOC tab only visible once analysis has produced IOCs */}
+          {(iocs as THExtractedIOC[]).length > 0 && (
+            <button
+              onClick={() => setActiveTab('iocs')}
+              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'iocs' ? 'tab-active' : 'tab-inactive')}
+            >
+              IOCs ({(iocs as THExtractedIOC[]).length})
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('analysis')}
             className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'analysis' ? 'tab-active' : 'tab-inactive')}
@@ -242,22 +245,28 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           ) : (
             (evidence as THEvidenceItem[]).map((item) => (
               <div key={item.id} className="card flex items-start gap-3">
-                <div className="mt-0.5 shrink-0">
-                  {PARSE_STATUS_ICON[item.parse_status as keyof typeof PARSE_STATUS_ICON] ?? PARSE_STATUS_ICON.ok}
-                </div>
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <p className="text-sm text-gray-200 font-medium truncate">{item.label || item.source_ref}</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{item.item_type}</span>
-                    <span className="text-[10px] text-gray-500">{item.parser_used}</span>
-                    {item.parse_warnings.length > 0 && (
-                      <span className="text-[10px] text-amber-500">{item.parse_warnings.length} warning{item.parse_warnings.length > 1 ? 's' : ''}</span>
-                    )}
-                  </div>
-                  {item.source_ref && item.item_type === 'url' && (
-                    <p className="text-[10px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
-                  )}
-                </div>
+                 <div className="mt-0.5 shrink-0">
+                   {item.parse_status === 'pending'
+                     ? <Clock className="w-3.5 h-3.5 text-blue-500" />
+                     : (PARSE_STATUS_ICON[item.parse_status as keyof typeof PARSE_STATUS_ICON] ?? PARSE_STATUS_ICON.ok)}
+                 </div>
+                 <div className="flex-1 min-w-0 space-y-0.5">
+                   <p className="text-sm text-gray-200 font-medium truncate">{item.label || item.source_ref}</p>
+                   <div className="flex items-center gap-2 flex-wrap">
+                     <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{item.item_type}</span>
+                     {item.parse_status === 'pending' ? (
+                       <span className="text-[10px] text-blue-400 font-mono">⟳ pending — fetched during analysis</span>
+                     ) : (
+                       <span className="text-[10px] text-gray-500">{item.parser_used}</span>
+                     )}
+                     {item.parse_warnings.length > 0 && item.parse_status !== 'pending' && (
+                       <span className="text-[10px] text-amber-500">{item.parse_warnings.length} warning{item.parse_warnings.length > 1 ? 's' : ''}</span>
+                     )}
+                   </div>
+                   {item.source_ref && item.item_type === 'url' && (
+                     <p className="text-[10px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
+                   )}
+                 </div>
                 {isResearcher && (
                   <button
                     className="btn-ghost p-1 text-gray-600 hover:text-red-400 shrink-0"

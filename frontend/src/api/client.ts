@@ -1602,6 +1602,8 @@ export interface THuntPackage {
   phases?: THPhaseEntry[] | null
   /** Total elapsed time across all steps of the latest run in seconds (issue-006-D). */
   total_elapsed_s?: number | null
+  /** ISO timestamp when the latest run started — used for the live timer (issue-008-2A). */
+  run_created_at?: string | null
 }
 
 export interface THEvidenceItem {
@@ -1617,7 +1619,8 @@ export interface THEvidenceItem {
   extracted_text: string
   parser_used: string
   parser_version: string
-  parse_status: 'ok' | 'partial' | 'error'
+  /** issue-008-2B: 'pending' = URL registered but not yet fetched (fetch deferred to pipeline) */
+  parse_status: 'ok' | 'partial' | 'error' | 'pending'
   parse_warnings: string[]
   fetch_metadata: Record<string, unknown>
   created_at: string
@@ -1891,6 +1894,10 @@ export interface THFullReport {
   query_drafts_count: number
   execution_results: THReportExecutionResult[]
   recommendations: string[]
+  /** LLM-generated Findings/Conclusion section (issue-008-2C-C).
+   *  More detailed than executive_summary; synthesizes key facts from the full hunt.
+   *  Placed last in the report. null when generation failed or LLM is disabled. */
+  findings?: string | null
 }
 
 export interface THHuntReport {

@@ -269,6 +269,8 @@ def _should_force_playwright(
     content_type: str,
     status_code: int,
     raw_bytes: bytes,
+    *,
+    prefer_playwright: bool = False,
 ) -> tuple[bool, str]:
     """Return (should_use_playwright, reason) for the Playwright fallback decision.
 
@@ -276,17 +278,20 @@ def _should_force_playwright(
     catch binary/mojibake content that happens to be long (e.g. 31 KB of
     undecompressed Brotli that was decoded as utf-8 garbage).
 
+    issue-008-2D: when prefer_playwright=True (set on high research-effort runs),
+    Playwright is used as the primary fetcher — condition 0 fires immediately.
+
     Triggers when ANY of:
+    0. prefer_playwright=True — high research effort, use Playwright first.
     1. Extracted text is shorter than _MIN_USEFUL_TEXT_CHARS (original trigger).
     2. HTTP status is a bot-wall code (original trigger).
-    3. Extracted text looks like binary (high control-char ratio) — catches
-       undecoded Brotli/gzip/zstd where the garbage exceeds 200 chars.
-    4. utf8-fallback was used on an HTML content-type — signals that both
-       trafilatura and readability failed, meaning the bytes are almost
-       certainly not valid HTML text.
-    5. Raw bytes look like binary (defense-in-depth: catches the case where
-       the extractor wasn't even tried on binary).
+    3. Extracted text looks like binary (high control-char ratio).
+    4. utf8-fallback was used on an HTML content-type.
+    5. Raw bytes look like binary (defense-in-depth).
     """
+    if prefer_playwright:
+        return True, "high research effort — prefer_playwright=True"
+
     is_html = any(t in content_type.lower() for t in ("html", "xhtml"))
 
     if len(extracted_text.strip()) < _MIN_USEFUL_TEXT_CHARS:
@@ -329,12 +334,19 @@ async def fetch_url(
     timeout_s: int = _DEFAULT_TIMEOUT_S,
     max_bytes: int = _DEFAULT_MAX_BYTES,
     max_redirects: int = _DEFAULT_MAX_REDIRECTS,
+    prefer_playwright: bool = False,
 ) -> FetchResult:
     """Fetch *url* with SSRF policy enforcement.
 
     Validates the URL and every redirect hop before issuing the request.
     Applies retry with exponential backoff for transient failures (requires
     tenacity; degrades gracefully without it).
+
+    Args:
+        prefer_playwright: When True, the Playwright headless-Chromium path is
+            used as the *primary* fetcher rather than the fallback. Set by
+            intake_classifier when research_effort == 'high' (issue-008-2D).
+            Degrades gracefully to httpx if Playwright is unavailable.
 
     Raises SSRFError on policy violations, httpx.HTTPError on transport
     failures, and ValueError on content-type or size violations.
@@ -486,7 +498,12 @@ async def fetch_url(
     # which also catches binary/mojibake text that happens to be >200 chars
     # (e.g. 31 KB of undecompressed Brotli decoded as utf-8 garbage).
     playwright_needed, playwright_reason = _should_force_playwright(
-        extracted_text, parser_used, content_type, status_code, raw_bytes
+        extracted_text,
+        parser_used,
+        content_type,
+        status_code,
+        raw_bytes,
+        prefer_playwright=prefer_playwright,
     )
     if playwright_needed:
         try:

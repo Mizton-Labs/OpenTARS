@@ -17,6 +17,15 @@ retrohunt_tokens    int         — max_tokens for deep_retrohunt_planner LLM ca
 ioc_sample_limit    int         — cap on IOC count sent in query_drafting prompt
 retrohunt_ioc_cap   int         — cap on IOCs passed to retrohunt LLM ([:N])
 retrohunt_csv_cap   int         — cap on IOC CSV chars sent to retrohunt LLM ([:N])
+
+issue-008-2D additions:
+force_all_tools     bool        — when True, all tool-calling nodes run their
+                                  enrichment/validation passes unconditionally
+                                  (not only when content is thin / needed).
+url_fetch_strategy  str         — "playwright_first" or "auto".  On
+                                  "playwright_first", intake_classifier passes
+                                  prefer_playwright=True to fetch_url(), using
+                                  Playwright as the primary fetcher for URL evidence.
 """
 
 from __future__ import annotations
@@ -25,7 +34,8 @@ from typing import Any
 
 _PROFILES: dict[str, dict[str, Any]] = {
     "high": {
-        # More hypotheses, larger budgets, wider IOC context
+        # More hypotheses, larger budgets, wider IOC context.
+        # issue-008-2D: force all tool-calling passes + Playwright-first URL fetch.
         "hypotheses_range": (5, 8),
         "leads_range": (4, 6),
         "hypothesis_tokens": 3000,
@@ -36,6 +46,8 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "ioc_sample_limit": 40,
         "retrohunt_ioc_cap": 100,
         "retrohunt_csv_cap": 6000,
+        "force_all_tools": True,  # run tool-calling in all enabled nodes unconditionally
+        "url_fetch_strategy": "playwright_first",  # Playwright as primary URL fetcher
     },
     "medium": {
         # Current defaults — balanced
@@ -49,6 +61,8 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "ioc_sample_limit": 20,
         "retrohunt_ioc_cap": 50,
         "retrohunt_csv_cap": 3000,
+        "force_all_tools": False,
+        "url_fetch_strategy": "auto",
     },
     "low": {
         # Minimal output: basic IOC extraction + deep retrohunt always run;
@@ -63,6 +77,8 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "ioc_sample_limit": 10,
         "retrohunt_ioc_cap": 25,
         "retrohunt_csv_cap": 1500,
+        "force_all_tools": False,
+        "url_fetch_strategy": "auto",
     },
 }
 
