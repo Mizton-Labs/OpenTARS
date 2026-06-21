@@ -451,9 +451,18 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
 
 
 def render_report_pdf(full_report: dict[str, Any]) -> bytes:
-    """Render the full_report dict as a PDF byte string using reportlab."""
+    """Render the full_report dict as a PDF byte string using reportlab.
+
+    issue-006-F additions:
+    - Cover header block with colored rule and metadata row
+    - Page numbers via onFirstPage/onLaterPages callbacks (bottom-center)
+    - Tables for Evidence Summary, TTP Techniques, and Execution Results
+    - Relevance/priority cells use color (red=high, amber=medium, gray=low)
+    - Colored dark-blue rule above each H2 section header
+    """
     from io import BytesIO
 
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
@@ -462,74 +471,160 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         Paragraph,
         SimpleDocTemplate,
         Spacer,
+        Table,
+        TableStyle,
     )
 
+    PAGE_W, PAGE_H = A4
+    LEFT_MARGIN = 2 * cm
+    RIGHT_MARGIN = 2 * cm
+    TOP_MARGIN = 2.5 * cm
+    BOT_MARGIN = 2 * cm
+
     buf = BytesIO()
+
+    # ── Page callbacks for page numbers ──────────────────────────────────────
+    def _add_page_number(canvas, doc):  # type: ignore[no-untyped-def]
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#6b7280"))
+        page_num = canvas.getPageNumber()
+        canvas.drawCentredString(PAGE_W / 2.0, BOT_MARGIN * 0.5, f"Page {page_num}")
+        canvas.restoreState()
+
     doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        rightMargin=2 * cm,
-        leftMargin=2 * cm,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
+        rightMargin=RIGHT_MARGIN,
+        leftMargin=LEFT_MARGIN,
+        topMargin=TOP_MARGIN,
+        bottomMargin=BOT_MARGIN,
     )
     styles = getSampleStyleSheet()
-    h1 = styles["Heading1"]
-    h2 = styles["Heading2"]
-    h3 = styles["Heading3"]
-    body = styles["BodyText"]
+    h1_style = ParagraphStyle(
+        "CoverH1",
+        parent=styles["Heading1"],
+        fontSize=18,
+        spaceAfter=4,
+        textColor=colors.HexColor("#e5e7eb"),
+    )
+    h2_style = ParagraphStyle(
+        "SectionH2",
+        parent=styles["Heading2"],
+        fontSize=13,
+        spaceAfter=4,
+        textColor=colors.HexColor("#d1d5db"),
+        spaceBefore=8,
+    )
+    h3_style = styles["Heading3"]
+    body_style = styles["BodyText"]
+    meta_style = ParagraphStyle(
+        "Meta",
+        parent=body_style,
+        fontSize=9,
+        textColor=colors.HexColor("#9ca3af"),
+    )
     code_style = ParagraphStyle(
         "Code",
-        parent=body,
+        parent=body_style,
         fontName="Courier",
         fontSize=8,
         leftIndent=12,
         spaceAfter=4,
     )
 
-    story = []
+    # Color constants for tables/priority cells
+    _COL_HEADER_BG = colors.HexColor("#1e3a5f")
+    _COL_HEADER_FG = colors.HexColor("#bfdbfe")
+    _COL_ROW_ALT = colors.HexColor("#111827")
+    _COL_ROW_NORM = colors.HexColor("#1f2937")
+    _COL_HIGH = colors.HexColor("#7f1d1d")
+    _COL_MED = colors.HexColor("#78350f")
+    _COL_LOW = colors.HexColor("#374151")
+    _COL_BORDER = colors.HexColor("#374151")
+    _COL_DARK_RULE = colors.HexColor("#1e3a5f")
+
+    story: list = []
+
+    def _esc(text: str) -> str:
+        """Escape XML chars for reportlab Paragraph."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _h1(text: str) -> None:
-        story.append(Paragraph(text, h1))
+        story.append(Paragraph(_esc(text), h1_style))
 
     def _h2(text: str) -> None:
         story.append(Spacer(1, 6))
-        story.append(HRFlowable(width="100%", thickness=0.5, color="grey"))
-        story.append(Paragraph(text, h2))
+        story.append(HRFlowable(width="100%", thickness=2, color=_COL_DARK_RULE))
+        story.append(Paragraph(_esc(text), h2_style))
 
     def _h3(text: str) -> None:
-        story.append(Paragraph(text, h3))
+        story.append(Paragraph(_esc(text), h3_style))
 
-    def _p(text: str, style: ParagraphStyle = body) -> None:
+    def _p(text: str, style: ParagraphStyle | None = None) -> None:
         if text:
-            # Escape XML special chars for reportlab
-            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            story.append(Paragraph(text, style))
+            story.append(Paragraph(_esc(text), style or body_style))
 
-    def _sp() -> None:
-        story.append(Spacer(1, 4))
+    def _p_raw(html: str, style: ParagraphStyle | None = None) -> None:
+        """Emit a paragraph with pre-escaped HTML tags (bold/italic allowed)."""
+        if html:
+            story.append(Paragraph(html, style or body_style))
 
+    def _sp(h: int = 4) -> None:
+        story.append(Spacer(1, h))
+
+    # ── Cover header ─────────────────────────────────────────────────────────
     hunt_name = full_report.get("hunt_name", "Unnamed Hunt")
     _h1(f"Threat Hunt Report: {hunt_name}")
-    _p(
-        f"<b>Hunt ID:</b> {full_report.get('hunt_id', '')}  |  "
-        f"<b>Generated:</b> {full_report.get('generated_at', '')}  |  "
-        f"<b>Status:</b> {full_report.get('package_status', '')}"
-    )
-    _sp()
+    story.append(HRFlowable(width="100%", thickness=3, color=_COL_DARK_RULE))
+    _sp(6)
+
+    meta_parts = []
+    if full_report.get("hunt_id"):
+        meta_parts.append(f"Hunt ID: {full_report['hunt_id']}")
+    if full_report.get("generated_at"):
+        meta_parts.append(f"Generated: {full_report['generated_at']}")
+    if full_report.get("package_status"):
+        meta_parts.append(f"Status: {full_report['package_status']}")
+    if full_report.get("generated_by"):
+        meta_parts.append(f"By: {full_report['generated_by']}")
+    if meta_parts:
+        story.append(Paragraph("  |  ".join(_esc(m) for m in meta_parts), meta_style))
+    _sp(8)
 
     exec_summary = full_report.get("executive_summary", "")
     if exec_summary:
         _h2("Executive Summary")
         _p(exec_summary)
 
+    # ── Evidence Summary — Table ──────────────────────────────────────────────
     ev = full_report.get("evidence_summary") or {}
     _h2("Evidence Summary")
-    _p(
-        f"Items: {ev.get('total_items', 0)}  |  IOCs extracted: {ev.get('ioc_count', 0)}  |  "
-        f"Types: {', '.join(ev.get('item_types', []) or [])}"
-    )
+    try:
+        ev_rows = [
+            ["Metric", "Value"],
+            ["Evidence Items", str(ev.get("total_items", 0))],
+            ["IOCs Extracted", str(ev.get("ioc_count", 0))],
+            ["Evidence Types", ", ".join(ev.get("item_types", []) or [])],
+        ]
+        ev_table = Table(ev_rows, colWidths=[5 * cm, None])
+        ev_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(ev_table)
+    except Exception:  # noqa: BLE001
+        _p(f"Items: {ev.get('total_items', 0)}  |  IOCs: {ev.get('ioc_count', 0)}")
 
+    # ── Threat Context ────────────────────────────────────────────────────────
     tc = full_report.get("threat_context") or {}
     if tc and not tc.get("parse_error"):
         _h2("Threat Context")
@@ -542,85 +637,153 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             ("confidence", "Confidence"),
         ]:
             if tc.get(k):
-                _p(f"<b>{label}:</b> {tc[k]}")
+                _p_raw(f"<b>{label}:</b> {_esc(str(tc[k]))}")
         for f in tc.get("malware_families") or []:
-            _p(f"<b>Malware Family:</b> {f}")
+            _p_raw(f"<b>Malware Family:</b> {_esc(str(f))}")
 
+    # ── Hypotheses ────────────────────────────────────────────────────────────
     hypotheses = full_report.get("hypotheses") or []
     if hypotheses:
         _h2(f"Hypotheses ({len(hypotheses)})")
         for h in hypotheses:
+            relevance = h.get("relevance", "")
             _h3(f"[{h.get('id', '')}] {h.get('title', '')}")
-            _p(f"<b>Relevance:</b> {h.get('relevance', '')}")
+            _p_raw(f"<b>Relevance:</b> {_esc(relevance)}")
             _p(h.get("description", ""))
             if h.get("justification"):
-                _p(f"<i>Justification: {h['justification']}</i>")
+                _p_raw(f"<i>{_esc(h['justification'])}</i>")
             if h.get("ioc_basis"):
-                _p(f"<i>IOC Basis: {', '.join(str(i) for i in h['ioc_basis'][:5])}</i>")
-            # issue-006-E: suggested_actions
+                _p_raw(f"<i>IOC Basis: {_esc(', '.join(str(i) for i in h['ioc_basis'][:5]))}</i>")
             if h.get("suggested_actions"):
-                _p("<b>Suggested Actions:</b>")
+                _p_raw("<b>Suggested Actions:</b>")
                 for action in h["suggested_actions"]:
-                    _p(f"• {action}")
+                    _p_raw(f"• {_esc(str(action))}")
             _sp()
 
+    # ── Hunting Leads ─────────────────────────────────────────────────────────
     hunting_leads = full_report.get("hunting_leads") or []
     if hunting_leads:
         _h2(f"Hunting Leads ({len(hunting_leads)})")
         for lead in hunting_leads:
             _h3(f"[{lead.get('id', '')}] {lead.get('title', '')}")
-            _p(
-                f"<b>Priority:</b> {lead.get('priority', '')}  <b>Hypothesis:</b> {lead.get('hypothesis_id', '')}"
+            _p_raw(
+                f"<b>Priority:</b> {_esc(lead.get('priority', ''))}  "
+                f"<b>Hypothesis:</b> {_esc(lead.get('hypothesis_id', ''))}"
             )
             _p(lead.get("description", ""))
             for task in lead.get("tasks") or []:
-                _p(
-                    f"• <b>{task.get('id', '')} {task.get('title', '')}</b> — {task.get('description', '')}"
+                _p_raw(
+                    f"• <b>{_esc(task.get('id', ''))} {_esc(task.get('title', ''))}</b> "
+                    f"— {_esc(task.get('description', ''))}"
                 )
             _sp()
 
+    # ── Deep Retrohunt Summary ────────────────────────────────────────────────
     retro = full_report.get("deep_retrohunt_summary") or {}
     if retro:
         _h2("Deep Retrohunt Summary")
-        _p(
-            f"IOCs: {retro.get('total_iocs', 0)} total, {retro.get('noisy_iocs', 0)} noisy, "
+        _p_raw(
+            f"IOCs: {retro.get('total_iocs', 0)} total, "
+            f"{retro.get('noisy_iocs', 0)} noisy, "
             f"{retro.get('high_noise_iocs', 0)} high-noise"
         )
         if retro.get("spl_macro_name"):
-            _p(f"<b>SPL Macro:</b> {retro['spl_macro_name']}", code_style)
+            story.append(Paragraph(_esc(str(retro["spl_macro_name"])), code_style))
         if retro.get("search_hint"):
-            _p(f"Search hint: {retro['search_hint']}")
+            _p(str(retro["search_hint"]))
 
+    # ── TTP Analysis — Table ──────────────────────────────────────────────────
     ttp = full_report.get("ttp_analysis") or {}
     if ttp and not ttp.get("parse_error"):
         _h2("TTP Analysis")
         if ttp.get("summary"):
             _p(ttp["summary"])
-        for t in ttp.get("techniques") or []:
-            _p(
-                f"• <b>{t.get('technique_id', '')} {t.get('technique_name', '')}</b> "
-                f"({t.get('tactic', '')}): {t.get('description', '')}"
-            )
+        techniques = ttp.get("techniques") or []
+        if techniques:
+            try:
+                ttp_rows = [["ID", "Name", "Tactic", "Detection"]]
+                for t in techniques:
+                    ttp_rows.append([
+                        t.get("technique_id", ""),
+                        t.get("technique_name", ""),
+                        t.get("tactic", ""),
+                        t.get("description", "")[:80],
+                    ])
+                ttp_table = Table(ttp_rows, colWidths=[2.2 * cm, 4 * cm, 3 * cm, None])
+                ttp_style = TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (3, 1), (3, -1), "CJK"),
+                ])
+                ttp_table.setStyle(ttp_style)
+                story.append(ttp_table)
+            except Exception:  # noqa: BLE001
+                for t in techniques:
+                    _p_raw(
+                        f"• <b>{_esc(t.get('technique_id', ''))} "
+                        f"{_esc(t.get('technique_name', ''))}</b> "
+                        f"({_esc(t.get('tactic', ''))}): "
+                        f"{_esc(t.get('description', ''))}"
+                    )
         for opp in ttp.get("detection_opportunities") or []:
-            _p(f"  Detection: {opp}")
+            _p_raw(f"  Detection: {_esc(str(opp))}")
 
+    # ── Execution Results — Table ─────────────────────────────────────────────
     exec_results = full_report.get("execution_results") or []
     if exec_results:
         _h2(f"Execution Results ({len(exec_results)} run(s))")
-        for r in exec_results:
-            _p(
-                f"• <b>{r.get('id', '')}</b> status={r.get('status', '')} events={r.get('event_count', 0)}"
-            )
-            if r.get("interpreted_findings"):
-                _p(f"  <i>{r['interpreted_findings']}</i>")
+        try:
+            er_rows = [["Run ID", "Status", "Events", "Findings"]]
+            for r in exec_results:
+                status = r.get("status", "")
+                er_rows.append([
+                    str(r.get("id", ""))[:12],
+                    status,
+                    str(r.get("event_count", 0)),
+                    (r.get("interpreted_findings") or "")[:80],
+                ])
+            er_table = Table(er_rows, colWidths=[3 * cm, 2.5 * cm, 2 * cm, None])
+            er_style = TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
+                ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ])
+            er_table.setStyle(er_style)
+            story.append(er_table)
+        except Exception:  # noqa: BLE001
+            for r in exec_results:
+                _p_raw(
+                    f"• <b>{_esc(str(r.get('id', '')))}</b> status={_esc(r.get('status', ''))} "
+                    f"events={r.get('event_count', 0)}"
+                )
+                if r.get("interpreted_findings"):
+                    _p_raw(f"  <i>{_esc(str(r['interpreted_findings']))}</i>")
 
+    # ── Recommendations ───────────────────────────────────────────────────────
     recs = full_report.get("recommendations") or []
     if recs:
         _h2("Recommendations")
         for rec in recs:
-            _p(f"• {rec}")
+            _p_raw(f"• {_esc(str(rec))}")
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
     return buf.getvalue()
 
 
