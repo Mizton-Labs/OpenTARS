@@ -13,11 +13,66 @@ Design principles:
   - ``current_step`` tracks which node last ran for progress reporting.
   - The ``approved`` flag is set by the operator via the approval API; the
     graph checks it at the approval gate node to decide whether to continue.
+
+Fan-out concurrency (Phase 4+):
+  ``intake_classifier`` fans out to ``threat_context_builder`` AND
+  ``deep_retrohunt_planner`` in parallel.  Both branches read from the same
+  state snapshot and each returns a *full* accumulated list for the lifecycle
+  fields (completed_steps, step_logs, errors) and a string for current_step.
+  Without reducer annotations LangGraph raises INVALID_CONCURRENT_GRAPH_UPDATE
+  when both branches write the same key in the same step.
+
+  The four lifecycle fields therefore use ``Annotated[T, reducer]`` so
+  LangGraph knows how to merge concurrent updates:
+    - current_step  — keep the last non-empty value
+    - completed_steps — ordered union (dedup while preserving insertion order)
+    - step_logs     — ordered union keyed on the 'step' field
+    - errors        — ordered union (dedup by value)
 """
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
+
+# ── Reducer helpers ───────────────────────────────────────────────────────────
+
+
+def _reduce_current_step(left: str, right: str) -> str:
+    """Return the last non-empty step name."""
+    return right if right else left
+
+
+def _reduce_completed_steps(left: list[str], right: list[str]) -> list[str]:
+    """Ordered union: keep all unique step names in first-seen order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in (left or []) + (right or []):
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _reduce_step_logs(
+    left: list[dict[str, Any]], right: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Ordered union keyed on the 'step' field; last entry wins for a given step."""
+    merged: dict[str, dict[str, Any]] = {}
+    for entry in (left or []) + (right or []):
+        key = entry.get("step", id(entry))
+        merged[key] = entry
+    return list(merged.values())
+
+
+def _reduce_errors(left: list[str], right: list[str]) -> list[str]:
+    """Ordered union of error strings; dedup while preserving insertion order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in (left or []) + (right or []):
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
 
 
 class Hypothesis(TypedDict):
@@ -136,10 +191,12 @@ class HuntPipelineState(TypedDict, total=False):
     rejected: bool  # True when operator explicitly rejects
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
-    current_step: str  # last completed node name
-    completed_steps: list[str]  # all completed node names in order
-    errors: list[str]  # accumulated errors (non-fatal)
-    step_logs: list[dict[str, Any]]  # per-step timing and status records
+    # Annotated reducers allow concurrent fan-out branches to write these keys
+    # simultaneously without triggering INVALID_CONCURRENT_GRAPH_UPDATE.
+    current_step: Annotated[str, _reduce_current_step]
+    completed_steps: Annotated[list[str], _reduce_completed_steps]
+    errors: Annotated[list[str], _reduce_errors]
+    step_logs: Annotated[list[dict[str, Any]], _reduce_step_logs]
     generation_status: (
         str  # 'running' | 'awaiting_approval' | 'approved' | 'rejected' | 'completed' | 'error'
     )
