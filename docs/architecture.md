@@ -1,18 +1,16 @@
 # Architecture — Mizton-ThreatBox v0.1
 
-**Status:** Complete  
-**Last updated:** 2026-05-24
+**Status:** Complete (Threat Hunting phases 1–6 implemented)
+**Last updated:** 2026-06-21
 
 ---
 
 ## Overview
 
-Mizton-ThreatBox is a standalone, local Threat Intelligence feed aggregator.
-It listens for, pulls, and normalises threat intel from multiple sources, stores
-data in SQLite, and exposes a web UI for viewing and configuration.
-
-It is designed to run independently and integrate later as a module within a
-larger security framework.
+Mizton-ThreatBox is a standalone **Threat Intel and Threat Hunting Operations Framework**.
+It ingests and normalizes threat intel from multiple sources, and drives end-to-end
+threat hunts through an LLM-powered LangGraph agent pipeline to Splunk execution and
+structured reports. All data is stored locally in SQLite; no external database is required.
 
 ---
 
@@ -20,7 +18,7 @@ larger security framework.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     mizton-threatbox                    │
+│                     mizton-threatbox                        │
 │                  (bash runner — start/stop)                 │
 └────────────┬──────────────────────┬─────────────────────────┘
              │                      │
@@ -31,16 +29,22 @@ larger security framework.
     │   port: 8000    │    │    Vite)        │
     └────────┬────────┘    │   port: 5173    │
              │             │   (dev only)    │
-    ┌────────▼────────┐    └─────────────────┘
-    │   SQLite DBs    │
-    │   data/*.db     │
-    │  (per source)   │
-    └─────────────────┘
+    ┌────────▼──────────────────────────┐    └──────────────────┘
+    │   SQLite databases  (data/)       │
+    │   *.db per source (raw feeds)     │
+    │   normalized.db                   │
+    │   proposals.db                    │
+    │   watchers.db                     │
+    │   mapping_versions.db             │
+    │   threat_hunting.db               │
+    └───────────────────────────────────┘
 ```
 
 ---
 
 ## Backend Modules
+
+### Threat Intel
 
 | Module | Path | Responsibility |
 |---|---|---|
@@ -48,13 +52,13 @@ larger security framework.
 | DB manager | `backend/db/manager.py` | Per-source SQLite file CRUD |
 | DB schema | `backend/db/schema.py` | `entries` table DDL |
 | Normaliser | `backend/ingestion/normaliser.py` | Filters fields against config |
-| Push listener | `backend/ingestion/push_listener.py` | Normalises pushed JSON payloads; logs receipts + per-entry errors (ADR-0022) |
+| Push listener | `backend/ingestion/push_listener.py` | Normalises pushed JSON payloads |
 | API pull | `backend/ingestion/api_pull.py` | Scheduled HTTP GET ingestion |
 | RSS pull | `backend/ingestion/rss_pull.py` | Scheduled RSS fetch + normalisation |
 | Local JSON | `backend/ingestion/local_json.py` | File upload ingestion |
 | Remote JSON | `backend/ingestion/remote_json.py` | URL-based JSON ingestion |
 | API routes | `backend/api/routes_*.py` | FastAPI route groups |
-| Main app | `backend/main.py` | FastAPI app, CORS, static files (delegates scheduling to `backend/scheduler.py`) |
+| Main app | `backend/main.py` | FastAPI app, CORS, static files, middleware |
 | Scheduler | `backend/scheduler.py` | APScheduler lifecycle (`start`/`stop`/`reload`), smart-mode fan-out, `submit_smart_job(source, reason, provider?)` with `asyncio.Semaphore` concurrency cap (021E-3). `reload()` schedules a pull job only when a source is `enabled` **and** `continuous` (prompts-042 / ADR-0014): `api_pull` and `rss_pull` treat a missing `continuous` as `True` (non-breaking for pre-existing sources); `remote_json_pull` defaults it to `False` |
 | Smart runner | `backend/normalizer/smart_runner.py` | `run_smart_job(...)` — pulls sample rows, calls LLM, persists proposal row with `trigger_reason` (021E-3); `approve_proposal_core(...)` is the shared write-path for manual approve + 021E-4 auto-apply, and as of 021F writes through to `mapping_versions.db` |
 | Mapping versions | `backend/normalizer/mappings.py` | Per-source `mapping_version` history in `data/mapping_versions.db` (021F). `init_mappings_db`, `create_version`, `list_versions`, `get_version`, `get_active_version`, `get_all_active_mappings`, `activate_version` (BEGIN IMMEDIATE + partial unique index `WHERE active=1`), `migrate_yaml_manual_mappings_once`, `regenerate_yaml_snapshot`, `diff_mappings` (three-bucket added/removed/changed) |
@@ -63,6 +67,26 @@ larger security framework.
 | LLM routes | `backend/api/routes_llm.py` | HTTP surface for LLM configuration (022 rewrite, extended in 027). `POST/PUT/DELETE /api/llm/providers[/{name}]` are the per-provider CRUD path, `POST /api/llm/providers/test` is the draft Test (no name in path; the 027 merge-stored-key branch injects the on-disk key when the body carries a `name` matching a persisted record AND `api_key == "***"`, so the persisted-card surface can probe without echoing keys through the wire), `POST /api/llm/providers/{name}/test` is the legacy persisted-provider test, `POST /api/llm/providers/discover` and `POST /api/llm/providers/{name}/discover` (027) are the discover-only routes used by the Discover Models surface on both the wizard and the persisted card (both delegate to `test_runner.run_discover_only`), and `PUT /api/llm/config` is narrowed to `{enabled, default_provider}` only — per-provider fields move through the CRUD routes. All Test routes return the `LLMTestRunResult` envelope produced by `test_runner.run_provider_test`; discover routes return the same envelope with the `complete` step omitted. `DELETE /api/llm/providers/{name}` clears `default_provider` if it pointed at the deleted provider and, when the delete empties the providers list while LLM is enabled, also clears `enabled` in the same write so the last provider is deletable and the persisted config never lands in the invalid `enabled=true` + zero-providers state (031) |
 | NL query logic | `backend/query/nl.py` | Pure logic for the natural-language query feature (prompts-064 / ADR-0023): builds the LLM prompt from a closed key whitelist (`STRUCTURED_FILTER_KEYS`/`COLUMN_FILTER_KEYS`), parses + validates the LLM's JSON into a `StructuredQuery` (dataset ∈ `VALID_DATASETS`, default `normalized`; `source` checked against `known_sources`; `limit` clamped to `MAX_LIMIT=2000`), and runs it via the existing parameterized query layer (`query_entries` for raw, `query_normalized` for normalized). Normalized column filters are applied as an in-process post-filter (`_post_filter`) over a wide fetch (`_NORMALIZED_FETCH_CAP`) because `query_normalized` has no column-filter support; absent columns are ignored, not emptied. Never emits SQL. Reuses `parse_llm_response`/`_loads_tolerant` from `smart.py` |
 | NL query routes | `backend/api/routes_query.py` | `POST /api/query/nl` (prompts-064): reader-gated (admin + normal; `sender` 403). Resolves provider + timeout from smart-mode config (`_NL_MAX_TOKENS=512`), calls the LLM via `asyncio.to_thread(client.complete, …)`, maps LLM errors to `503`/`502` and unparseable/invalid filters to `422`. Explicit client `dataset`/`source`/`limit` overrides win over the LLM's choice; `source` is re-validated against `_get_all_sources()`. Returns matched rows + interpreted filter (no second LLM call) |
+
+### Threat Hunting
+
+| Module | Path | Responsibility |
+|---|---|---|
+| TH DB | `backend/threat_hunting/db.py` | SQLite schema (v2), CRUD for hunt packages, evidence, IOCs, generation records, SIEM connectors, task results, hunt reports |
+| TH models | `backend/threat_hunting/models.py` | Pydantic request/response models |
+| SSRF policy | `backend/threat_hunting/ssrf.py` | IP block-list enforcement for URL evidence fetching |
+| IOC extractor | `backend/threat_hunting/iocs.py` | Regex extraction, defanging, normalization, deduplication, noise scoring |
+| Evidence extractors | `backend/threat_hunting/extractors/` | Per-type parsers: PDF (PyMuPDF), DOCX, text, URL (httpx + trafilatura), CSV, dispatcher |
+| LLM bridge | `backend/threat_hunting/agents/llm_bridge.py` | Async wrapper around existing LLMClient for LangGraph nodes |
+| Pipeline state | `backend/threat_hunting/agents/state.py` | `HuntPipelineState` TypedDict + all typed sub-dicts |
+| LangGraph pipeline | `backend/threat_hunting/agents/pipeline.py` | StateGraph with 6 agent nodes + approval gate; fan-out `intake_classifier → threat_context_builder ‖ deep_retrohunt_planner → hypothesis_generator → ...` |
+| Agent nodes | `backend/threat_hunting/agents/nodes/` | `intake_classifier`, `threat_context_builder`, `hypothesis_generator`, `hunting_lead_planner`, `ttp_analyst`, `query_drafting_agent`, `deep_retrohunt_planner` |
+| Pipeline runner | `backend/threat_hunting/agents/runner.py` | Background `asyncio.create_task` execution, DB state persistence, approve/reject API |
+| Report writer | `backend/threat_hunting/agents/nodes/report_writer.py` | Deterministic report assembly + LLM executive summary; auto-triggered after execution |
+| SIEM base | `backend/threat_hunting/siem/base.py` | `SIEMConnectorBase` ABC, `ConnectorTestResult`, `JobStatus` |
+| Splunk connector | `backend/threat_hunting/siem/splunk.py` | Splunk REST API v2: test, submit, poll, fetch results; Bearer token + basic auth |
+| Execution runner | `backend/threat_hunting/siem/executor.py` | Background SIEM search: submit → poll → fetch → LLM interpret → persist |
+| TH API routes | `backend/api/routes_threat_hunting.py` | All `/api/threat-hunting/*` endpoints (packages, evidence, IOCs, generation, approval, connectors, execution, reports) |
 
 ---
 
@@ -75,9 +99,33 @@ larger security framework.
 | Configuration | `src/pages/Configuration.tsx` | Tabbed config (reordered prompts-043, default `local-feed`): Local Feed, Remote Feed, External RSS, External API, Listener Endpoint, Global Field Defaults, Application (now hosts `PaginationMaxSetting`), Normalizer (sub-tabs: Settings, Mapping versions [`MappingVersionsPanel.tsx`, 021F], Activity [`ActivityTab.tsx`, 021G]), LLM Providers (`src/pages/configuration/LLMProvidersTab.tsx`, 021D-2; rebuilt in 022 around per-card `ProviderCard` with symmetric Test/Save/Delete wired to per-provider CRUD; rewritten in 027 to mirror the wizard's Discover-then-Probe staging — the "Default model to use" dropdown reads from `draft.available_models` on first paint, a new "Discover Models" button calls the persisted discover route and PUTs the resulting list to disk, "Test connection" probes via the draft endpoint with `api_key: "***"` (relying on the 027 merge-stored-key branch), and Save is gated on a probe-since-last-edit hash so editing any gating field re-locks Save until a fresh green probe lands). The "Add LLM" entry point opens `components/AddProviderWizard.tsx` — a 4-stage modal (Identify → Connect to provider → Test Model → Add Provider) rewritten in 027 around `draftHash` / `lastProbedHash` so each stage gates the next and the final "Add Provider" button is not even mounted in the DOM until the probe gate is satisfied. 028 decoupled the stage-2 (model picker) reveal from the discover call's aggregate `status`: stage 2 now shows whenever a non-empty model list came back (any status — a 200 with models but backend `status==='error'` still surfaces the dropdown) or the server returned a 2xx empty catalog (`emptyCatalog` → free-text model input + an amber "Server reachable, 0 models published" note instead of a red error); a thrown discover error or a non-2xx transport failure still shows the red error and keeps stage 2 hidden. A shared `components/TestDetailsModal.tsx` renders the structured per-step transcript returned by both the Test and Discover routes (it still receives the real aggregate `status`; only the wizard gating is decoupled) |
 | About | `src/pages/About.tsx` | Version, git commit, backend health |
 
+### Threat Hunting Frontend
+
+| Component | Path | Content |
+|---|---|---|
+| TH package list | `src/pages/ThreatHunting.tsx` | Hunt Package list, create button, status badges |
+| Hunt detail | `src/pages/threat-hunting/HuntDetail.tsx` | Per-package view with 5 tabs: Evidence, IOCs, Analysis, Execution, Report |
+| Package wizard | `src/pages/threat-hunting/HuntPackageWizard.tsx` | Multi-step creation wizard (identity → add evidence → review → generate) |
+| Analysis tab | `src/pages/threat-hunting/AnalysisTab.tsx` | Generation trigger, step progress, draft review (context, retrohunt, hypotheses, leads, TTPs, queries), approve/reject |
+| Retrohunt panel | `src/pages/threat-hunting/RetrohuntPanel.tsx` | Sanitized IOC table with noise scores/flags, SPL draft, analyst notes, CSV download |
+| Execution panel | `src/pages/threat-hunting/ExecutionPanel.tsx` | Connector selector, time range, SPL editor, execution submit, result cards with interpreted findings |
+| Report panel | `src/pages/threat-hunting/ReportPanel.tsx` | Full structured report: executive summary, evidence stats, threat context, hypotheses, TTP analysis, execution results, recommendations; export to Markdown/JSON |
+| Add evidence modal | `src/pages/threat-hunting/AddEvidenceModal.tsx` | Add file/URL/watcher/text evidence to an existing package |
+| SIEM connectors tab | `src/pages/configuration/SiemConnectorsTab.tsx` | Splunk connector CRUD with live connection test; lives in Configuration → General |
+
+### Configuration Tabs
+
+| Tab | Path | Content |
+|---|---|---|
+| LLM Providers | `src/pages/configuration/LLMProvidersTab.tsx` | Multi-provider management (OpenAI, Anthropic, Ollama, compatible) |
+| SIEM Connectors | `src/pages/configuration/SiemConnectorsTab.tsx` | Splunk connector profiles (Phase 5) |
+| User Management | `src/pages/configuration/UserManagementTab.tsx` | Admin-only: create/delete users, reset passwords |
+
 ---
 
 ## Data Flow
+
+### Threat Intel
 
 ```
 External feed / push
@@ -99,6 +147,46 @@ data/<source_name>.db  (SQLite)
         │
         ▼
 EntryTable (React)
+```
+
+### Threat Hunting
+
+```
+Evidence (file/URL/watcher/text)
+        │
+        ▼
+[Extractors] ─── PyMuPDF / DOCX / trafilatura / text
+        │
+        ▼
+[IOC normalizer + noise scorer]
+        │
+        ▼
+data/threat_hunting.db  (evidence_items, extracted_iocs)
+        │
+        ▼
+[LangGraph pipeline]
+  intake_classifier
+      ├──► threat_context_builder ──► hypothesis_generator
+      └──► deep_retrohunt_planner ──┘   │
+                                   hunting_lead_planner
+                                        │
+                                   ttp_analyst
+                                        │
+                                   query_drafting_agent
+                                        │
+                                   [approval_gate]
+        │ (operator approves)
+        ▼
+[Splunk connector] ── submit SPL → poll job → fetch results
+        │
+        ▼
+data/threat_hunting.db  (task_results)
+        │
+        ▼
+[report_writer] ── LLM executive summary + structured report
+        │
+        ▼
+data/threat_hunting.db  (hunt_reports)
 ```
 
 ---
@@ -124,7 +212,14 @@ EntryTable (React)
 | feedparser | RSS/Atom parsing |
 | httpx | Async HTTP client |
 | pyyaml | Config file parsing |
-| bcrypt | Password hashing for the auth module (prompts-045) |
+| bcrypt | Password hashing (auth module) |
+| PyMuPDF (`fitz`) | PDF text extraction for TH evidence |
+| python-docx | DOCX extraction for TH evidence |
+| trafilatura | URL article/content extraction for TH evidence |
+| langgraph | LangGraph stateful agent workflow orchestration (TH pipeline) |
+| langchain-core | LangChain base abstractions and message types |
+| langchain-openai | OpenAI + compatible provider integration for LangGraph nodes |
+| langchain-anthropic | Anthropic provider integration for LangGraph nodes |
 | React + Vite | Frontend framework + build tool |
 | Tailwind CSS | Utility-first styling |
 | @tanstack/react-query | Server state management |

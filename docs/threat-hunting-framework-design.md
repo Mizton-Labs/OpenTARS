@@ -1,6 +1,6 @@
 # Threat Hunting Framework — Design Document
 
-**Status:** Phase 0 — Design  
+**Status:** Implemented — Phases 1–6 complete  
 **Last updated:** 2026-06-21  
 **Source:** `.coding_agent/developer_notes/issue-local-002.md`
 
@@ -738,23 +738,93 @@ Impact:
 
 ## 17. Implementation Roadmap
 
-| Phase | Scope | Branch |
-|---|---|---|
-| **0** | This design document | `main` |
-| **1** | Role model update + skeleton route/UI + `threat_hunting.db` schema | `feat/th-phase-1-skeleton` |
-| **2** | Hunt Package wizard + evidence intake (upload, URL, watcher, text) | `feat/th-phase-2-intake` |
-| **3** | LLM agent pipeline — threat context, hypotheses, leads, TTP, query drafts | `feat/th-phase-3-agents` |
-| **4** | Deep Retrohunt IOC sanitization + SPL draft generation | `feat/th-phase-4-retrohunt` |
-| **5** | Splunk connector — config, test, execute, result collection | `feat/th-phase-5-splunk` |
-| **6** | Report assembly, review UI, full end-to-end hunt workflow | `feat/th-phase-6-reporting` |
+| Phase | Scope | Branch | Status |
+|---|---|---|---|
+| **0** | Design document | `main` | ✓ Merged |
+| **1** | Role model (`admin`/`threat-researcher`/`threat-viewer`/`feed-sender`), TH DB schema, sidebar skeleton | `feat/th-phase-1-skeleton` | ✓ Merged |
+| **2** | Hunt Package wizard, evidence intake (file/URL/watcher/text), IOC extraction, SSRF policy | `feat/th-phase-2-intake` | ✓ Merged |
+| **3** | LangGraph pipeline — threat context, hypotheses, leads, TTP analysis, query drafts, approval gate | `feat/th-phase-3-agents` | ✓ Merged |
+| **4** | Deep Retrohunt — IOC sanitization + noise scoring + SPL macro draft | `feat/th-phase-4-retrohunt` | ✓ Merged |
+| **5** | Splunk REST API connector — CRUD, connection test, SPL execution, result collection, LLM interpretation | `feat/th-phase-5-splunk` | ✓ Open PR |
+| **6** | Report assembly — executive summary (LLM), structured report, Markdown/JSON export | `feat/th-phase-6-reporting` | ✓ Open PR |
 
 ---
 
-## 18. Open Decisions (Deferred)
+## 18. Implementation Notes (Divergence from Design)
 
-- Multi-SIEM (Sentinel KQL, Elastic, CrowdStrike CQL) — Phase 5+ after Splunk.
+These items diverged from the original design during implementation:
+
+- **Approval gate:** Implemented as persisted `generation_status` field (`awaiting_approval` → resumes via API call), not durable LangGraph interrupt checkpointing. The pipeline exits gracefully after saving state; the operator approval re-fires the post-approval graph.
+- **Document parsers:** Docling remains future/design. Phase 2 uses PyMuPDF (PDF), python-docx (DOCX), and trafilatura (URL). Parser strategy is recorded per evidence item.
+- **Splunk credentials:** Stored in `config_json` column of `siem_connectors` table in `threat_hunting.db`. API responses mask credentials as `***`. No external keystore dependency.
+- **`results_interpreter` / `report_writer`:** Implemented as standalone async functions (not LangGraph nodes) called from the execution runner and report writer, respectively, to keep the execution flow decoupled from the generation pipeline.
+- **Deep Retrohunt fan-out:** `intake_classifier` fans out to `threat_context_builder` AND `deep_retrohunt_planner` in parallel via LangGraph edges; both must complete before `hypothesis_generator` (LangGraph fan-in).
+
+---
+
+## 19. Current Implementation Map
+
+```
+backend/
+  threat_hunting/
+    db.py                        # schema v2, full CRUD
+    models.py                    # Pydantic I/O models
+    ssrf.py                      # URL fetch SSRF enforcement
+    iocs.py                      # extraction, normalization, noise scoring
+    extractors/
+      dispatcher.py              # routes by mime/extension
+      pdf_extractor.py           # PyMuPDF
+      docx_extractor.py          # python-docx
+      text_extractor.py          # plain text / markdown / CSV / JSON
+      url_fetcher.py             # httpx + trafilatura + SSRF validation
+    agents/
+      llm_bridge.py              # async bridge → existing LLMClient
+      state.py                   # HuntPipelineState TypedDict
+      pipeline.py                # LangGraph StateGraph (fan-out, approval gate)
+      runner.py                  # background pipeline, DB persistence
+      nodes/
+        intake_classifier.py
+        threat_context_builder.py
+        hypothesis_generator.py
+        hunting_lead_planner.py
+        ttp_analyst.py
+        query_drafting_agent.py
+        deep_retrohunt_planner.py
+        report_writer.py         # also callable standalone
+    siem/
+      base.py                    # SIEMConnectorBase ABC
+      splunk.py                  # Splunk REST API v2
+      executor.py                # background execution runner
+  api/
+    routes_threat_hunting.py     # all /api/threat-hunting/* routes
+
+frontend/src/
+  pages/
+    ThreatHunting.tsx            # package list
+    threat-hunting/
+      HuntPackageWizard.tsx
+      HuntDetail.tsx             # 5-tab detail: Evidence/IOCs/Analysis/Execution/Report
+      AnalysisTab.tsx            # generation + approval UI
+      RetrohuntPanel.tsx         # IOC review table + SPL draft
+      ExecutionPanel.tsx         # SIEM execute + result cards
+      ReportPanel.tsx            # report view + MD/JSON export
+      AddEvidenceModal.tsx
+  pages/configuration/
+    SiemConnectorsTab.tsx        # Splunk connector CRUD (Configuration → General)
+
+data/
+  threat_hunting.db              # all TH state (packages, evidence, IOCs,
+                                 #   generation records, SIEM connectors,
+                                 #   task results, hunt reports)
+```
+
+---
+
+## 20. Open Decisions (Deferred)
+
+- Multi-SIEM (Sentinel KQL, Elastic, CrowdStrike CQL) — after Splunk is stable.
 - Automated evidence ingestion from TAXII/STIX feeds.
-- Hunt package sharing / export (STIX, PDF, JSON).
+- Hunt package sharing / export (STIX bundle, PDF).
 - Scheduled re-hunting against updated IOC sets.
 - Collaboration features (comments, review assignments).
-- Subprocess/sandbox isolation for document parsing.
+- Subprocess/sandbox isolation for document parsing (Docling integration).
