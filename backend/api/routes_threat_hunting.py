@@ -434,33 +434,92 @@ async def get_generation_status(pkg_id: str) -> dict:
 
 @router.post("/packages/{pkg_id}/approve")
 async def approve_generation(pkg_id: str, body: ApproveBody) -> dict:
-    """Approve the generated hunting package.
+    """Approve the generated hunting package (latest run).
 
-    Resumes the LangGraph pipeline through the approval gate and
-    marks the hunt package status as 'approved'.
+    Back-compat route — resolves the latest run for the package.
+    Prefer POST /packages/{pkg_id}/runs/{run_id}/approve for explicit run control.
     """
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    # Resolve latest run_id
+    runs = await th_db.list_generation_runs(pkg_id)
+    if not runs:
+        raise HTTPException(status_code=404, detail="No generation run found for this package.")
+    run_id = runs[0]["id"]
 
     from backend.threat_hunting.agents.runner import approve_generation as _approve
 
     try:
-        return await _approve(pkg_id, notes=body.notes)
+        return await _approve(run_id, notes=body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/packages/{pkg_id}/reject")
 async def reject_generation(pkg_id: str, body: RejectBody) -> dict:
-    """Reject the generated hunting package.
+    """Reject the generated hunting package (latest run).
 
-    Marks the generation as rejected and resets the hunt package to draft.
+    Back-compat route — resolves the latest run for the package.
+    Prefer POST /packages/{pkg_id}/runs/{run_id}/reject for explicit run control.
     """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    runs = await th_db.list_generation_runs(pkg_id)
+    if not runs:
+        raise HTTPException(status_code=404, detail="No generation run found for this package.")
+    run_id = runs[0]["id"]
+
+    from backend.threat_hunting.agents.runner import reject_generation as _reject
+
+    try:
+        return await _reject(run_id, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ── Run-scoped generation endpoints (issue-local-005) ────────────────────────
+
+
+@router.get("/packages/{pkg_id}/runs")
+async def list_runs(pkg_id: str) -> list[dict]:
+    """List all generation runs for a hunt package (newest first)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_generation_runs(pkg_id)
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/status")
+async def get_run_status(pkg_id: str, run_id: str) -> dict:
+    """Poll the generation status for a specific run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import get_generation_status as _status
+
+    record = await _status(pkg_id, run_id=run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return record
+
+
+@router.post("/packages/{pkg_id}/runs/{run_id}/approve")
+async def approve_run(pkg_id: str, run_id: str, body: ApproveBody) -> dict:
+    """Approve a specific generation run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import approve_generation as _approve
+
+    try:
+        return await _approve(run_id, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/packages/{pkg_id}/runs/{run_id}/reject")
+async def reject_run(pkg_id: str, run_id: str, body: RejectBody) -> dict:
+    """Reject a specific generation run."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
 
     from backend.threat_hunting.agents.runner import reject_generation as _reject
 
     try:
-        return await _reject(pkg_id, notes=body.notes)
+        return await _reject(run_id, notes=body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -607,6 +666,7 @@ class ExecuteBody(BaseModel):
     latest: str = "now"
     provider_name: str | None = None
     model_name: str | None = None
+    run_id: str | None = None  # link execution results to a specific generation run
 
 
 @router.post("/packages/{pkg_id}/execute", status_code=202)
@@ -615,6 +675,7 @@ async def execute_hunt(pkg_id: str, body: ExecuteBody) -> dict:
 
     The hunt package must be in 'approved' status. Returns a TaskResult
     record immediately; execution runs in the background.
+    Pass run_id to link results to a specific generation run.
     """
     pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
     if pkg["status"] not in ("approved", "completed"):
@@ -634,6 +695,7 @@ async def execute_hunt(pkg_id: str, body: ExecuteBody) -> dict:
             latest=body.latest,
             provider_name=body.provider_name,
             model_name=body.model_name,
+            run_id=body.run_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -804,6 +866,123 @@ async def download_report_pdf(pkg_id: str) -> StreamingResponse:
 
     hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
     filename = f"hunt_report_{hunt_name}.pdf"
+    from io import BytesIO
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Run-scoped results and report endpoints (issue-local-005) ─────────────────
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/results")
+async def list_run_results(pkg_id: str, run_id: str) -> list[dict]:
+    """List SIEM task results scoped to a specific generation run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_task_results_by_run(run_id)
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/report")
+async def get_run_report(pkg_id: str, run_id: str) -> dict:
+    """Get the hunt report for a specific generation run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report_by_run(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found for this run.")
+    return report
+
+
+@router.post("/packages/{pkg_id}/runs/{run_id}/report", status_code=201)
+async def generate_run_report(
+    pkg_id: str, run_id: str, body: ReportGenerateBody, request: Request
+) -> dict:
+    """Generate a report scoped to a specific generation run."""
+    pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    if pkg["status"] not in ("approved", "completed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Package must be approved or completed to generate a report (status: {pkg['status']!r})",
+        )
+
+    from backend.threat_hunting.agents.nodes.report_writer import write_report
+
+    created_by: str | None = None
+    try:
+        user = getattr(request.state, "user", None)
+        if user:
+            created_by = getattr(user, "username", None)
+    except Exception:
+        pass
+
+    report_formats = body.report_formats
+    if report_formats is None:
+        try:
+            from backend.config.loader import load_th_report_formats
+
+            report_formats = load_th_report_formats()
+        except Exception:
+            report_formats = {"pdf": True, "markdown": True}
+
+    try:
+        return await write_report(
+            pkg_id,
+            run_id=run_id,
+            provider_name=body.provider_name,
+            model_name=body.model_name,
+            created_by=created_by,
+            report_formats=report_formats,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/report/markdown")
+async def download_run_report_markdown(pkg_id: str, run_id: str) -> Response:
+    """Download the report for a specific run as Markdown."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report_by_run(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found for this run.")
+
+    full_report = report.get("full_report") or {}
+    markdown_content = full_report.get("_markdown")
+    if not markdown_content:
+        from backend.threat_hunting.agents.nodes.report_writer import render_report_markdown
+
+        markdown_content = render_report_markdown(full_report)
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_report_{hunt_name}_run_{run_id[:8]}.md"
+    return Response(
+        content=markdown_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/report/pdf")
+async def download_run_report_pdf(pkg_id: str, run_id: str) -> StreamingResponse:
+    """Download the report for a specific run as PDF."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report_by_run(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found for this run.")
+
+    full_report = report.get("full_report") or {}
+    try:
+        from backend.threat_hunting.agents.nodes.report_writer import render_report_pdf
+
+        pdf_bytes = render_report_pdf(full_report)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PDF generation requires reportlab.")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_report_{hunt_name}_run_{run_id[:8]}.pdf"
     from io import BytesIO
 
     return StreamingResponse(

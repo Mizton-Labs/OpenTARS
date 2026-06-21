@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
@@ -12,17 +12,27 @@ import {
   type THHuntingLead,
   type THQueryDraft,
   type THHuntTask,
+  type LLMProviderSummary,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
 
-export default function AnalysisTab({ pkgId }: { pkgId: string }) {
+export default function AnalysisTab({
+  pkgId,
+  runId,
+  onRunCreated,
+}: {
+  pkgId: string
+  runId?: string
+  onRunCreated?: (runId: string) => void
+}) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
   const [approvalNotes, setApprovalNotes] = useState('')
   const [showApproveForm, setShowApproveForm] = useState(false)
   const [selectedEffort, setSelectedEffort] = useState<string>('')
+  const [modelChoice, setModelChoice] = useState<string>('')
 
   // Load global default effort for the Generate screen
   const { data: effortData } = useQuery({
@@ -31,10 +41,37 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
     staleTime: 30_000,
   })
 
-  // Poll generation status - refetch every 3s when running
+  // Load LLM providers for the model selector
+  const { data: providers = [] } = useQuery({
+    queryKey: ['llm-providers'],
+    queryFn: () => api.llm.listProviders(),
+    staleTime: 60_000,
+  })
+
+  // Build flat list of provider·model options (mirrors SmartProposalConfirmModal)
+  const modelOptions = useMemo(() => {
+    const opts: { provider: string; model: string }[] = []
+    const seen = new Set<string>()
+    for (const p of providers as LLMProviderSummary[]) {
+      for (const m of p.available_models ?? []) {
+        const key = `${p.name}\x00${m}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        opts.push({ provider: p.name, model: m })
+      }
+    }
+    return opts
+  }, [providers])
+
+  const chosenModel = modelChoice !== '' ? (modelOptions[Number(modelChoice)] ?? null) : null
+
+  // Poll generation status for the active run (or latest if no runId)
   const { data: genRecord, isLoading } = useQuery({
-    queryKey: ['th-generation', pkgId],
-    queryFn: () => api.threatHunting.getGenerationStatus(pkgId).catch(() => null),
+    queryKey: ['th-generation', pkgId, runId],
+    queryFn: () => {
+      if (runId) return api.threatHunting.getRunStatus(pkgId, runId).catch(() => null)
+      return api.threatHunting.getGenerationStatus(pkgId).catch(() => null)
+    },
     refetchInterval: (query) => {
       const status = (query.state.data as THGenerationRecord | null)?.generation_status
       return status === 'running' ? 3000 : false
@@ -44,29 +81,46 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
   const startMut = useMutation({
     mutationFn: () => {
       const effort = selectedEffort || effortData?.th_research_effort || 'medium'
-      return api.threatHunting.startGeneration(pkgId, { research_effort: effort })
+      return api.threatHunting.startGeneration(pkgId, {
+        research_effort: effort,
+        provider_name: chosenModel?.provider ?? undefined,
+        model_name: chosenModel?.model ?? undefined,
+      })
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      const newRunId = data.run_id ?? data.id
+      if (newRunId && onRunCreated) onRunCreated(newRunId)
       qc.invalidateQueries({ queryKey: ['th-generation', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
     },
   })
 
   const approveMut = useMutation({
-    mutationFn: () => api.threatHunting.approveGeneration(pkgId, approvalNotes),
+    mutationFn: () => {
+      const effectiveRunId = runId ?? (genRecord?.run_id ?? genRecord?.id)
+      if (effectiveRunId) return api.threatHunting.approveRun(pkgId, effectiveRunId, approvalNotes)
+      return api.threatHunting.approveGeneration(pkgId, approvalNotes)
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-generation', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, runId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-packages'] })
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
       setShowApproveForm(false)
     },
   })
 
   const rejectMut = useMutation({
-    mutationFn: () => api.threatHunting.rejectGeneration(pkgId, approvalNotes),
+    mutationFn: () => {
+      const effectiveRunId = runId ?? (genRecord?.run_id ?? genRecord?.id)
+      if (effectiveRunId) return api.threatHunting.rejectRun(pkgId, effectiveRunId, approvalNotes)
+      return api.threatHunting.rejectGeneration(pkgId, approvalNotes)
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-generation', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, runId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-packages'] })
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
     },
   })
 
@@ -120,6 +174,23 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
                   )
                 })}
               </div>
+              {/* Model selector (mirrors SmartProposalConfirmModal) */}
+              <div className="flex items-center gap-2 justify-center text-xs">
+                <label htmlFor="th-model-select" className="text-gray-500 shrink-0">Model:</label>
+                <select
+                  id="th-model-select"
+                  className="input text-xs max-w-xs"
+                  value={modelChoice}
+                  onChange={(e) => setModelChoice(e.target.value)}
+                >
+                  <option value="">Configured default</option>
+                  {modelOptions.map((o, i) => (
+                    <option key={`${o.provider}\x00${o.model}`} value={String(i)}>
+                      {o.provider} · {o.model}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <button
                 className="btn-primary flex items-center gap-2 mx-auto"
                 disabled={startMut.isPending}
@@ -150,6 +221,9 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
               Current step: <span className="text-blue-400">{currentStep.replace(/_/g, ' ')}</span>
               {genRecord?.research_effort && (
                 <span className="ml-2 text-gray-600">· effort: {genRecord.research_effort}</span>
+              )}
+              {genRecord?.model_name && (
+                <span className="ml-2 text-gray-600">· {genRecord.provider_name} / {genRecord.model_name}</span>
               )}
             </p>
           </div>

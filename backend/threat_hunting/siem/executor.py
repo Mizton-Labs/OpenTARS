@@ -242,8 +242,12 @@ async def start_execution(
     latest: str = "now",
     provider_name: str | None = None,
     model_name: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Start a background SIEM execution for an approved hunt package.
+
+    *run_id* links the task result to a specific generation run so reports
+    can scope results independently per run.
 
     Returns the TaskResult record immediately; execution runs in the background.
 
@@ -261,7 +265,7 @@ async def start_execution(
     if not connector_raw:
         raise ValueError(f"SIEM connector {connector_id!r} not found")
 
-    # Create task result record
+    # Create task result record (with run_id linkage)
     task_result = await th_db.create_task_result(
         hunt_package_id,
         task_type="retrohunt",
@@ -271,6 +275,7 @@ async def start_execution(
         latest=latest,
         hunt_id=hunt_package_id[:8],
         status="pending",
+        run_id=run_id,
     )
     result_id = task_result["id"]
 

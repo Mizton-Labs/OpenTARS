@@ -1063,6 +1063,40 @@ export const api = {
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/markdown`,
     downloadReportPdf: (pkgId: string) =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/pdf`,
+    // ── issue-local-005: Run-scoped methods ─────────────────────────────────
+    listRuns: (pkgId: string) =>
+      request<THRunSummary[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs`),
+    getRunStatus: (pkgId: string, runId: string) =>
+      request<THGenerationRecord>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/status`,
+      ),
+    approveRun: (pkgId: string, runId: string, notes = '') =>
+      request<{ generation_status: string }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/approve`,
+        { method: 'POST', body: JSON.stringify({ notes }) },
+      ),
+    rejectRun: (pkgId: string, runId: string, notes = '') =>
+      request<{ generation_status: string }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/reject`,
+        { method: 'POST', body: JSON.stringify({ notes }) },
+      ),
+    listRunResults: (pkgId: string, runId: string) =>
+      request<THTaskResult[]>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/results`,
+      ),
+    getRunReport: (pkgId: string, runId: string) =>
+      request<THHuntReport>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report`,
+      ),
+    generateRunReport: (pkgId: string, runId: string, body: { provider_name?: string | null; model_name?: string | null; report_formats?: { pdf: boolean; markdown: boolean } } = {}) =>
+      request<THHuntReport>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    downloadRunReportMarkdown: (pkgId: string, runId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report/markdown`,
+    downloadRunReportPdf: (pkgId: string, runId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report/pdf`,
   },
 }
 
@@ -1570,8 +1604,21 @@ export interface THStepLog {
   debug_lines?: string[]
 }
 
+/** Lightweight run summary returned by GET /packages/{id}/runs */
+export interface THRunSummary {
+  id: string
+  hunt_package_id: string
+  generation_status: string
+  llm_provider?: string | null
+  llm_model?: string | null
+  research_effort?: string | null
+  created_at: string
+}
+
 export interface THGenerationRecord {
   id?: string
+  /** run_id — the hunting_packages row id for this specific run */
+  run_id?: string
   hunt_package_id: string
   generation_status:
     | 'running'
@@ -1716,6 +1763,7 @@ export interface THConnectorTestResult {
 export interface THTaskResult {
   id: string
   hunt_package_id: string
+  run_id?: string | null
   task_type: string
   siem_connector: string
   query_text: string
@@ -1738,6 +1786,7 @@ export interface THExecuteBody {
   latest?: string
   provider_name?: string | null
   model_name?: string | null
+  run_id?: string | null
 }
 
 // ── Phase 6: Report types ─────────────────────────────────────────────────────
@@ -1787,6 +1836,7 @@ export interface THFullReport {
 export interface THHuntReport {
   id: string
   hunt_package_id: string
+  run_id?: string | null
   executive_summary: string
   full_report: THFullReport
   created_at: string

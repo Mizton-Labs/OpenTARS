@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 3
+_TH_SCHEMA_VERSION = 4
 
 
 def _utc_now_iso() -> str:
@@ -114,6 +114,7 @@ CREATE_TASK_RESULTS_TABLE = """
 CREATE TABLE IF NOT EXISTS task_results (
     id               TEXT PRIMARY KEY,
     hunt_package_id  TEXT NOT NULL REFERENCES hunt_packages(id),
+    run_id           TEXT,
     task_type        TEXT NOT NULL,
     siem_connector   TEXT,
     query_text       TEXT,
@@ -133,6 +134,7 @@ CREATE_HUNT_REPORTS_TABLE = """
 CREATE TABLE IF NOT EXISTS hunt_reports (
     id               TEXT PRIMARY KEY,
     hunt_package_id  TEXT NOT NULL REFERENCES hunt_packages(id),
+    run_id           TEXT,
     executive_summary TEXT,
     full_report      TEXT,
     created_at       TEXT NOT NULL,
@@ -185,6 +187,46 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v3 "
             "(added current_step, completed_steps, step_logs, research_effort)"
+        )
+    if current_version < 4:
+        # v4: run_id columns added to hunt_reports and task_results to support
+        # independent re-run of hunt packages (issue-local-005).
+        # Also backfills existing rows by linking them to the latest
+        # hunting_packages row for their hunt_package_id.
+        for table, col_def in (
+            ("hunt_reports", "ADD COLUMN run_id TEXT"),
+            ("task_results", "ADD COLUMN run_id TEXT"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        # Backfill: for each hunt_package_id find the latest hunting_packages.id
+        # and set run_id on existing rows that have NULL run_id.
+        try:
+            await db.execute(
+                """UPDATE hunt_reports
+                   SET run_id = (
+                       SELECT hp.id FROM hunting_packages hp
+                       WHERE hp.hunt_package_id = hunt_reports.hunt_package_id
+                       ORDER BY hp.created_at DESC LIMIT 1
+                   )
+                   WHERE run_id IS NULL"""
+            )
+            await db.execute(
+                """UPDATE task_results
+                   SET run_id = (
+                       SELECT hp.id FROM hunting_packages hp
+                       WHERE hp.hunt_package_id = task_results.hunt_package_id
+                       ORDER BY hp.created_at DESC LIMIT 1
+                   )
+                   WHERE run_id IS NULL"""
+            )
+        except Exception as exc:
+            logger.warning("Schema v4 backfill skipped (non-fatal): %s", exc)
+        logger.info(
+            "Migrated threat_hunting.db to schema v4 "
+            "(added run_id to hunt_reports and task_results)"
         )
 
 
@@ -635,6 +677,7 @@ async def create_task_result(
     latest: str = "",
     hunt_id: str = "",
     status: str = "pending",
+    run_id: str | None = None,
 ) -> dict[str, Any]:
 
     result_id = _new_id()
@@ -642,12 +685,13 @@ async def create_task_result(
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         await db.execute(
             """INSERT INTO task_results
-               (id, hunt_package_id, task_type, siem_connector, query_text,
+               (id, hunt_package_id, run_id, task_type, siem_connector, query_text,
                 earliest, latest, hunt_id, status, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 result_id,
                 hunt_package_id,
+                run_id,
                 task_type,
                 siem_connector,
                 query_text,
@@ -742,16 +786,46 @@ async def list_task_results(hunt_package_id: str) -> list[dict[str, Any]]:
     return results
 
 
+async def list_task_results_by_run(run_id: str) -> list[dict[str, Any]]:
+    """Return task results scoped to a specific generation run."""
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM task_results WHERE run_id = ? ORDER BY created_at DESC",
+            (run_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get("raw_result") and isinstance(d["raw_result"], str):
+            try:
+                d["raw_result"] = _json.loads(d["raw_result"])
+            except Exception:
+                pass
+        results.append(d)
+    return results
+
+
 # ── Generation record (public read-only accessor) ─────────────────────────────
 
 
-async def get_generation_record_public(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the latest generation record for a hunt package.
+async def get_generation_record_public(
+    hunt_package_id: str,
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a generation record for a hunt package.
 
-    JSON-decodes all structured fields.  Used by report_writer and the
-    report API to avoid importing the runner module.
+    When *run_id* is supplied the specific run is returned; otherwise the
+    latest run for the package is returned.  JSON-decodes all structured
+    fields.  Used by report_writer and the report API to avoid importing
+    the runner module.
     """
-    import json as _json
+    if run_id:
+        return await get_generation_run(run_id)
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -763,7 +837,16 @@ async def get_generation_record_public(hunt_package_id: str) -> dict[str, Any] |
         await cur.close()
     if not row:
         return None
-    d = dict(row)
+    return _decode_hunting_package_row(dict(row))
+
+
+# ── Generation run CRUD (issue-local-005) ────────────────────────────────────
+
+
+def _decode_hunting_package_row(d: dict) -> dict:
+    """JSON-decode structured fields in a hunting_packages row dict."""
+    import json as _json
+
     for field in (
         "hypotheses",
         "hunting_leads",
@@ -786,6 +869,42 @@ async def get_generation_record_public(hunt_package_id: str) -> dict[str, Any] |
         except Exception:
             pass
     return d
+
+
+async def get_generation_run(run_id: str) -> dict[str, Any] | None:
+    """Return a single hunting_packages row by its own primary-key id (run_id)."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM hunting_packages WHERE id = ?",
+            (run_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return _decode_hunting_package_row(dict(row))
+
+
+async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
+    """Return all generation runs for a hunt package, newest first.
+
+    Returns lightweight summaries: id, hunt_package_id, generation_status,
+    llm_provider, llm_model, research_effort, created_at.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT id, hunt_package_id, generation_status,
+                      llm_provider, llm_model, research_effort, created_at
+               FROM hunting_packages
+               WHERE hunt_package_id = ?
+               ORDER BY created_at DESC""",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    return [dict(row) for row in rows]
 
 
 # ── Hunt Report CRUD ──────────────────────────────────────────────────────────
@@ -817,6 +936,7 @@ async def create_hunt_report(
     executive_summary: str,
     full_report: dict,
     created_by: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     import json as _json
 
@@ -825,11 +945,12 @@ async def create_hunt_report(
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         await db.execute(
             """INSERT INTO hunt_reports
-               (id, hunt_package_id, executive_summary, full_report, created_at, created_by)
-               VALUES (?,?,?,?,?,?)""",
+               (id, hunt_package_id, run_id, executive_summary, full_report, created_at, created_by)
+               VALUES (?,?,?,?,?,?,?)""",
             (
                 report_id,
                 hunt_package_id,
+                run_id,
                 executive_summary,
                 _json.dumps(full_report, ensure_ascii=False, default=str),
                 now,
@@ -837,13 +958,24 @@ async def create_hunt_report(
             ),
         )
         await db.commit()
+    if run_id:
+        return await get_hunt_report_by_run(run_id) or {}  # type: ignore[return-value]
     return await get_hunt_report(hunt_package_id)  # type: ignore[return-value]
+
+
+def _decode_report_row(d: dict) -> dict:
+    import json as _json
+
+    if d.get("full_report") and isinstance(d["full_report"], str):
+        try:
+            d["full_report"] = _json.loads(d["full_report"])
+        except Exception:
+            pass
+    return d
 
 
 async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
     """Return the latest report for a hunt package (most recently created)."""
-    import json as _json
-
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -854,18 +986,25 @@ async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
         await cur.close()
     if not row:
         return None
-    d = dict(row)
-    if d.get("full_report") and isinstance(d["full_report"], str):
-        try:
-            d["full_report"] = _json.loads(d["full_report"])
-        except Exception:
-            pass
-    return d
+    return _decode_report_row(dict(row))
+
+
+async def get_hunt_report_by_run(run_id: str) -> dict[str, Any] | None:
+    """Return the report for a specific generation run."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM hunt_reports WHERE run_id = ? ORDER BY created_at DESC LIMIT 1",
+            (run_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return _decode_report_row(dict(row))
 
 
 async def list_hunt_reports(hunt_package_id: str) -> list[dict[str, Any]]:
-    import json as _json
-
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -874,13 +1013,4 @@ async def list_hunt_reports(hunt_package_id: str) -> list[dict[str, Any]]:
         )
         rows = await cur.fetchall()
         await cur.close()
-    results = []
-    for row in rows:
-        d = dict(row)
-        if d.get("full_report") and isinstance(d["full_report"], str):
-            try:
-                d["full_report"] = _json.loads(d["full_report"])
-            except Exception:
-                pass
-        results.append(d)
-    return results
+    return [_decode_report_row(dict(row)) for row in rows]
