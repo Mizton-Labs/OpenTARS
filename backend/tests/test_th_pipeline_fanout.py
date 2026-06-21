@@ -28,7 +28,10 @@ from backend.threat_hunting.agents.state import (
 
 class TestReduceCurrentStep:
     def test_right_wins_when_non_empty(self) -> None:
-        assert _reduce_current_step("threat_context_builder", "deep_retrohunt_planner") == "deep_retrohunt_planner"
+        assert (
+            _reduce_current_step("threat_context_builder", "deep_retrohunt_planner")
+            == "deep_retrohunt_planner"
+        )
 
     def test_left_wins_when_right_empty(self) -> None:
         assert _reduce_current_step("threat_context_builder", "") == "threat_context_builder"
@@ -73,12 +76,22 @@ class TestReduceCompletedSteps:
 
 class TestReduceStepLogs:
     def test_last_entry_wins_for_same_step(self) -> None:
-        left = [{"step": "intake_classifier", "status": "ok"}, {"step": "threat_context_builder", "status": "ok"}]
-        right = [{"step": "intake_classifier", "status": "ok"}, {"step": "deep_retrohunt_planner", "status": "ok"}]
+        left = [
+            {"step": "intake_classifier", "status": "ok"},
+            {"step": "threat_context_builder", "status": "ok"},
+        ]
+        right = [
+            {"step": "intake_classifier", "status": "ok"},
+            {"step": "deep_retrohunt_planner", "status": "ok"},
+        ]
         result = _reduce_step_logs(left, right)
         steps = [e["step"] for e in result]
         # All three unique steps present
-        assert set(steps) == {"intake_classifier", "threat_context_builder", "deep_retrohunt_planner"}
+        assert set(steps) == {
+            "intake_classifier",
+            "threat_context_builder",
+            "deep_retrohunt_planner",
+        }
         # No duplicates
         assert len(steps) == 3
 
