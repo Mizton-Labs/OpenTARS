@@ -71,7 +71,7 @@ async def _save_generation_state(
             await db.execute(
                 """UPDATE hunting_packages SET
                    threat_context=?, hypotheses=?, hunting_leads=?,
-                   ttp_analysis=?, query_drafts=?,
+                   deep_retrohunt=?, ttp_analysis=?, query_drafts=?,
                    llm_provider=?, llm_model=?,
                    generation_status=?, generation_errors=?
                    WHERE hunt_package_id=?""",
@@ -79,6 +79,7 @@ async def _save_generation_state(
                     await _to_json(state.get("threat_context")),
                     await _to_json(state.get("hypotheses")),
                     await _to_json(state.get("hunting_leads")),
+                    await _to_json(state.get("deep_retrohunt")),
                     await _to_json(state.get("ttp_analysis")),
                     await _to_json(state.get("query_drafts")),
                     state.get("provider_name"),
@@ -93,16 +94,17 @@ async def _save_generation_state(
             await db.execute(
                 """INSERT INTO hunting_packages
                    (id, hunt_package_id, threat_context, hypotheses,
-                    hunting_leads, ttp_analysis, query_drafts,
+                    hunting_leads, deep_retrohunt, ttp_analysis, query_drafts,
                     llm_provider, llm_model,
                     generation_status, generation_errors, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     row_id,
                     pkg_id,
                     await _to_json(state.get("threat_context")),
                     await _to_json(state.get("hypotheses")),
                     await _to_json(state.get("hunting_leads")),
+                    await _to_json(state.get("deep_retrohunt")),
                     await _to_json(state.get("ttp_analysis")),
                     await _to_json(state.get("query_drafts")),
                     state.get("provider_name"),
@@ -135,6 +137,7 @@ async def _get_generation_record(pkg_id: str) -> dict[str, Any] | None:
     for field in (
         "hypotheses",
         "hunting_leads",
+        "deep_retrohunt",
         "ttp_analysis",
         "query_drafts",
         "generation_errors",
@@ -165,6 +168,7 @@ async def _load_pipeline_state(pkg_id: str) -> dict[str, Any] | None:
         "threat_context": record.get("threat_context"),
         "hypotheses": record.get("hypotheses") or [],
         "hunting_leads": record.get("hunting_leads") or [],
+        "deep_retrohunt": record.get("deep_retrohunt"),
         "ttp_analysis": record.get("ttp_analysis"),
         "query_drafts": record.get("query_drafts") or [],
         "errors": record.get("generation_errors") or [],

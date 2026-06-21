@@ -2,13 +2,18 @@
 LangGraph pipeline definition for the Threat Hunting agent workflow.
 
 Graph topology:
+
   intake_classifier
         │
-  threat_context_builder
+        ├──────────────────────────────────┐
+        ▼                                  ▼
+  threat_context_builder         deep_retrohunt_planner
+        │                                  │
+  hypothesis_generator           (joins at hypothesis_generator via fan-in)
         │
-  hypothesis_generator
+  hunting_lead_planner
         │
-  hunting_lead_planner ─── ttp_analyst (parallel via fan-out in runner)
+  ttp_analyst
         │
   query_drafting_agent
         │
@@ -16,8 +21,10 @@ Graph topology:
         │
   [complete]
 
-The graph is compiled once at import time.  Instances are created per-run
-via ``build_initial_state()`` and executed via ``run_pipeline()``.
+Fan-out / fan-in:
+  ``intake_classifier`` fans out to both ``threat_context_builder`` and
+  ``deep_retrohunt_planner`` in parallel.  LangGraph merges both outputs
+  before ``hypothesis_generator`` runs (fan-in at ``hypothesis_generator``).
 
 Approval gate implementation:
   LangGraph does not have a built-in interrupt mechanism that persists across
@@ -35,6 +42,7 @@ import logging
 
 from langgraph.graph import END, StateGraph
 
+from backend.threat_hunting.agents.nodes.deep_retrohunt_planner import deep_retrohunt_planner
 from backend.threat_hunting.agents.nodes.hunting_lead_planner import hunting_lead_planner
 from backend.threat_hunting.agents.nodes.hypothesis_generator import hypothesis_generator
 from backend.threat_hunting.agents.nodes.intake_classifier import intake_classifier
@@ -98,6 +106,7 @@ def build_graph() -> StateGraph:
     # Add nodes
     graph.add_node("intake_classifier", intake_classifier)
     graph.add_node("threat_context_builder", threat_context_builder)
+    graph.add_node("deep_retrohunt_planner", deep_retrohunt_planner)
     graph.add_node("hypothesis_generator", hypothesis_generator)
     graph.add_node("hunting_lead_planner", hunting_lead_planner)
     graph.add_node("ttp_analyst", ttp_analyst)
@@ -109,9 +118,15 @@ def build_graph() -> StateGraph:
     # Entry point
     graph.set_entry_point("intake_classifier")
 
-    # Linear edges through the main pipeline
+    # Fan-out: intake_classifier → threat_context_builder AND deep_retrohunt_planner (parallel)
     graph.add_edge("intake_classifier", "threat_context_builder")
+    graph.add_edge("intake_classifier", "deep_retrohunt_planner")
+
+    # Fan-in: both parallel branches must complete before hypothesis_generator
     graph.add_edge("threat_context_builder", "hypothesis_generator")
+    graph.add_edge("deep_retrohunt_planner", "hypothesis_generator")
+
+    # Remainder of pipeline
     graph.add_edge("hypothesis_generator", "hunting_lead_planner")
     graph.add_edge("hunting_lead_planner", "ttp_analyst")
     graph.add_edge("ttp_analyst", "query_drafting_agent")

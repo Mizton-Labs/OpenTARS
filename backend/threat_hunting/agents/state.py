@@ -77,6 +77,40 @@ class IOCSummary(TypedDict):
     sample: list[dict[str, Any]]  # first N IOCs for context
 
 
+class SanitizedIOC(TypedDict):
+    """A single IOC after deterministic sanitization."""
+
+    ioc: str  # normalized IOC value (defanged notation removed, casing normalized)
+    ioc_type: str  # canonical type string
+    ioc_description: str
+    noise_score: float  # 0.0–1.0; higher = noisier
+    noise_reasons: list[str]  # human-readable reasons contributing to score
+    search_token: str  # shortest search-ready token for SIEM queries
+
+
+class DeepRetrohuntLead(TypedDict):
+    """Output of the deep_retrohunt_planner node.
+
+    Always generated when atomic IOCs are present.  Contains:
+    - The sanitized / deduplicated IOC CSV (canonical format).
+    - Per-IOC sanitization details for operator review.
+    - An LLM-generated SPL macro draft.
+    - A plain-text search hint for non-Splunk SIEMs.
+    - Statistics about noisy IOCs flagged for review.
+    """
+
+    sanitized_iocs: list[SanitizedIOC]  # deduplicated, noise-scored
+    ioc_csv: str  # canonical CSV (ioc,ioc_type,ioc_description)
+    total_ioc_count: int
+    noisy_ioc_count: int  # IOCs with noise_score >= 0.5
+    high_noise_ioc_count: int  # IOCs with noise_score >= 0.8
+    spl_draft: str  # Splunk SPL macro draft
+    spl_macro_name: str  # suggested macro name e.g. threathunt_ioc_<hunt_id>
+    search_hint: str  # plain-language hunt scope for non-SPL SIEMs
+    analyst_notes: str  # LLM-generated notes on sanitization decisions
+    llm_parse_error: bool  # True if LLM step failed (deterministic output still present)
+
+
 class HuntPipelineState(TypedDict, total=False):
     # ── Inputs ────────────────────────────────────────────────────────────────
     hunt_package_id: str
@@ -92,6 +126,7 @@ class HuntPipelineState(TypedDict, total=False):
     threat_context: dict[str, Any]  # set by threat_context_builder
     hypotheses: list[Hypothesis]  # set by hypothesis_generator
     hunting_leads: list[HuntingLead]  # set by hunting_lead_planner
+    deep_retrohunt: DeepRetrohuntLead | None  # set by deep_retrohunt_planner
     ttp_analysis: BehavioralTTPAnalysis  # set by ttp_analyst
     query_drafts: list[QueryDraft]  # set by query_drafting_agent
 
