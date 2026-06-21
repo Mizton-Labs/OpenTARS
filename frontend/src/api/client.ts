@@ -1548,6 +1548,13 @@ export type THuntPackageStatus =
   | 'completed'
   | 'archived'
 
+/** Phase summary entry (issue-006-D) — one per pipeline step. */
+export interface THPhaseEntry {
+  step: string
+  status: 'ok' | 'error' | 'partial' | 'skipped' | 'unknown'
+  elapsed_s: number | null
+}
+
 export interface THuntPackage {
   id: string
   name: string
@@ -1557,6 +1564,12 @@ export interface THuntPackage {
   created_at: string
   updated_at: string
   evidence_count: number
+  /** Latest-run generation_status (issue-006-D). */
+  generation_status?: string | null
+  /** Per-step phase summary from the latest run (issue-006-D). */
+  phases?: THPhaseEntry[] | null
+  /** Total elapsed time across all steps of the latest run in seconds (issue-006-D). */
+  total_elapsed_s?: number | null
 }
 
 export interface THEvidenceItem {

@@ -294,8 +294,16 @@ async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
 
 
 async def list_hunt_packages() -> list[dict[str, Any]]:
+    """List all non-archived hunt packages with evidence counts and latest run summary.
+
+    issue-006-D: each package dict gains three optional keys:
+      - ``phases``         list[{step, status, elapsed_s}] from latest run's step_logs
+      - ``total_elapsed_s`` sum of elapsed_s across all completed steps (float|None)
+      - ``generation_status`` generation_status of the latest run (str|None)
+    """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        # Base query: packages + evidence count
         cur = await db.execute(
             "SELECT hp.*, COUNT(ei.id) AS evidence_count "
             "FROM hunt_packages hp "
@@ -305,7 +313,55 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
         )
         rows = await cur.fetchall()
         await cur.close()
-    return [dict(r) for r in rows]
+
+        # Latest run per package (one row per hunt_package_id, newest created_at)
+        cur2 = await db.execute(
+            "SELECT hunt_package_id, generation_status, step_logs "
+            "FROM hunting_packages "
+            "WHERE id IN ("
+            "  SELECT MAX(id) FROM hunting_packages GROUP BY hunt_package_id"
+            ")"
+        )
+        run_rows = await cur2.fetchall()
+        await cur2.close()
+
+    # Build lookup: hunt_package_id → {generation_status, step_logs_json}
+    run_by_pkg: dict[str, dict[str, Any]] = {}
+    for r in run_rows:
+        run_by_pkg[r[0]] = {"generation_status": r[1], "step_logs_json": r[2]}
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        pkg = dict(row)
+        run = run_by_pkg.get(pkg["id"])
+        if run:
+            pkg["generation_status"] = run["generation_status"]
+            # Parse step_logs JSON → phase summary
+            phases: list[dict[str, Any]] = []
+            total_elapsed: float = 0.0
+            try:
+                import json as _json
+                step_logs: list[dict[str, Any]] = _json.loads(run["step_logs_json"] or "[]")
+                for log in step_logs:
+                    step_name = log.get("step", "")
+                    if step_name:
+                        elapsed = log.get("elapsed_s") or 0.0
+                        phases.append({
+                            "step": step_name,
+                            "status": log.get("status", "unknown"),
+                            "elapsed_s": elapsed,
+                        })
+                        total_elapsed += float(elapsed)
+            except Exception:  # noqa: BLE001
+                pass
+            pkg["phases"] = phases if phases else None
+            pkg["total_elapsed_s"] = round(total_elapsed, 2) if phases else None
+        else:
+            pkg["generation_status"] = None
+            pkg["phases"] = None
+            pkg["total_elapsed_s"] = None
+        result.append(pkg)
+    return result
 
 
 async def update_hunt_package(
