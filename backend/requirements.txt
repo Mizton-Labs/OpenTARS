@@ -34,6 +34,11 @@ docling>=2.104.0         # High-quality PDF → Markdown (ML-based; pulls PyTorc
 tenacity>=8.2.0          # Retry with exponential backoff for transient fetch errors
 readability-lxml>=0.8.1  # HTML content extraction fallback (after trafilatura)
 playwright>=1.44.0       # Headless Chromium fallback for JS-heavy pages
+# Brotli decompression for httpx (issue-local-008 Fix 1)
+# Without this, servers that return Content-Encoding: br deliver compressed binary
+# to trafilatura/readability, silently yielding garbage and zero IOCs.
+# httpx only auto-decodes br when brotli/brotlicffi is installed.
+brotli>=1.1.0            # Brotli decompression for httpx — required for br-encoded responses
 
 # Threat Hunting — report generation (issue-local-004)
 reportlab>=4.0           # PDF report generation (pure Python, no OS dependencies)

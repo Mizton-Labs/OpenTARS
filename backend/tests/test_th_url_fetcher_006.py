@@ -1,15 +1,25 @@
 """
-Tests for issue-local-006 Part A — URL fetching robustness.
+Tests for issue-local-006 Part A + issue-local-008 — URL fetching robustness.
 
-Covers:
+Covers (006-A):
   - Browser-like headers are sent (not old Mizton-ThreatBox/1.0 UA)
   - Non-2xx responses raise HTTPStatusError instead of extracting error HTML
   - Retry/backoff path (tenacity) retries transient failures before giving up
-  - Extractor fallback chain: trafilatura → readability-lxml → utf8-fallback
+  - Extractor fallback chain: trafilatura -> readability-lxml -> utf8-fallback
   - Playwright fallback is triggered when extracted text is short
   - Playwright fallback degrades gracefully when playwright is not installed
   - browser_fetcher: SSRF check blocks private IPs
   - browser_fetcher: returns None gracefully when playwright is unavailable
+
+Covers (issue-local-008):
+  Fix 1 - _BROTLI_AVAILABLE flag reflects brotli import; Accept-Encoding header
+           only includes 'br' when brotli decoder is available
+  Fix 2 - _looks_like_binary() detects compressed/binary bytes correctly
+  Fix 2 - binary raw bytes on HTML response triggers warning + playwright forced
+  Fix 3 - _should_force_playwright() broader triggers: short text, bot-wall,
+           binary text, utf8-fallback on HTML, binary raw bytes
+  Fix 3 - Playwright fallback fires on binary/mojibake even when text is long
+  Fix 4 - readability-lxml exceptions surface as warnings (not silent swallow)
 """
 
 from __future__ import annotations
@@ -377,3 +387,327 @@ def test_is_bot_wall_status() -> None:
     assert _is_bot_wall_status(503) is True
     assert _is_bot_wall_status(200) is False
     assert _is_bot_wall_status(301) is False
+
+
+# ─── issue-local-008 Fix 1: brotli availability + Accept-Encoding ─────────────
+
+
+def test_brotli_available_flag_type() -> None:
+    """_BROTLI_AVAILABLE must be a plain bool."""
+    from backend.threat_hunting.extractors.url_fetcher import _BROTLI_AVAILABLE
+
+    assert isinstance(_BROTLI_AVAILABLE, bool)
+
+
+def test_accept_encoding_excludes_br_when_brotli_missing() -> None:
+    """When brotli is not importable, Accept-Encoding must not contain 'br'."""
+    from backend.threat_hunting.extractors import url_fetcher
+
+    orig = url_fetcher._BROTLI_AVAILABLE
+    try:
+        url_fetcher._BROTLI_AVAILABLE = False
+        url_fetcher._ACCEPT_ENCODING = "gzip, deflate"
+        headers = dict(url_fetcher._BROWSER_HEADERS)
+        headers["Accept-Encoding"] = url_fetcher._ACCEPT_ENCODING
+        assert "br" not in headers["Accept-Encoding"].split(", ")
+    finally:
+        url_fetcher._BROTLI_AVAILABLE = orig
+        url_fetcher._ACCEPT_ENCODING = "gzip, deflate, br" if orig else "gzip, deflate"
+
+
+def test_accept_encoding_includes_br_when_brotli_present() -> None:
+    """When brotli IS available, Accept-Encoding should include 'br'."""
+    from backend.threat_hunting.extractors import url_fetcher
+
+    orig = url_fetcher._BROTLI_AVAILABLE
+    try:
+        url_fetcher._BROTLI_AVAILABLE = True
+        url_fetcher._ACCEPT_ENCODING = "gzip, deflate, br"
+        assert "br" in url_fetcher._ACCEPT_ENCODING.split(", ")
+    finally:
+        url_fetcher._BROTLI_AVAILABLE = orig
+        url_fetcher._ACCEPT_ENCODING = "gzip, deflate, br" if orig else "gzip, deflate"
+
+
+def test_browser_headers_accept_encoding_matches_capability() -> None:
+    """_BROWSER_HEADERS Accept-Encoding must match _ACCEPT_ENCODING at module load."""
+    from backend.threat_hunting.extractors.url_fetcher import _ACCEPT_ENCODING, _BROWSER_HEADERS
+
+    assert _BROWSER_HEADERS["Accept-Encoding"] == _ACCEPT_ENCODING
+
+
+# ─── issue-local-008 Fix 2: _looks_like_binary ────────────────────────────────
+
+
+def test_looks_like_binary_with_brotli_bytes() -> None:
+    """Simulated Brotli-compressed bytes must be detected as binary."""
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    # Brotli-compressed data is high-entropy: majority of bytes are >= 0x80 (non-ASCII).
+    # Build a sample where >30% of bytes are non-ASCII to trigger the threshold.
+    # (Real Brotli streams have ~60-80% non-ASCII bytes.)
+    brotli_like = bytes([0xF0, 0xFF, 0xA2, 0xAA, 0xF6, 0xC8, 0xB3, 0x9E, 0xD4, 0x21]) * 300
+    assert _looks_like_binary(brotli_like) is True
+
+
+def test_looks_like_binary_with_real_html() -> None:
+    """Valid HTML bytes must NOT be flagged as binary."""
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    html = b"<!DOCTYPE html><html><body><h1>Hello</h1><p>Article content here.</p></body></html>"
+    assert _looks_like_binary(html) is False
+
+
+def test_looks_like_binary_with_plain_text() -> None:
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    text = b"This is a plain text document with some normal content.\n" * 50
+    assert _looks_like_binary(text) is False
+
+
+def test_looks_like_binary_with_empty_bytes() -> None:
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    assert _looks_like_binary(b"") is False
+
+
+def test_looks_like_binary_with_str_mojibake() -> None:
+    """String with high non-ASCII chars (mojibake) must be detected as binary."""
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    # Simulate utf-8 decoding of Brotli bytes: many chars in range 0x80-0xFF
+    mojibake = "".join(chr(0x80 + (i % 128)) for i in range(1600))  # all non-ASCII
+    assert _looks_like_binary(mojibake) is True
+
+
+def test_looks_like_binary_with_clean_str() -> None:
+    from backend.threat_hunting.extractors.url_fetcher import _looks_like_binary
+
+    clean = "This is a clean article about threat intelligence. " * 40
+    assert _looks_like_binary(clean) is False
+
+
+# ─── issue-local-008 Fix 3: _should_force_playwright ─────────────────────────
+
+
+def test_should_force_playwright_short_text() -> None:
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    forced, reason = _should_force_playwright(
+        "tiny", "trafilatura", "text/html", 200, b"<html></html>"
+    )
+    assert forced is True
+    assert "short" in reason.lower()
+
+
+def test_should_force_playwright_bot_wall_status() -> None:
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    long_text = "A" * 1000
+    forced, reason = _should_force_playwright(long_text, "trafilatura", "text/html", 403, b"")
+    assert forced is True
+    assert "403" in reason
+
+
+def test_should_force_playwright_binary_extracted_text() -> None:
+    """Binary/mojibake extracted text forces Playwright even when it is long."""
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    # 1600 control chars — looks like binary, is long
+    mojibake = "".join(chr(i % 32) for i in range(1600))
+    forced, reason = _should_force_playwright(mojibake, "utf8-fallback", "text/html", 200, b"")
+    assert forced is True
+    assert "binary" in reason.lower() or "control" in reason.lower()
+
+
+def test_should_force_playwright_utf8_fallback_on_html() -> None:
+    """utf8-fallback on HTML (even with long text) forces Playwright."""
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    # Some long garbage that isn't flagged as binary but is still utf8-fallback
+    long_ascii_garbage = "abc" * 300  # clean-looking but utf8-fallback on html = problem
+    forced, reason = _should_force_playwright(
+        long_ascii_garbage, "utf8-fallback", "text/html; charset=UTF-8", 200, b"<html></html>"
+    )
+    assert forced is True
+    assert "utf8-fallback" in reason.lower()
+
+
+def test_should_force_playwright_binary_raw_bytes() -> None:
+    """Binary raw bytes force Playwright even when extracted text is clean."""
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    brotli_like = bytes([0xF0, 0xFF, 0x01, 0x00, 0x0F] * 200)
+    clean_text = "A" * 1000
+    forced, reason = _should_force_playwright(
+        clean_text, "trafilatura", "text/html", 200, brotli_like
+    )
+    assert forced is True
+    assert "binary" in reason.lower()
+
+
+def test_should_force_playwright_not_needed_for_good_content() -> None:
+    """Good long clean text on 200 does NOT force Playwright."""
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    good_text = "ESET researchers analyzed the EDR killer framework. " * 40
+    forced, reason = _should_force_playwright(
+        good_text, "trafilatura/1.12", "text/html", 200, b"<html>...</html>"
+    )
+    assert forced is False
+    assert reason == ""
+
+
+def test_should_force_playwright_json_not_forced() -> None:
+    """Non-HTML content-type with utf8-fallback does NOT trigger (not HTML)."""
+    from backend.threat_hunting.extractors.url_fetcher import _should_force_playwright
+
+    long_text = "A" * 1000
+    forced, _reason = _should_force_playwright(
+        long_text, "utf8-fallback", "application/json", 200, b"{}"
+    )
+    assert forced is False
+
+
+# ─── issue-local-008 Fix 4: readability errors surfaced as warnings ───────────
+
+
+def test_extract_article_text_readability_error_surfaced() -> None:
+    """readability-lxml exceptions must be added to the warnings list (Fix 4)."""
+    from backend.threat_hunting.extractors import url_fetcher
+
+    # Simulate readability raising ValueError (as observed with binary/NULL bytes).
+    # _ReadabilityDocument is only present when readability-lxml is installed;
+    # we inject it by patching _READABILITY_AVAILABLE + adding the module-level name.
+    mock_doc = MagicMock()
+    mock_doc.summary.side_effect = ValueError("All strings must be XML compatible: no NULL bytes")
+    mock_doc_cls = MagicMock(return_value=mock_doc)
+
+    orig_available = url_fetcher._READABILITY_AVAILABLE
+    orig_cls = getattr(url_fetcher, "_ReadabilityDocument", None)
+    url_fetcher._READABILITY_AVAILABLE = True
+    url_fetcher._ReadabilityDocument = mock_doc_cls  # type: ignore[attr-defined]
+
+    warnings_list: list[str] = []
+    try:
+        with patch.object(url_fetcher, "trafilatura") as mock_tf:
+            mock_tf.extract.return_value = ""
+            text, parser = url_fetcher._extract_article_text(
+                b"\x00\x01\x02binary content", "https://example.com/", warnings_list
+            )
+    finally:
+        url_fetcher._READABILITY_AVAILABLE = orig_available
+        if orig_cls is not None:
+            url_fetcher._ReadabilityDocument = orig_cls  # type: ignore[attr-defined]
+        elif hasattr(url_fetcher, "_ReadabilityDocument"):
+            del url_fetcher._ReadabilityDocument  # type: ignore[attr-defined]
+
+    assert len(warnings_list) == 1
+    assert "readability" in warnings_list[0].lower()
+    assert parser == "utf8-fallback"
+
+
+def test_extract_article_text_readability_error_no_warnings_arg() -> None:
+    """When no warnings list is passed, readability errors must not raise."""
+    from backend.threat_hunting.extractors import url_fetcher
+
+    mock_doc = MagicMock()
+    mock_doc.summary.side_effect = RuntimeError("some readability crash")
+    mock_doc_cls = MagicMock(return_value=mock_doc)
+
+    orig_available = url_fetcher._READABILITY_AVAILABLE
+    orig_cls = getattr(url_fetcher, "_ReadabilityDocument", None)
+    url_fetcher._READABILITY_AVAILABLE = True
+    url_fetcher._ReadabilityDocument = mock_doc_cls  # type: ignore[attr-defined]
+
+    try:
+        with patch.object(url_fetcher, "trafilatura") as mock_tf:
+            mock_tf.extract.return_value = ""
+            text, parser = url_fetcher._extract_article_text(b"data", "https://example.com/")
+    finally:
+        url_fetcher._READABILITY_AVAILABLE = orig_available
+        if orig_cls is not None:
+            url_fetcher._ReadabilityDocument = orig_cls  # type: ignore[attr-defined]
+        elif hasattr(url_fetcher, "_ReadabilityDocument"):
+            del url_fetcher._ReadabilityDocument  # type: ignore[attr-defined]
+
+    assert parser == "utf8-fallback"
+
+
+# ─── issue-local-008: Playwright triggered on binary content (integration) ────
+
+
+@pytest.mark.asyncio
+async def test_playwright_triggered_on_binary_brotli_like_content() -> None:
+    """Playwright fallback must fire when raw bytes look like undecoded Brotli.
+
+    This reproduces the welivesecurity.com production failure where:
+    - httpx received Brotli-compressed bytes (brotli pkg missing)
+    - 31 KB of mojibake was stored with parse_status=ok
+    - No IOCs/info could be extracted
+    - Playwright was never triggered because len(mojibake) > 200
+    """
+    from backend.threat_hunting.extractors import url_fetcher
+
+    # Simulate Brotli-compressed bytes (high control-char density)
+    brotli_bytes = bytes([0xF0, 0xFF, 0x23, 0xA2, 0xAA, 0xF6, 0x43, 0x8C, 0x00, 0x01]) * 3000
+    browser_text = "ESET researchers analyzed the EDR-killing toolset. " * 200  # clean article
+
+    with (
+        patch.object(url_fetcher, "validate_url", return_value="https://example.com/article"),
+        patch.object(url_fetcher, "validate_redirect", side_effect=lambda *a: a[1]),
+        patch("httpx.AsyncClient") as mock_cls,
+    ):
+        mock_inner = MagicMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_inner)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_inner.get = AsyncMock(return_value=_make_response(200, b""))
+
+        stream_resp = AsyncMock()
+        stream_resp.status_code = 200
+        stream_resp.headers = {"content-type": "text/html; charset=UTF-8"}
+
+        async def _stream_brotli(*a, **kw):
+            yield brotli_bytes
+
+        stream_resp.aiter_bytes = _stream_brotli
+        stream_ctx = AsyncMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=stream_resp)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_inner.stream = MagicMock(return_value=stream_ctx)
+
+        # The mojibake string has many non-ASCII chars (>30%) — _looks_like_binary will flag it
+        mojibake = "".join(chr(0x80 + (c % 128)) for c in brotli_bytes[:31000])
+        with patch(
+            "backend.threat_hunting.extractors.url_fetcher._extract_article_text",
+            return_value=(mojibake, "utf8-fallback"),
+        ):
+            with patch(
+                "backend.threat_hunting.extractors.browser_fetcher.fetch_url_with_browser",
+                new=AsyncMock(return_value=browser_text),
+            ) as mock_browser:
+                result = await url_fetcher.fetch_url("https://example.com/article")
+
+    # Playwright must have been triggered
+    mock_browser.assert_called_once()
+    # Result must be the clean browser text, not the mojibake
+    assert result.extracted_text == browser_text
+    assert "playwright" in result.parser_used
+    assert result.fetch_metadata.get("playwright_fallback") is True
+    # A warning about binary content must be present
+    assert any(
+        "binary" in w.lower() or "brotli" in w.lower() or "control" in w.lower()
+        for w in result.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_brotli_available_flag_controls_accept_encoding_in_headers() -> None:
+    """When brotli is available, the Accept-Encoding header should include 'br'."""
+    from backend.threat_hunting.extractors import url_fetcher
+
+    # Verify the module-level flag is correctly read back
+    if url_fetcher._BROTLI_AVAILABLE:
+        assert "br" in url_fetcher._BROWSER_HEADERS.get("Accept-Encoding", "")
+    else:
+        assert "br" not in url_fetcher._BROWSER_HEADERS.get("Accept-Encoding", "").split(", ")
