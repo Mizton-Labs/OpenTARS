@@ -988,6 +988,41 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/reject`,
         { method: 'POST', body: JSON.stringify({ notes }) },
       ),
+    // ── Phase 5: SIEM connectors ────────────────────────────────────────────
+    listConnectors: () =>
+      request<THSiemConnector[]>('/threat-hunting/connectors'),
+    createConnector: (body: THConnectorCreateBody) =>
+      request<THSiemConnector>('/threat-hunting/connectors', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getConnector: (connId: string) =>
+      request<THSiemConnector>(`/threat-hunting/connectors/${encodeURIComponent(connId)}`),
+    updateConnector: (connId: string, body: Partial<THConnectorCreateBody>) =>
+      request<THSiemConnector>(`/threat-hunting/connectors/${encodeURIComponent(connId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    deleteConnector: (connId: string) =>
+      request<void>(`/threat-hunting/connectors/${encodeURIComponent(connId)}`, {
+        method: 'DELETE',
+      }),
+    testConnector: (connId: string) =>
+      request<THConnectorTestResult>(`/threat-hunting/connectors/${encodeURIComponent(connId)}/test`, {
+        method: 'POST',
+      }),
+    // ── Phase 5: Execution ──────────────────────────────────────────────────
+    executeHunt: (pkgId: string, body: THExecuteBody) =>
+      request<THTaskResult>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/execute`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    listResults: (pkgId: string) =>
+      request<THTaskResult[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/results`),
+    getResult: (pkgId: string, resultId: string) =>
+      request<THTaskResult>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/results/${encodeURIComponent(resultId)}`,
+      ),
   },
 }
 
@@ -1582,4 +1617,69 @@ export interface THDeepRetrohuntLead {
   search_hint: string       // plain-language hunt scope
   analyst_notes: string     // LLM notes on sanitization
   llm_parse_error: boolean  // true if LLM enrichment failed
+}
+
+// ── Phase 5: SIEM connector + execution types ─────────────────────────────────
+
+export interface THSiemConnector {
+  id: string
+  name: string
+  kind: 'splunk'
+  base_url: string
+  auth_method: 'token' | 'username_password'
+  config_json: string         // JSON — credentials masked as '***' on read
+  verified: number            // 0 or 1
+  created_at: string
+  updated_at: string
+}
+
+export interface THConnectorCreateBody {
+  name: string
+  kind?: string
+  base_url: string
+  auth_method?: 'token' | 'username_password'
+  api_token?: string | null
+  username?: string | null
+  password?: string | null
+  verify_tls?: boolean
+  default_index?: string
+  retrohunt_macro?: string
+}
+
+export interface THConnectorTestResult {
+  ok: boolean
+  message: string
+  server_info?: {
+    version: string
+    build: string
+    server_name: string
+    os_name: string
+  } | null
+}
+
+export interface THTaskResult {
+  id: string
+  hunt_package_id: string
+  task_type: string
+  siem_connector: string
+  query_text: string
+  earliest: string
+  latest: string
+  hunt_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  raw_result?: Record<string, unknown>[] | null
+  interpreted_findings?: string | null
+  confidence?: number | null
+  created_at: string
+  completed_at?: string | null
+  is_running?: boolean
+}
+
+export interface THExecuteBody {
+  connector_id: string
+  spl: string
+  earliest?: string
+  latest?: string
+  provider_name?: string | null
+  model_name?: string | null
 }

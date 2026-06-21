@@ -424,3 +424,297 @@ async def list_extracted_iocs(hunt_package_id: str) -> list[dict[str, Any]]:
         rows = await cur.fetchall()
         await cur.close()
     return [dict(r) for r in rows]
+
+
+# ── SIEM Connector CRUD ───────────────────────────────────────────────────────
+#
+# Security contract:
+#   - api_token is stored in config_json under key "api_token" (plain text,
+#     file-access-controlled by the OS).
+#   - GET/list responses NEVER return the plain token; they substitute "***".
+#   - username/password stored similarly: password returned as "***".
+#   - The caller is responsible for not logging config_json.
+
+
+def _mask_connector(d: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a connector dict with sensitive values masked."""
+    import json as _json
+
+    d = dict(d)
+    try:
+        cfg = _json.loads(d.get("config_json") or "{}")
+    except Exception:
+        cfg = {}
+    if "api_token" in cfg:
+        cfg["api_token"] = "***"
+    if "password" in cfg:
+        cfg["password"] = "***"
+    d["config_json"] = _json.dumps(cfg)
+    return d
+
+
+async def create_siem_connector(
+    name: str,
+    *,
+    kind: str = "splunk",
+    base_url: str,
+    auth_method: str = "token",
+    api_token: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    verify_tls: bool = True,
+    default_index: str = "main",
+    retrohunt_macro: str = "threathunt_ioc_search",
+) -> dict[str, Any]:
+    import json as _json
+
+    conn_id = _new_id()
+    now = _utc_now_iso()
+    cfg: dict[str, Any] = {
+        "verify_tls": verify_tls,
+        "default_index": default_index,
+        "retrohunt_macro": retrohunt_macro,
+    }
+    if api_token:
+        cfg["api_token"] = api_token
+    if username:
+        cfg["username"] = username
+    if password:
+        cfg["password"] = password
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO siem_connectors
+               (id, name, kind, base_url, auth_method, config_json, verified, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,0,?,?)""",
+            (conn_id, name, kind, base_url, auth_method, _json.dumps(cfg), now, now),
+        )
+        await db.commit()
+    return _mask_connector(await _get_connector_raw(conn_id))  # type: ignore[arg-type]
+
+
+async def _get_connector_raw(conn_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM siem_connectors WHERE id = ?", (conn_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return dict(row) if row else None
+
+
+async def get_siem_connector(conn_id: str) -> dict[str, Any] | None:
+    row = await _get_connector_raw(conn_id)
+    return _mask_connector(row) if row else None
+
+
+async def list_siem_connectors() -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM siem_connectors ORDER BY created_at")
+        rows = await cur.fetchall()
+        await cur.close()
+    return [_mask_connector(dict(r)) for r in rows]
+
+
+async def update_siem_connector(
+    conn_id: str,
+    *,
+    name: str | None = None,
+    base_url: str | None = None,
+    auth_method: str | None = None,
+    api_token: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    verify_tls: bool | None = None,
+    default_index: str | None = None,
+    retrohunt_macro: str | None = None,
+    verified: bool | None = None,
+) -> dict[str, Any] | None:
+    import json as _json
+
+    raw = await _get_connector_raw(conn_id)
+    if not raw:
+        return None
+    try:
+        cfg = _json.loads(raw.get("config_json") or "{}")
+    except Exception:
+        cfg = {}
+
+    # Only update supplied fields
+    if api_token is not None:
+        cfg["api_token"] = api_token
+    if username is not None:
+        cfg["username"] = username
+    if password is not None:
+        cfg["password"] = password
+    if verify_tls is not None:
+        cfg["verify_tls"] = verify_tls
+    if default_index is not None:
+        cfg["default_index"] = default_index
+    if retrohunt_macro is not None:
+        cfg["retrohunt_macro"] = retrohunt_macro
+
+    new_name = name if name is not None else raw["name"]
+    new_url = base_url if base_url is not None else raw["base_url"]
+    new_auth = auth_method if auth_method is not None else raw["auth_method"]
+    new_verified = (1 if verified else 0) if verified is not None else raw["verified"]
+    now = _utc_now_iso()
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """UPDATE siem_connectors
+               SET name=?, base_url=?, auth_method=?, config_json=?, verified=?, updated_at=?
+               WHERE id=?""",
+            (new_name, new_url, new_auth, _json.dumps(cfg), new_verified, now, conn_id),
+        )
+        await db.commit()
+    return _mask_connector(await _get_connector_raw(conn_id))  # type: ignore[arg-type]
+
+
+async def delete_siem_connector(conn_id: str) -> bool:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM siem_connectors WHERE id = ?", (conn_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+def _load_connector_for_use(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return connector dict with plain credentials for use by the connector class.
+
+    NEVER log or return this to the API layer.
+    """
+    import json as _json
+
+    d = dict(raw)
+    try:
+        cfg = _json.loads(d.get("config_json") or "{}")
+    except Exception:
+        cfg = {}
+    d["_cfg"] = cfg
+    return d
+
+
+async def get_connector_for_use(conn_id: str) -> dict[str, Any] | None:
+    """Load a connector with plain credentials — for internal use only."""
+    raw = await _get_connector_raw(conn_id)
+    return _load_connector_for_use(raw) if raw else None
+
+
+# ── Task Results CRUD ─────────────────────────────────────────────────────────
+
+
+async def create_task_result(
+    hunt_package_id: str,
+    *,
+    task_type: str,
+    siem_connector: str = "",
+    query_text: str = "",
+    earliest: str = "",
+    latest: str = "",
+    hunt_id: str = "",
+    status: str = "pending",
+) -> dict[str, Any]:
+
+    result_id = _new_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO task_results
+               (id, hunt_package_id, task_type, siem_connector, query_text,
+                earliest, latest, hunt_id, status, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                result_id,
+                hunt_package_id,
+                task_type,
+                siem_connector,
+                query_text,
+                earliest,
+                latest,
+                hunt_id,
+                status,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_task_result(result_id)  # type: ignore[return-value]
+
+
+async def get_task_result(result_id: str) -> dict[str, Any] | None:
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM task_results WHERE id = ?", (result_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    d = dict(row)
+    if d.get("raw_result") and isinstance(d["raw_result"], str):
+        try:
+            d["raw_result"] = _json.loads(d["raw_result"])
+        except Exception:
+            pass
+    return d
+
+
+async def update_task_result(
+    result_id: str,
+    *,
+    status: str | None = None,
+    raw_result: list | dict | None = None,
+    interpreted_findings: str | None = None,
+    confidence: float | None = None,
+    completed_at: str | None = None,
+) -> dict[str, Any] | None:
+    import json as _json
+
+    existing = await get_task_result(result_id)
+    if not existing:
+        return None
+    updates: dict[str, Any] = {}
+    if status is not None:
+        updates["status"] = status
+    if raw_result is not None:
+        updates["raw_result"] = _json.dumps(raw_result, ensure_ascii=False, default=str)
+    if interpreted_findings is not None:
+        updates["interpreted_findings"] = interpreted_findings
+    if confidence is not None:
+        updates["confidence"] = confidence
+    if completed_at is not None:
+        updates["completed_at"] = completed_at
+    if not updates:
+        return existing
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [result_id]
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            f"UPDATE task_results SET {set_clause} WHERE id=?",  # noqa: S608
+            values,
+        )
+        await db.commit()
+    return await get_task_result(result_id)
+
+
+async def list_task_results(hunt_package_id: str) -> list[dict[str, Any]]:
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM task_results WHERE hunt_package_id = ? ORDER BY created_at DESC",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get("raw_result") and isinstance(d["raw_result"], str):
+            try:
+                d["raw_result"] = _json.loads(d["raw_result"])
+            except Exception:
+                pass
+        results.append(d)
+    return results
