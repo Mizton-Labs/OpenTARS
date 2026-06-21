@@ -7,8 +7,9 @@ import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
 import ExecutionPanel from './ExecutionPanel'
+import ReportPanel from './ReportPanel'
 
-type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution'
+type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report'
 
 export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: () => void }) {
   const { isResearcher } = useAuth()
@@ -99,6 +100,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
               Execution
             </button>
           )}
+          {/* Report tab — shown when package is approved or completed */}
+          {(pkg?.status === 'approved' || pkg?.status === 'completed') && (
+            <button
+              onClick={() => setActiveTab('report')}
+              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'report' ? 'tab-active' : 'tab-inactive')}
+            >
+              Report
+            </button>
+          )}
         </nav>
       </div>
 
@@ -177,6 +187,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           retrohunt={undefined}
         />
       )}
+
+      {/* Report tab */}
+      {activeTab === 'report' && <ReportPanel pkgId={pkgId} />}
 
       {/* Add item modal */}
       {showAddItem && (

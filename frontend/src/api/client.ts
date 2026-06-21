@@ -1023,6 +1023,16 @@ export const api = {
       request<THTaskResult>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/results/${encodeURIComponent(resultId)}`,
       ),
+    // ── Phase 6: Reports ────────────────────────────────────────────────────
+    getReport: (pkgId: string) =>
+      request<THHuntReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report`),
+    generateReport: (pkgId: string, body: { provider_name?: string | null; model_name?: string | null } = {}) =>
+      request<THHuntReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    listReports: (pkgId: string) =>
+      request<THHuntReport[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/list`),
   },
 }
 
@@ -1682,4 +1692,57 @@ export interface THExecuteBody {
   latest?: string
   provider_name?: string | null
   model_name?: string | null
+}
+
+// ── Phase 6: Report types ─────────────────────────────────────────────────────
+
+export interface THReportEvidenceSummary {
+  total_items: number
+  ioc_count: number
+  item_types: string[]
+}
+
+export interface THReportRetrohuntSummary {
+  total_iocs: number
+  noisy_iocs: number
+  high_noise_iocs: number
+  spl_macro_name: string
+  search_hint: string
+}
+
+export interface THReportExecutionResult {
+  id: string
+  status: string
+  earliest: string
+  latest: string
+  event_count: number
+  interpreted_findings: string
+  completed_at: string
+}
+
+export interface THFullReport {
+  executive_summary: string
+  hunt_name: string
+  hunt_id: string
+  generated_at: string
+  generated_by: string | null
+  package_status: string
+  evidence_summary: THReportEvidenceSummary
+  threat_context: Record<string, unknown> | null
+  hypotheses: THHypothesis[]
+  hunting_leads: THHuntingLead[]
+  deep_retrohunt_summary: THReportRetrohuntSummary | null
+  ttp_analysis: THBehavioralTTPAnalysis | null
+  query_drafts_count: number
+  execution_results: THReportExecutionResult[]
+  recommendations: string[]
+}
+
+export interface THHuntReport {
+  id: string
+  hunt_package_id: string
+  executive_summary: string
+  full_report: THFullReport
+  created_at: string
+  created_by: string | null
 }

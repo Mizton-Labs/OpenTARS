@@ -1,0 +1,509 @@
+/**
+ * ReportPanel — Phase 6 Hunt Report view
+ *
+ * Shows the final structured Hunt Report for an approved/completed package.
+ *
+ * Sections:
+ *   - Executive Summary
+ *   - Evidence Summary (items, IOC counts)
+ *   - Threat Context (actor, campaign, confidence, key observations)
+ *   - Hypotheses (collapsible list)
+ *   - Deep Retrohunt Summary (IOC counts, noise, macro name, search hint)
+ *   - TTP Analysis (techniques with ATT&CK IDs)
+ *   - Execution Results (event counts, interpreted findings)
+ *   - Recommendations
+ *
+ * Actions:
+ *   - Generate / Regenerate Report button (researcher/admin)
+ *   - Export as JSON
+ *   - Export as Markdown
+ */
+
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { clsx } from 'clsx'
+import {
+  FileText,
+  RefreshCw,
+  Download,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  AlertTriangle,
+  CheckCircle,
+  Shield,
+  Target,
+  Radar,
+  Crosshair,
+  Search,
+  Lightbulb,
+} from 'lucide-react'
+import {
+  api,
+  type THHuntReport,
+  type THFullReport,
+  type THHypothesis,
+} from '../../api/client'
+import { useAuth } from '../../auth/useAuth'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function Section({
+  title,
+  icon: Icon,
+  defaultOpen = true,
+  children,
+}: {
+  title: string
+  icon: React.ElementType
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border border-gray-700 rounded-lg overflow-hidden">
+      <button
+        className="w-full flex items-center gap-2 px-4 py-3 bg-gray-800/40 hover:bg-gray-800/70 transition-colors"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon className="w-4 h-4 text-brand-400 shrink-0" />
+        <span className="text-sm font-medium text-gray-200 flex-1 text-left">{title}</span>
+        {open ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
+      </button>
+      {open && <div className="p-4">{children}</div>}
+    </div>
+  )
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+
+function exportJson(report: THHuntReport) {
+  const blob = new Blob([JSON.stringify(report.full_report, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `hunt-report-${report.hunt_package_id.slice(0, 8)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function reportToMarkdown(report: THHuntReport): string {
+  const r = report.full_report
+  const lines: string[] = []
+  lines.push(`# Hunt Report: ${r.hunt_name}`)
+  lines.push(``)
+  lines.push(`**Generated:** ${r.generated_at.slice(0, 19).replace('T', ' ')} UTC`)
+  if (report.created_by) lines.push(`**Author:** ${report.created_by}`)
+  lines.push(`**Status:** ${r.package_status}`)
+  lines.push(``)
+  lines.push(`## Executive Summary`)
+  lines.push(``)
+  lines.push(r.executive_summary || '_No executive summary available._')
+  lines.push(``)
+  lines.push(`## Evidence`)
+  lines.push(``)
+  const ev = r.evidence_summary
+  lines.push(`- Items: ${ev.total_items}`)
+  lines.push(`- IOCs extracted: ${ev.ioc_count}`)
+  lines.push(`- Types: ${ev.item_types.join(', ')}`)
+  lines.push(``)
+  if (r.threat_context) {
+    lines.push(`## Threat Context`)
+    lines.push(``)
+    const ctx = r.threat_context as Record<string, unknown>
+    if (ctx.summary) lines.push(String(ctx.summary))
+    if (ctx.threat_actor) lines.push(`- **Actor:** ${String(ctx.threat_actor)}`)
+    if (ctx.campaign_name) lines.push(`- **Campaign:** ${String(ctx.campaign_name)}`)
+    lines.push(``)
+  }
+  if (r.hypotheses.length > 0) {
+    lines.push(`## Hypotheses`)
+    lines.push(``)
+    r.hypotheses.forEach((h, i) => {
+      lines.push(`### ${i + 1}. ${h.title} (${h.relevance})`)
+      lines.push(h.description)
+      if (h.justification) lines.push(`_${h.justification}_`)
+      lines.push(``)
+    })
+  }
+  if (r.deep_retrohunt_summary) {
+    const dr = r.deep_retrohunt_summary
+    lines.push(`## Deep Retrohunt`)
+    lines.push(``)
+    lines.push(`- IOCs searched: ${dr.total_iocs} (${dr.noisy_iocs} noisy)`)
+    lines.push(`- SPL Macro: \`${dr.spl_macro_name}\``)
+    if (dr.search_hint) lines.push(`- Hint: ${dr.search_hint}`)
+    lines.push(``)
+  }
+  if (r.execution_results.length > 0) {
+    lines.push(`## Execution Results`)
+    lines.push(``)
+    r.execution_results.forEach((ex, i) => {
+      lines.push(`### Run ${i + 1} — ${ex.status} (${ex.event_count} events)`)
+      lines.push(`${ex.earliest} → ${ex.latest}`)
+      if (ex.interpreted_findings) lines.push(ex.interpreted_findings)
+      lines.push(``)
+    })
+  }
+  if (r.recommendations.length > 0) {
+    lines.push(`## Recommendations`)
+    lines.push(``)
+    r.recommendations.forEach((rec) => lines.push(`- ${rec}`))
+    lines.push(``)
+  }
+  return lines.join('\n')
+}
+
+function exportMarkdown(report: THHuntReport) {
+  const md = reportToMarkdown(report)
+  const blob = new Blob([md], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `hunt-report-${report.hunt_package_id.slice(0, 8)}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── Report sections ───────────────────────────────────────────────────────────
+
+function EvidenceSummarySection({ r }: { r: THFullReport }) {
+  const ev = r.evidence_summary
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+        <p className="text-2xl font-bold text-gray-100">{ev.total_items}</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">Evidence Items</p>
+      </div>
+      <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+        <p className="text-2xl font-bold text-gray-100">{ev.ioc_count}</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">IOCs Extracted</p>
+      </div>
+      <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+        <p className="text-2xl font-bold text-gray-100">{r.hypotheses.length}</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">Hypotheses</p>
+      </div>
+    </div>
+  )
+}
+
+function ThreatContextSection({ ctx }: { ctx: Record<string, unknown> }) {
+  const summary = typeof ctx.summary === 'string' ? ctx.summary : ''
+  const actor = typeof ctx.threat_actor === 'string' ? ctx.threat_actor : ''
+  const campaign = typeof ctx.campaign_name === 'string' ? ctx.campaign_name : ''
+  const confidence = typeof ctx.confidence === 'string' ? ctx.confidence : ''
+  const observations = Array.isArray(ctx.key_observations) ? (ctx.key_observations as string[]) : []
+
+  return (
+    <div className="space-y-3">
+      {summary && <p className="text-sm text-gray-300 leading-relaxed">{summary}</p>}
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        {actor && <div><span className="text-gray-500">Actor: </span><span className="text-gray-200">{actor}</span></div>}
+        {campaign && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-200">{campaign}</span></div>}
+        {confidence && (
+          <div>
+            <span className="text-gray-500">Confidence: </span>
+            <span className={clsx(
+              confidence === 'high' ? 'text-green-400' :
+              confidence === 'medium' ? 'text-amber-400' : 'text-gray-400'
+            )}>{confidence}</span>
+          </div>
+        )}
+      </div>
+      {observations.length > 0 && (
+        <ul className="space-y-1">
+          {observations.map((obs, i) => (
+            <li key={i} className="text-xs text-gray-400 flex gap-1.5">
+              <span className="text-brand-600">•</span>{obs}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
+  return (
+    <div className="space-y-2">
+      {hypotheses.map((h) => (
+        <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-brand-400">{h.id}</span>
+            <span className={clsx('text-[10px] px-1.5 py-0.5 rounded',
+              h.relevance === 'high' ? 'bg-red-900/30 text-red-400' :
+              h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500'
+            )}>{h.relevance}</span>
+          </div>
+          <p className="text-sm font-medium text-gray-200">{h.title}</p>
+          <p className="text-xs text-gray-400">{h.description}</p>
+          {h.justification && <p className="text-xs text-gray-600 italic">{h.justification}</p>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RetrohuntSummarySection({ r }: { r: THFullReport }) {
+  const dr = r.deep_retrohunt_summary
+  if (!dr) return <p className="text-xs text-gray-500 italic">No retrohunt performed.</p>
+  const execEvents = r.execution_results.reduce((acc, ex) => acc + (ex.event_count || 0), 0)
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-gray-800/50 rounded-lg p-3">
+          <p className="text-lg font-bold text-gray-100">{dr.total_iocs}</p>
+          <p className="text-[10px] text-gray-500">IOCs searched</p>
+        </div>
+        <div className="bg-gray-800/50 rounded-lg p-3">
+          <p className="text-lg font-bold text-gray-100">{execEvents}</p>
+          <p className="text-[10px] text-gray-500">SIEM events matched</p>
+        </div>
+      </div>
+      {dr.noisy_iocs > 0 && (
+        <p className="text-xs text-amber-400 flex items-center gap-1">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {dr.noisy_iocs} noisy IOC(s) excluded from queries
+        </p>
+      )}
+      <p className="text-[10px] text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
+      {dr.search_hint && <p className="text-xs text-gray-400">{dr.search_hint}</p>}
+    </div>
+  )
+}
+
+function TTPSection({ r }: { r: THFullReport }) {
+  const ttp = r.ttp_analysis
+  if (!ttp) return <p className="text-xs text-gray-500 italic">No TTP analysis available.</p>
+  return (
+    <div className="space-y-3">
+      {ttp.summary && <p className="text-sm text-gray-300">{ttp.summary}</p>}
+      {(ttp.techniques || []).map((t) => (
+        <div key={t.technique_id} className="border border-gray-700 rounded p-2.5 space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-brand-400">{t.technique_id}</span>
+            <span className="text-[10px] text-gray-500">{t.tactic}</span>
+          </div>
+          <p className="text-xs font-medium text-gray-200">{t.technique_name}</p>
+          <p className="text-[10px] text-gray-500">{t.description}</p>
+        </div>
+      ))}
+      {(ttp.detection_opportunities || []).length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-gray-400 mb-1">Detection opportunities:</p>
+          <ul className="space-y-0.5">
+            {(ttp.detection_opportunities as string[]).map((opp, i) => (
+              <li key={i} className="text-xs text-gray-500 flex gap-1.5">
+                <span className="text-brand-600">•</span>{opp}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExecutionResultsSection({ results }: { results: THFullReport['execution_results'] }) {
+  if (!results.length) return <p className="text-xs text-gray-500 italic">No executions recorded.</p>
+  return (
+    <div className="space-y-2">
+      {results.map((ex, i) => (
+        <div key={ex.id || i} className="border border-gray-700 rounded-lg p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium',
+              ex.status === 'completed' ? 'bg-green-900/30 text-green-400' :
+              ex.status === 'failed' ? 'bg-red-900/30 text-red-400' : 'bg-gray-800 text-gray-400'
+            )}>{ex.status}</span>
+            <span className="text-[10px] text-gray-500">{ex.earliest} → {ex.latest}</span>
+            <span className="text-[10px] text-gray-400 ml-auto">{ex.event_count} events</span>
+          </div>
+          {ex.interpreted_findings && (
+            <p className="text-xs text-gray-300 leading-relaxed">{ex.interpreted_findings}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RecommendationsSection({ recommendations }: { recommendations: string[] }) {
+  if (!recommendations.length) return <p className="text-xs text-gray-500 italic">No recommendations.</p>
+  return (
+    <ul className="space-y-2">
+      {recommendations.map((rec, i) => (
+        <li key={i} className="flex items-start gap-2">
+          <CheckCircle className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
+          <span className="text-sm text-gray-300">{rec}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// ── Main panel ────────────────────────────────────────────────────────────────
+
+export default function ReportPanel({ pkgId }: { pkgId: string }) {
+  const { isResearcher } = useAuth()
+  const qc = useQueryClient()
+
+  const { data: report, isLoading } = useQuery({
+    queryKey: ['th-report', pkgId],
+    queryFn: () => api.threatHunting.getReport(pkgId).catch(() => null),
+    retry: false,
+  })
+
+  const generateMut = useMutation({
+    mutationFn: () => api.threatHunting.generateReport(pkgId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-report', pkgId] }),
+  })
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-gray-500 py-8">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading report…
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Header bar */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <FileText className="w-5 h-5 text-brand-400" />
+          <h3 className="text-sm font-semibold text-gray-200">Hunt Report</h3>
+          {report && (
+            <span className="text-[10px] text-gray-500">
+              {report.created_at.slice(0, 19).replace('T', ' ')} UTC
+              {report.created_by && ` · ${report.created_by}`}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {isResearcher && (
+            <button
+              className="btn-secondary text-xs flex items-center gap-1.5"
+              disabled={generateMut.isPending}
+              onClick={() => generateMut.mutate()}
+            >
+              {generateMut.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <RefreshCw className="w-3.5 h-3.5" />}
+              {report ? 'Regenerate' : 'Generate Report'}
+            </button>
+          )}
+          {report && (
+            <>
+              <button
+                className="btn-ghost text-xs flex items-center gap-1"
+                onClick={() => exportMarkdown(report)}
+                title="Export as Markdown"
+              >
+                <Download className="w-3.5 h-3.5" /> MD
+              </button>
+              <button
+                className="btn-ghost text-xs flex items-center gap-1"
+                onClick={() => exportJson(report)}
+                title="Export as JSON"
+              >
+                <Download className="w-3.5 h-3.5" /> JSON
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {generateMut.isError && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-red-900/20 border border-red-800/30">
+          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+          <p className="text-xs text-red-300">
+            {generateMut.error instanceof Error ? generateMut.error.message : 'Report generation failed'}
+          </p>
+        </div>
+      )}
+
+      {/* No report yet */}
+      {!report && !generateMut.isPending && (
+        <div className="text-center py-10 space-y-3">
+          <FileText className="w-10 h-10 text-gray-700 mx-auto" />
+          <p className="text-sm text-gray-500">No report generated yet.</p>
+          {isResearcher && (
+            <p className="text-xs text-gray-600">
+              Reports are generated automatically after execution, or click{' '}
+              <span className="text-brand-400">Generate Report</span> above.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Generating spinner */}
+      {generateMut.isPending && (
+        <div className="flex items-center gap-3 p-4 rounded-lg bg-brand-900/20 border border-brand-800/30">
+          <Loader2 className="w-5 h-5 text-brand-400 animate-spin shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-brand-300">Generating report…</p>
+            <p className="text-xs text-gray-500">Assembling findings and writing executive summary.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Report body */}
+      {report && (
+        <div className="space-y-4">
+          {/* Executive Summary */}
+          <div className="card space-y-2">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-brand-400" />
+              <h4 className="text-sm font-semibold text-gray-200">Executive Summary</h4>
+            </div>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              {report.full_report.executive_summary || <span className="italic text-gray-500">Not available.</span>}
+            </p>
+          </div>
+
+          {/* Stats */}
+          <Section title="Evidence & Coverage" icon={Search} defaultOpen>
+            <EvidenceSummarySection r={report.full_report} />
+          </Section>
+
+          {/* Threat Context */}
+          {report.full_report.threat_context && (
+            <Section title="Threat Context" icon={Target} defaultOpen>
+              <ThreatContextSection ctx={report.full_report.threat_context} />
+            </Section>
+          )}
+
+          {/* Hypotheses */}
+          {report.full_report.hypotheses.length > 0 && (
+            <Section title={`Hypotheses (${report.full_report.hypotheses.length})`} icon={Lightbulb} defaultOpen={false}>
+              <HypothesesSection hypotheses={report.full_report.hypotheses} />
+            </Section>
+          )}
+
+          {/* Deep Retrohunt */}
+          <Section title="Deep Retrohunt" icon={Radar} defaultOpen>
+            <RetrohuntSummarySection r={report.full_report} />
+          </Section>
+
+          {/* TTP Analysis */}
+          <Section title="Behavioral TTP Analysis" icon={Crosshair} defaultOpen={false}>
+            <TTPSection r={report.full_report} />
+          </Section>
+
+          {/* Execution Results */}
+          <Section title={`Execution Results (${report.full_report.execution_results.length})`} icon={Search} defaultOpen>
+            <ExecutionResultsSection results={report.full_report.execution_results} />
+          </Section>
+
+          {/* Recommendations */}
+          {report.full_report.recommendations.length > 0 && (
+            <Section title="Recommendations" icon={CheckCircle} defaultOpen>
+              <RecommendationsSection recommendations={report.full_report.recommendations} />
+            </Section>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
