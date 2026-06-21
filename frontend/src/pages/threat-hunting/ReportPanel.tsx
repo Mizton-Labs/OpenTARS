@@ -343,19 +343,25 @@ function RecommendationsSection({ recommendations }: { recommendations: string[]
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export default function ReportPanel({ pkgId }: { pkgId: string }) {
+export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: string }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
 
   const { data: report, isLoading } = useQuery({
-    queryKey: ['th-report', pkgId],
-    queryFn: () => api.threatHunting.getReport(pkgId).catch(() => null),
+    queryKey: ['th-report', pkgId, runId],
+    queryFn: () => {
+      if (runId) return api.threatHunting.getRunReport(pkgId, runId).catch(() => null)
+      return api.threatHunting.getReport(pkgId).catch(() => null)
+    },
     retry: false,
   })
 
   const generateMut = useMutation({
-    mutationFn: () => api.threatHunting.generateReport(pkgId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-report', pkgId] }),
+    mutationFn: () => {
+      if (runId) return api.threatHunting.generateRunReport(pkgId, runId)
+      return api.threatHunting.generateReport(pkgId)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-report', pkgId, runId] }),
   })
 
   if (isLoading) {
@@ -409,6 +415,28 @@ export default function ReportPanel({ pkgId }: { pkgId: string }) {
               >
                 <Download className="w-3.5 h-3.5" /> JSON
               </button>
+              {/* PDF download — links to backend renderer */}
+              {runId ? (
+                <a
+                  className="btn-ghost text-xs flex items-center gap-1"
+                  href={api.threatHunting.downloadRunReportPdf(pkgId, runId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Download PDF"
+                >
+                  <Download className="w-3.5 h-3.5" /> PDF
+                </a>
+              ) : (
+                <a
+                  className="btn-ghost text-xs flex items-center gap-1"
+                  href={api.threatHunting.downloadReportPdf(pkgId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Download PDF"
+                >
+                  <Download className="w-3.5 h-3.5" /> PDF
+                </a>
+              )}
             </>
           )}
         </div>

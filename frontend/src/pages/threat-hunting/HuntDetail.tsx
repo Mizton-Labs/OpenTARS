@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THEvidenceItem, type THExtractedIOC } from '../../api/client'
+import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
@@ -16,6 +16,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const qc = useQueryClient()
   const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
+  const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -33,12 +34,38 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     enabled: activeTab === 'iocs',
   })
 
+  // Load all generation runs for this package
+  const { data: runs = [] } = useQuery({
+    queryKey: ['th-runs', pkgId],
+    queryFn: () => api.threatHunting.listRuns(pkgId),
+    refetchInterval: 5000, // keep run list fresh
+  })
+
+  // Auto-select the latest run when runs load/change
+  useEffect(() => {
+    if (runs.length > 0 && !activeRunId) {
+      setActiveRunId(runs[0].id)
+    }
+  }, [runs, activeRunId])
+
   const deleteEvidenceMut = useMutation({
     mutationFn: (itemId: string) => api.threatHunting.deleteEvidence(pkgId, itemId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['th-evidence', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-packages'] })
+    },
+  })
+
+  // Re-run: start a new generation; switches to the new run automatically
+  const rerunMut = useMutation({
+    mutationFn: () => api.threatHunting.startGeneration(pkgId),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
+      const newRunId = data.run_id ?? data.id
+      if (newRunId) setActiveRunId(newRunId)
+      setActiveTab('analysis')
     },
   })
 
@@ -51,6 +78,13 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const noisyCount = (iocs as THExtractedIOC[]).filter((i) => i.flagged_noisy).length
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
 
+  const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
+  // A run is active when the latest run (index 0) is in running/awaiting_approval state
+  const latestRunActive = runs.length > 0 && (
+    runs[0].generation_status === 'running' ||
+    runs[0].generation_status === 'awaiting_approval'
+  )
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -62,13 +96,67 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           <h1 className="text-lg font-semibold text-gray-100 truncate">{pkg?.name ?? '…'}</h1>
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
-        {isResearcher && (
-          <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
-            <Plus className="w-4 h-4" />
-            Add Item
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Re-run button — visible when package is finished and no run is active */}
+          {isResearcher && isFinished && !latestRunActive && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm"
+              disabled={rerunMut.isPending}
+              onClick={() => rerunMut.mutate()}
+              title="Re-run this hunt package — creates a new independent set of results"
+            >
+              {rerunMut.isPending
+                ? <><span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" /></>
+                : <RefreshCw className="w-4 h-4" />}
+              Re-run
+            </button>
+          )}
+          {isResearcher && (
+            <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
+              <Plus className="w-4 h-4" />
+              Add Item
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Run selector — shown when there are multiple runs */}
+      {runs.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
+          <span className="text-xs text-gray-500 shrink-0">Run:</span>
+          <div className="relative flex-1 max-w-xs">
+            <select
+              className="input w-full text-xs pr-7 appearance-none"
+              value={activeRunId ?? ''}
+              onChange={(e) => setActiveRunId(e.target.value)}
+            >
+              {runs.map((run: THRunSummary, idx: number) => {
+                const label = run.created_at.slice(0, 19).replace('T', ' ')
+                const model = run.llm_model ?? run.llm_provider ?? ''
+                const effort = run.research_effort ?? ''
+                const suffix = [model, effort].filter(Boolean).join(' · ')
+                const status = run.generation_status
+                const isActive = status === 'running' || status === 'awaiting_approval'
+                return (
+                  <option key={run.id} value={run.id}>
+                    {idx === 0 ? '★ ' : ''}{label}{suffix ? ` (${suffix})` : ''}{isActive ? ' ⟳' : ''}
+                  </option>
+                )
+              })}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+          </div>
+          <span className={clsx('text-[10px] px-2 py-0.5 rounded shrink-0',
+            runs.find(r => r.id === activeRunId)?.generation_status === 'completed' ? 'bg-green-900/30 text-green-400' :
+            runs.find(r => r.id === activeRunId)?.generation_status === 'running' ? 'bg-blue-900/30 text-blue-400' :
+            runs.find(r => r.id === activeRunId)?.generation_status === 'awaiting_approval' ? 'bg-amber-900/30 text-amber-400' :
+            runs.find(r => r.id === activeRunId)?.generation_status === 'error' ? 'bg-red-900/30 text-red-400' :
+            'bg-gray-800 text-gray-500'
+          )}>
+            {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
+          </span>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-gray-800">
@@ -92,7 +180,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             Analysis
           </button>
           {/* Execution tab — shown when package is approved or completed */}
-          {(pkg?.status === 'approved' || pkg?.status === 'completed') && (
+          {isFinished && (
             <button
               onClick={() => setActiveTab('execution')}
               className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'execution' ? 'tab-active' : 'tab-inactive')}
@@ -101,7 +189,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             </button>
           )}
           {/* Report tab — shown when package is approved or completed */}
-          {(pkg?.status === 'approved' || pkg?.status === 'completed') && (
+          {isFinished && (
             <button
               onClick={() => setActiveTab('report')}
               className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'report' ? 'tab-active' : 'tab-inactive')}
@@ -177,19 +265,29 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
         </div>
       )}
 
-      {/* Analysis tab */}
-      {activeTab === 'analysis' && <AnalysisTab pkgId={pkgId} />}
+      {/* Analysis tab — passes activeRunId so it polls the correct run */}
+      {activeTab === 'analysis' && (
+        <AnalysisTab
+          pkgId={pkgId}
+          runId={activeRunId}
+          onRunCreated={(id) => {
+            setActiveRunId(id)
+            qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+          }}
+        />
+      )}
 
       {/* Execution tab */}
       {activeTab === 'execution' && (
         <ExecutionPanel
           pkgId={pkgId}
+          runId={activeRunId}
           retrohunt={undefined}
         />
       )}
 
       {/* Report tab */}
-      {activeTab === 'report' && <ReportPanel pkgId={pkgId} />}
+      {activeTab === 'report' && <ReportPanel pkgId={pkgId} runId={activeRunId} />}
 
       {/* Add item modal */}
       {showAddItem && (

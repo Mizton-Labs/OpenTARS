@@ -123,9 +123,11 @@ function ResultCard({ result }: { result: THTaskResult }) {
 
 export default function ExecutionPanel({
   pkgId,
+  runId,
   retrohunt,
 }: {
   pkgId: string
+  runId?: string
   retrohunt?: THDeepRetrohuntLead | null
 }) {
   const { isResearcher } = useAuth()
@@ -142,10 +144,13 @@ export default function ExecutionPanel({
     queryFn: () => api.threatHunting.listConnectors(),
   })
 
-  // Poll results — refetch when any is running
+  // Poll results — scoped to run when runId is provided
   const { data: results = [] } = useQuery({
-    queryKey: ['th-results', pkgId],
-    queryFn: () => api.threatHunting.listResults(pkgId),
+    queryKey: ['th-results', pkgId, runId],
+    queryFn: () => {
+      if (runId) return api.threatHunting.listRunResults(pkgId, runId)
+      return api.threatHunting.listResults(pkgId)
+    },
     refetchInterval: (query) => {
       const rows = query.state.data as THTaskResult[] | undefined
       return rows?.some((r) => r.status === 'running' || r.is_running) ? 3000 : false
@@ -159,8 +164,9 @@ export default function ExecutionPanel({
         spl,
         earliest,
         latest,
+        run_id: runId ?? null,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-results', pkgId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-results', pkgId, runId] }),
   })
 
   const hasRunning = results.some((r) => r.status === 'running' || r.is_running)

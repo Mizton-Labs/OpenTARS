@@ -352,7 +352,8 @@ async def test_db_schema_v3_migration_from_v2(tmp_path: Path) -> None:
     assert "completed_steps" in cols
     assert "step_logs" in cols
     assert "research_effort" in cols
-    assert version == 3
+    # Schema has since been bumped to v4 (issue-local-005 adds run_id columns)
+    assert version >= 3
 
 
 # ── report_writer — render_report_markdown / render_report_pdf ───────────────

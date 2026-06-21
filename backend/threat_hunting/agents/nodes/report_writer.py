@@ -207,12 +207,20 @@ async def _generate_executive_summary(
 async def write_report(
     hunt_package_id: str,
     *,
+    run_id: str | None = None,
     provider_name: str | None = None,
     model_name: str | None = None,
     created_by: str | None = None,
     report_formats: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Assemble and persist the Hunt Report for a completed/approved package.
+
+    When *run_id* is supplied the report is scoped to that specific run:
+    - generation record loaded by run_id
+    - task_results filtered to that run_id
+    - report stored with run_id
+
+    When *run_id* is None the latest run is used (back-compat).
 
     Loads all relevant data from the DB, assembles the structured report,
     generates an LLM executive summary (soft-fail), and writes to hunt_reports.
@@ -227,9 +235,15 @@ async def write_report(
     if not pkg:
         raise ValueError(f"Hunt package {hunt_package_id!r} not found")
 
-    generation_record = await th_db.get_generation_record_public(hunt_package_id) or {}
+    generation_record = (
+        await th_db.get_generation_record_public(hunt_package_id, run_id=run_id) or {}
+    )
     evidence_items = await th_db.list_evidence_items(hunt_package_id)
-    task_results = await th_db.list_task_results(hunt_package_id)
+    # Scope SIEM results to this run if run_id is provided
+    if run_id:
+        task_results = await th_db.list_task_results_by_run(run_id)
+    else:
+        task_results = await th_db.list_task_results(hunt_package_id)
 
     # Stage 1: deterministic assembly (no LLM)
     full_report = assemble_report(
@@ -281,12 +295,13 @@ async def write_report(
     if markdown_content:
         full_report["_markdown"] = markdown_content
 
-    # Stage 4: persist
+    # Stage 4: persist (with run_id linkage for independent re-run reports)
     report = await th_db.create_hunt_report(
         hunt_package_id,
         executive_summary=executive_summary,
         full_report=full_report,
         created_by=created_by,
+        run_id=run_id,
     )
 
     # Update package to completed if it was approved
