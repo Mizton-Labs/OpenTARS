@@ -1502,6 +1502,8 @@ export interface THGenerationRecord {
   threat_context?: Record<string, unknown> | null
   hypotheses?: THHypothesis[] | null
   hunting_leads?: THHuntingLead[] | null
+  /** Phase 4: Deep Retrohunt lead — IOC sanitization + SPL draft. */
+  deep_retrohunt?: THDeepRetrohuntLead | null
   ttp_analysis?: THBehavioralTTPAnalysis | null
   query_drafts?: THQueryDraft[] | null
   generation_errors?: string[] | null
@@ -1556,4 +1558,28 @@ export interface THQueryDraft {
   query: string
   data_sources: string[]
   lead_id: string | null
+}
+
+// ── Phase 4: Deep Retrohunt types ────────────────────────────────────────────
+
+export interface THSanitizedIOC {
+  ioc: string
+  ioc_type: string
+  ioc_description: string
+  noise_score: number       // 0.0–1.0; higher = noisier
+  noise_reasons: string[]   // human-readable noise reasons
+  search_token: string      // shortest SIEM-ready search token
+}
+
+export interface THDeepRetrohuntLead {
+  sanitized_iocs: THSanitizedIOC[]
+  ioc_csv: string           // canonical CSV (ioc,ioc_type,ioc_description)
+  total_ioc_count: number
+  noisy_ioc_count: number   // noise_score >= 0.5
+  high_noise_ioc_count: number  // noise_score >= 0.8
+  spl_draft: string         // Splunk SPL macro draft
+  spl_macro_name: string    // suggested macro name
+  search_hint: string       // plain-language hunt scope
+  analyst_notes: string     // LLM notes on sanitization
+  llm_parse_error: boolean  // true if LLM enrichment failed
 }

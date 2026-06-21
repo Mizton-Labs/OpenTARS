@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 1
+_TH_SCHEMA_VERSION = 2
 
 
 def _utc_now_iso() -> str:
@@ -152,8 +152,22 @@ CREATE TABLE IF NOT EXISTS siem_connectors (
 """
 
 
+async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
+    """Apply incremental schema migrations from current_version → _TH_SCHEMA_VERSION."""
+    if current_version < 2:
+        # v2: deep_retrohunt column added to hunting_packages.
+        # The CREATE TABLE statement already includes it, so this only applies
+        # to existing databases created at v1 that are missing the column.
+        try:
+            await db.execute("ALTER TABLE hunting_packages ADD COLUMN deep_retrohunt TEXT")
+            logger.info("Migrated threat_hunting.db to schema v2 (added deep_retrohunt column)")
+        except Exception:
+            # Column already exists — safe to ignore
+            pass
+
+
 async def init_threat_hunting_db() -> None:
-    """Create the threat hunting schema. Idempotent."""
+    """Create the threat hunting schema. Idempotent. Runs incremental migrations."""
     _TH_DB_PATH.parent.mkdir(exist_ok=True)
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         await db.execute(CREATE_SCHEMA_VERSION_TABLE)
@@ -168,6 +182,9 @@ async def init_threat_hunting_db() -> None:
         cur = await db.execute("SELECT version FROM th_schema_version LIMIT 1")
         row = await cur.fetchone()
         await cur.close()
+        existing_version = int(row[0]) if row else 0
+        if existing_version < _TH_SCHEMA_VERSION:
+            await _migrate_db(db, existing_version)
         if row is None:
             await db.execute(
                 "INSERT INTO th_schema_version (version) VALUES (?)",

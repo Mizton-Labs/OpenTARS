@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Radar,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -14,6 +14,7 @@ import {
   type THHuntTask,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
+import RetrohuntPanel from './RetrohuntPanel'
 
 export default function AnalysisTab({ pkgId }: { pkgId: string }) {
   const { isResearcher } = useAuth()
@@ -186,7 +187,7 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} />
+        <HuntingPackageDraft record={genRecord} pkgId={pkgId} />
       </div>
     )
   }
@@ -198,7 +199,7 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
         <CheckCircle className="w-4 h-4 text-green-400" />
         <p className="text-sm font-semibold text-green-400">Hunt Package Approved</p>
       </div>
-      <HuntingPackageDraft record={genRecord} readOnly />
+      <HuntingPackageDraft record={genRecord} pkgId={pkgId} readOnly />
     </div>
   )
 }
@@ -207,15 +208,28 @@ export default function AnalysisTab({ pkgId }: { pkgId: string }) {
 
 function HuntingPackageDraft({
   record,
+  pkgId,
   readOnly: _readOnly = false,
 }: {
   record: THGenerationRecord
+  pkgId: string
   readOnly?: boolean
 }) {
   return (
     <div className="space-y-5">
       {/* Threat Context */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
+
+      {/* Deep Retrohunt Lead */}
+      {record.deep_retrohunt && (
+        <CollapsibleSection
+          title={`Deep Retrohunt Lead — ${record.deep_retrohunt.total_ioc_count} IOCs`}
+          icon={Radar}
+          defaultOpen
+        >
+          <RetrohuntPanel retrohunt={record.deep_retrohunt} pkgId={pkgId} />
+        </CollapsibleSection>
+      )}
 
       {/* Hypotheses */}
       {record.hypotheses && record.hypotheses.length > 0 && (
