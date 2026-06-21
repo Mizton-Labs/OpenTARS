@@ -49,10 +49,8 @@ require_uv() {
 require_python() {
     if [ -x "${VENV_DIR}/bin/python" ]; then
         PYTHON="${VENV_DIR}/bin/python"
-        PIP="${VENV_DIR}/bin/pip"
     elif command -v python3 &>/dev/null; then
         PYTHON="python3"
-        PIP="pip3"
     else
         die "Python 3 not found. Please install Python 3.10+."
     fi
@@ -81,12 +79,13 @@ setup_venv() {
             python3 -m venv "${VENV_DIR}"
         fi
         log "Installing/updating dependencies with pip..."
-        "${PIP}" install -q -r "${BACKEND_DIR}/requirements.txt"
+        # Use the venv pip directly — $PIP may not be set yet at this point
+        # (require_python() is not always called before setup_venv()).
+        "${VENV_DIR}/bin/pip" install -q -r "${BACKEND_DIR}/requirements.txt"
     fi
 
-    # Always point PYTHON/PIP at the venv after setup
+    # Always point PYTHON at the venv after setup
     PYTHON="${VENV_DIR}/bin/python"
-    PIP="${VENV_DIR}/bin/pip"
 }
 
 is_running() {
