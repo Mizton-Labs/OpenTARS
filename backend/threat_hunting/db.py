@@ -315,20 +315,27 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
         await cur.close()
 
         # Latest run per package (one row per hunt_package_id, newest created_at)
+        # issue-008-2A: also fetch created_at for the live timer in the frontend
         cur2 = await db.execute(
-            "SELECT hunt_package_id, generation_status, step_logs "
+            "SELECT hunt_package_id, generation_status, step_logs, created_at "
             "FROM hunting_packages "
             "WHERE id IN ("
-            "  SELECT MAX(id) FROM hunting_packages GROUP BY hunt_package_id"
+            "  SELECT id FROM hunting_packages hp2 "
+            "  WHERE hp2.hunt_package_id = hunting_packages.hunt_package_id "
+            "  ORDER BY hp2.created_at DESC LIMIT 1"
             ")"
         )
         run_rows = await cur2.fetchall()
         await cur2.close()
 
-    # Build lookup: hunt_package_id → {generation_status, step_logs_json}
+    # Build lookup: hunt_package_id → {generation_status, step_logs_json, run_created_at}
     run_by_pkg: dict[str, dict[str, Any]] = {}
     for r in run_rows:
-        run_by_pkg[r[0]] = {"generation_status": r[1], "step_logs_json": r[2]}
+        run_by_pkg[r[0]] = {
+            "generation_status": r[1],
+            "step_logs_json": r[2],
+            "run_created_at": r[3],
+        }
 
     result: list[dict[str, Any]] = []
     for row in rows:
@@ -369,10 +376,12 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
                 pass
             pkg["phases"] = phases if phases else None
             pkg["total_elapsed_s"] = round(total_elapsed, 2) if phases else None
+            pkg["run_created_at"] = run.get("run_created_at")  # issue-008-2A: live timer
         else:
             pkg["generation_status"] = None
             pkg["phases"] = None
             pkg["total_elapsed_s"] = None
+            pkg["run_created_at"] = None
         result.append(pkg)
     return result
 

@@ -1602,6 +1602,8 @@ export interface THuntPackage {
   phases?: THPhaseEntry[] | null
   /** Total elapsed time across all steps of the latest run in seconds (issue-006-D). */
   total_elapsed_s?: number | null
+  /** ISO timestamp when the latest run started — used for the live timer (issue-008-2A). */
+  run_created_at?: string | null
 }
 
 export interface THEvidenceItem {
