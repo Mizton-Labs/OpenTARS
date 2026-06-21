@@ -1,18 +1,23 @@
 /**
- * WorkflowVisualizer — issue-local-004
+ * WorkflowVisualizer — issue-local-004 / issue-006-C
  *
  * Renders the live agent pipeline during a generation run.
  * Reads the global verbosity + visualization settings and renders accordingly.
  *
  * Verbosity levels:
- *   info    — compact checklist (current behavior)
- *   verbose — animated pipeline card: per-step status, tools, timing, item counts
+ *   info    — compact checklist
+ *   verbose — 2-col layout: task list LEFT, diagram card RIGHT (issue-006-C)
  *   debug   — verbose view + a live scoped log textbox at the bottom
  *
  * Visualization styles (only for verbose/debug):
  *   timeline  — animated vertical step list (no extra deps)
  *   mermaid   — live Mermaid flowchart (lazy-loaded)
  *   reactflow — interactive ReactFlow graph (lazy-loaded)
+ *
+ * issue-006-C additions:
+ *   - tools_used pills per step in timeline view
+ *   - decision sub-text per step in timeline view
+ *   - 2-col layout: always-visible compact task list on left + diagram on right
  */
 
 import { lazy, Suspense, useEffect, useRef } from 'react'
@@ -144,8 +149,21 @@ function TimelineVisualizer({
                         effort={log.effort}
                       </span>
                     )}
+                    {/* issue-006-C: tools_used pills */}
+                    {log?.tools_used?.map((tool) => (
+                      <span
+                        key={tool}
+                        className="text-[9px] font-mono bg-purple-900/40 text-purple-300 border border-purple-800/40 rounded px-1 py-0.5"
+                      >
+                        {tool}()
+                      </span>
+                    ))}
                   </div>
-                  {isActive && (
+                  {/* issue-006-C: decision sub-text */}
+                  {log?.decision && (
+                    <p className="text-[10px] text-gray-500 mt-0.5 italic">{log.decision}</p>
+                  )}
+                  {isActive && !log?.decision && (
                     <p className="text-[10px] text-gray-500 mt-0.5">{step.description}</p>
                   )}
                   {log?.error && (
@@ -235,49 +253,57 @@ export default function WorkflowVisualizer({ genRecord, compact = false }: Workf
     )
   }
 
-  // Verbose / Debug
+  // Verbose / Debug — issue-006-C: 2-col layout (task list LEFT, diagram RIGHT)
   const debug = verbosity === 'debug'
 
   if (visualization === 'mermaid') {
     return (
-      <div className="space-y-3">
-        <Suspense
-          fallback={
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Loading Mermaid diagram…
-            </div>
-          }
-        >
-          <MermaidVisualizer genRecord={genRecord} />
-        </Suspense>
-        {debug && (
-          <TimelineVisualizer genRecord={genRecord} debug />
-        )}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        {/* Left: compact task list always visible */}
+        <div className="min-w-0">
+          <TimelineVisualizer genRecord={genRecord} debug={debug} />
+        </div>
+        {/* Right: Mermaid diagram */}
+        <div className="min-w-0">
+          <Suspense
+            fallback={
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Loading Mermaid diagram…
+              </div>
+            }
+          >
+            <MermaidVisualizer genRecord={genRecord} />
+          </Suspense>
+        </div>
       </div>
     )
   }
 
   if (visualization === 'reactflow') {
     return (
-      <div className="space-y-3">
-        <Suspense
-          fallback={
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Loading React Flow graph…
-            </div>
-          }
-        >
-          <ReactFlowVisualizer genRecord={genRecord} />
-        </Suspense>
-        {debug && (
-          <TimelineVisualizer genRecord={genRecord} debug />
-        )}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        {/* Left: compact task list always visible */}
+        <div className="min-w-0">
+          <TimelineVisualizer genRecord={genRecord} debug={debug} />
+        </div>
+        {/* Right: ReactFlow graph */}
+        <div className="min-w-0">
+          <Suspense
+            fallback={
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Loading React Flow graph…
+              </div>
+            }
+          >
+            <ReactFlowVisualizer genRecord={genRecord} />
+          </Suspense>
+        </div>
       </div>
     )
   }
 
-  // Default: timeline
+  // Default: timeline (full width, includes debug panel)
   return <TimelineVisualizer genRecord={genRecord} debug={debug} />
 }

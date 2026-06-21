@@ -1,6 +1,9 @@
 /**
  * ReactFlowVisualizer — lazy-loaded interactive React Flow graph.
  * Loaded only when the user selects "React Flow" visualization style.
+ *
+ * issue-006-C: adds Threat Intel source nodes above intake_classifier,
+ * distributed horizontally at y=-120.
  */
 
 import { useMemo } from 'react'
@@ -14,7 +17,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { type THGenerationRecord } from '../../api/client'
 
-const STEPS = [
+const PIPELINE_STEPS = [
   { id: 'intake_classifier',      label: 'Intake Classifier',      x: 250, y: 0   },
   { id: 'threat_context_builder', label: 'Threat Context Builder',  x: 50,  y: 120 },
   { id: 'deep_retrohunt_planner', label: 'Deep Retrohunt Planner',  x: 450, y: 120 },
@@ -24,7 +27,7 @@ const STEPS = [
   { id: 'query_drafting_agent',   label: 'Query Drafting Agent',    x: 250, y: 600 },
 ]
 
-const EDGES_DEF = [
+const PIPELINE_EDGES_DEF = [
   { source: 'intake_classifier',      target: 'threat_context_builder' },
   { source: 'intake_classifier',      target: 'deep_retrohunt_planner' },
   { source: 'threat_context_builder', target: 'hypothesis_generator' },
@@ -50,41 +53,83 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
   const completed = useMemo(() => new Set(genRecord.completed_steps ?? []), [genRecord.completed_steps])
   const active = genRecord.current_step ?? ''
 
-  const nodes: Node[] = useMemo(
-    () =>
-      STEPS.map((s) => ({
-        id: s.id,
-        position: { x: s.x, y: s.y },
-        data: { label: s.label },
-        style: {
-          background: nodeColor(s.id, completed, active),
-          border: `1px solid ${nodeBorderColor(s.id, completed, active)}`,
-          color: completed.has(s.id) ? '#d1fae5' : active === s.id ? '#bfdbfe' : '#6b7280',
-          borderRadius: '8px',
-          padding: '6px 12px',
-          fontSize: '11px',
-          fontWeight: 500,
-          minWidth: '160px',
-          textAlign: 'center',
-        },
-      })),
-    [completed, active],
-  )
+  // issue-006-C: extract intake sources from step_logs
+  const intakeSources = useMemo(() => {
+    const intakeLog = (genRecord.step_logs ?? []).find((l) => l.step === 'intake_classifier')
+    return intakeLog?.intake_sources ?? []
+  }, [genRecord.step_logs])
 
-  const edges: Edge[] = useMemo(
-    () =>
-      EDGES_DEF.map((e, i) => ({
-        id: `e${i}`,
-        source: e.source,
-        target: e.target,
-        style: { stroke: '#4b5563', strokeWidth: 1.5 },
-        animated: active === e.source,
-      })),
-    [active],
-  )
+  const nodes: Node[] = useMemo(() => {
+    // Pipeline nodes
+    const pipelineNodes: Node[] = PIPELINE_STEPS.map((s) => ({
+      id: s.id,
+      position: { x: s.x, y: s.y },
+      data: { label: s.label },
+      style: {
+        background: nodeColor(s.id, completed, active),
+        border: `1px solid ${nodeBorderColor(s.id, completed, active)}`,
+        color: completed.has(s.id) ? '#d1fae5' : active === s.id ? '#bfdbfe' : '#6b7280',
+        borderRadius: '8px',
+        padding: '6px 12px',
+        fontSize: '11px',
+        fontWeight: 500,
+        minWidth: '160px',
+        textAlign: 'center' as const,
+      },
+    }))
+
+    // Source nodes (amber) — distributed horizontally above intake_classifier
+    if (intakeSources.length === 0) return pipelineNodes
+    const totalWidth = 500
+    const spacing = intakeSources.length > 1 ? totalWidth / (intakeSources.length - 1) : 0
+    const startX = intakeSources.length === 1 ? 250 : 0
+    const sourceNodes: Node[] = intakeSources.map((src, i) => ({
+      id: `src_${i}`,
+      position: { x: startX + i * spacing, y: -120 },
+      data: {
+        label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
+      },
+      style: {
+        background: '#78350f',
+        border: '1px solid #f59e0b',
+        color: '#fef3c7',
+        borderRadius: '8px',
+        padding: '4px 10px',
+        fontSize: '10px',
+        fontWeight: 500,
+        minWidth: '120px',
+        textAlign: 'center' as const,
+      },
+    }))
+
+    return [...sourceNodes, ...pipelineNodes]
+  }, [completed, active, intakeSources])
+
+  const edges: Edge[] = useMemo(() => {
+    const pipelineEdges: Edge[] = PIPELINE_EDGES_DEF.map((e, i) => ({
+      id: `e${i}`,
+      source: e.source,
+      target: e.target,
+      style: { stroke: '#4b5563', strokeWidth: 1.5 },
+      animated: active === e.source,
+    }))
+
+    // Source → intake_classifier edges
+    const sourceEdges: Edge[] = intakeSources.map((_, i) => ({
+      id: `src_e${i}`,
+      source: `src_${i}`,
+      target: 'intake_classifier',
+      style: { stroke: '#f59e0b', strokeWidth: 1, strokeDasharray: '4 2' },
+      animated: false,
+    }))
+
+    return [...sourceEdges, ...pipelineEdges]
+  }, [active, intakeSources])
+
+  const graphHeight = intakeSources.length > 0 ? 800 : 680
 
   return (
-    <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: 680 }}>
+    <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: graphHeight }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}

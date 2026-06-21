@@ -1591,6 +1591,13 @@ export interface THExtractedIOC {
   created_at: string
 }
 
+/** Per-source intake metadata emitted by intake_classifier (issue-006-C). */
+export interface THIntakeSource {
+  label: string
+  item_type: string
+  text_length: number
+}
+
 export interface THStepLog {
   step: string
   status: 'ok' | 'error' | 'partial' | 'skipped'
@@ -1602,6 +1609,12 @@ export interface THStepLog {
   error?: string
   /** Debug log lines captured during this step. */
   debug_lines?: string[]
+  /** Names of tools called during this step (issue-006-B/C). */
+  tools_used?: string[]
+  /** Brief decision/rationale string from the model (issue-006-B/C). */
+  decision?: string
+  /** Per-source intake metadata from intake_classifier (issue-006-C). */
+  intake_sources?: THIntakeSource[]
 }
 
 /** Lightweight run summary returned by GET /packages/{id}/runs */
