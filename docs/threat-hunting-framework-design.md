@@ -1,6 +1,6 @@
 # Threat Hunting Framework — Design Document
 
-**Status:** Implemented — Phases 1–6 complete  
+**Status:** Implemented — Phases 1–6 complete + issue-006 tooling  
 **Last updated:** 2026-06-21  
 **Source:** `.coding_agent/developer_notes/issue-local-002.md`
 
@@ -312,75 +312,156 @@ url_fetch:
 
 ## 8. Agent Structure and LangGraph Pipeline
 
+> **Note:** §8 reflects the implemented state as of issue-local-006. The original
+> design doc listed nodes that were folded into others during implementation
+> (`artifact_parser`, `ioc_normalizer`, `results_interpreter`). §18 records those
+> divergences. For the full tool-calling architecture added in issue-006-B, see §8a
+> and [`agent-architecture.md`](agent-architecture.md).
+
 ### Stack
 
-| Layer | Technology |
-|---|---|
-| Workflow orchestration | **LangGraph** (stateful directed graph, approval gates) |
-| Model/tool/prompt abstraction | **LangChain** |
-| LLM providers | Existing `backend/llm/` registry (OpenAI, Anthropic, Ollama, OpenAI-compatible) |
+| Layer | Technology | Notes |
+|---|---|---|
+| Workflow orchestration | **LangGraph** `StateGraph` | Drives the DAG, fan-out/fan-in edges, approval-gate conditional edge, and node execution. This is the primary LangGraph usage. |
+| LLM transport | Project's own `backend/llm/LLMClient` | OpenAI, Anthropic, Ollama, OpenAI-compatible. Custom retry, security wrappers, credential handling. |
+| LangChain model classes | **Not used** | `langchain-openai` / `langchain-anthropic` are present as deps of LangGraph but their chat-model classes are never instantiated. See §18. |
+| LangChain messages | `langchain_core.messages` | Used as optional prompt-assembly helpers only (guarded by `try/except ImportError`). Not on the critical path. |
+| LLM tool-calling | Custom `complete_with_tools()` | Added in issue-006-B. Hand-rolled against OpenAI function-calling and Anthropic tool-use wire formats. See §8a. |
 
-### LangGraph Pipeline State
+### LangGraph Pipeline State (implemented)
+
+Key fields of `HuntPipelineState` (full definition in `backend/threat_hunting/agents/state.py`):
 
 ```python
 class HuntPipelineState(TypedDict):
+    # Identity + configuration
     hunt_package_id: str
-    evidence_summary: EvidenceSummary
-    threat_context: ThreatContext | None
-    hypotheses: list[Hypothesis]
+    provider_name: str | None
+    model_name: str | None
+    research_effort: str                              # high | medium | low
+
+    # Pipeline control
+    approved: bool
+    rejected: bool
+    generation_status: str
+    current_step: str
+    completed_steps: Annotated[list[str], operator.add]   # concurrent-safe
+    step_logs: Annotated[list[dict], operator.add]        # concurrent-safe
+    errors: Annotated[list[str], operator.add]            # concurrent-safe
+
+    # Data produced by nodes
+    evidence_text_corpus: str
+    ioc_summary: dict
+    raw_ioc_list: list[dict]
+    threat_context: dict | None
+    hypotheses: list[Hypothesis]                      # now includes suggested_actions
     hunting_leads: list[HuntingLead]
     deep_retrohunt: DeepRetrohuntLead | None
     ttp_analysis: BehavioralTTPAnalysis | None
     query_drafts: list[QueryDraft]
-    errors: list[str]
-    current_step: str
 ```
 
-### Agent Nodes
+### Agent Nodes (live implementation)
 
-| Agent Node | Input | Output | Notes |
-|---|---|---|---|
-| `intake_classifier` | raw evidence items | typed/routed artifact list | Determines how to parse each item |
-| `artifact_parser` | artifact list | extracted text + IOC list per item | Dispatches to Docling / Marker / text |
-| `ioc_normalizer` | raw IOC list | normalized, deduped, noise-scored IOC CSV | Strips http/https, dedupes, flags noisy IOCs |
-| `threat_context_builder` | extracted text corpus | `ThreatContext` | LLM summarizes adversary/campaign/malware |
-| `hypothesis_generator` | `ThreatContext` + IOCs | `Hypothesis[]` | LLM generates justified hypotheses |
-| `hunting_lead_planner` | `Hypothesis[]` | `HuntingLead[]` with sub-tasks | LLM breaks hypotheses into leads |
-| `deep_retrohunt_planner` | normalized IOC CSV | `DeepRetrohuntLead` | Always runs if atomic IOCs present |
-| `ttp_analyst` | `ThreatContext` | `BehavioralTTPAnalysis` | ATT&CK-style behavioral analysis |
-| `query_drafting_agent` | leads + TTPs | `QueryDraft[]` (SPL, KQL, ES, CQL) | LLM-generated, drafts only |
-| `approval_gate` | full draft package | paused state, awaits operator | LangGraph interrupt node |
-| `splunk_connector` | approved retrohunt + query | SIEM result set | Executes approved SPL search |
-| `results_interpreter` | SIEM results + context | interpreted findings | LLM summarizes matches |
-| `report_writer` | all results | `HuntReport` | Structured final report |
+| Node | Input | Output | Tool-enabled | Notes |
+|---|---|---|---|---|
+| `intake_classifier` | DB evidence items | corpus, IOC summary, raw IOC list | Yes (`extract_iocs`, `refetch_url`) | Builds text corpus; emits per-source metadata. Tools triggered when URL evidence is thin. |
+| `threat_context_builder` | corpus, IOC summary | `threat_context` dict | Yes (`mitre_lookup`, `refetch_url`) | Runs in parallel with `deep_retrohunt_planner`. |
+| `deep_retrohunt_planner` | raw IOC list | `deep_retrohunt` (IOC CSV, SPL macro) | Yes (`validate_spl`, `defang_ioc`, `noise_score`) | Runs in parallel with `threat_context_builder`. Always runs when atomic IOCs exist. |
+| `hypothesis_generator` | threat_context, IOC summary | `hypotheses[]` (with `suggested_actions`) | No | Prompt-only structured output. |
+| `hunting_lead_planner` | hypotheses | `hunting_leads[]` with sub-tasks | No | Prompt-only structured output. |
+| `ttp_analyst` | threat_context, hypotheses | `ttp_analysis` | No | Prompt-only structured output. |
+| `query_drafting_agent` | hunting_leads, ttp_analysis, deep_retrohunt | `query_drafts[]` | Yes (`validate_spl`, `mitre_lookup`) | Post-draft validation pass. |
+| `report_writer` | all of the above | `HuntReport` (JSON/MD/PDF) | — | **Not a LangGraph node.** Standalone async function. Auto-triggered after SIEM execution; also callable via API. |
 
-### Pipeline Graph
+> **Folded nodes from original design:**
+> `artifact_parser` → functionality is in the extractors layer, called before the
+> pipeline starts (during evidence upload). `ioc_normalizer` → IOC extraction and
+> noise scoring are also part of the intake phase, not a separate graph node.
+> `results_interpreter` → implemented as a standalone function in the execution
+> runner, not a graph node. `splunk_connector` → lives in `siem/executor.py`,
+> called from the API route after approval, not in the LangGraph graph.
+
+### Pipeline Graph (live)
 
 ```
-intake_classifier
+intake_classifier  (tool-enabled: extract_iocs, refetch_url)
       │
-artifact_parser
-      │
-ioc_normalizer
-      │
-┌─────┴──────┐
-▼            ▼
-threat_context_builder   deep_retrohunt_planner (if IOCs exist)
-      │
-hypothesis_generator
-      │
-hunting_lead_planner ─── ttp_analyst ─── query_drafting_agent
-      │
-[aggregate draft package]
-      │
-APPROVAL GATE (operator)
-      │
-splunk_connector (per approved lead)
-      │
-results_interpreter
-      │
-report_writer
+      ├─────────────────────────────────┐  (parallel fan-out)
+      ▼                                 ▼
+threat_context_builder         deep_retrohunt_planner
+(tool-enabled:                 (tool-enabled:
+ mitre_lookup, refetch_url)     validate_spl, defang_ioc, noise_score)
+      │                                 │
+      └─────────────┬───────────────────┘  (fan-in)
+                    ▼
+           hypothesis_generator  (prompt-only)
+                    │
+           hunting_lead_planner  (prompt-only)
+                    │
+               ttp_analyst       (prompt-only)
+                    │
+          query_drafting_agent   (tool-enabled: validate_spl, mitre_lookup)
+                    │
+            ┌───── APPROVAL GATE (conditional edge) ─────┐
+            │               │                            │
+         pending          approved                   rejected
+            │               │                            │
+    awaiting_approval   mark_completed             mark_rejected
+            │               │                            │
+           END             END                          END
 ```
+
+After `awaiting_approval` the pipeline exits. Operator approval via the API
+resumes execution via a separate compiled **post-approval graph** that re-enters
+at `query_drafting_agent` with `approved=True` already in state.
+
+After `mark_completed` the execution runner may proceed to:
+
+```
+[SIEM execution via siem/executor.py — outside the graph]
+      │
+[report_writer — standalone async function]
+```
+
+---
+
+## 8a. Tool-Calling (issue-006-B)
+
+Issue-006-B added bounded LLM tool-calling to four nodes. This is summarized here;
+see [`agent-architecture.md`](agent-architecture.md) for the full technical
+specification including wire formats and sequence diagrams.
+
+### How it works
+
+A tool-enabled node does an optional **pre-pass** (or post-pass for validation)
+before its main structured-output prompt:
+
+1. Calls `call_llm_with_tools(prompt, tool_specs)` with a small focused prompt
+   and a list of JSON-schema tool definitions.
+2. If the model returns tool calls, each one is dispatched through `call_tool()`,
+   which validates the name, enforces required parameters, strips extra keys, then
+   calls the Python implementation.
+3. Tool results are integrated back into the node's working state (e.g. refetched
+   text is appended to the corpus).
+4. The node then proceeds to its normal LLM analysis prompt.
+
+### Provider gating
+
+If the configured LLM provider does not support tool-calling (e.g. Ollama), the
+node falls back to its prompt-only path transparently. No error, no config change
+required.
+
+### The tool catalogue
+
+| Tool | What it does |
+|---|---|
+| `extract_iocs` | Scan text for IOCs (wraps the IOC extractor) |
+| `defang_ioc` | Normalize a defanged IOC value |
+| `noise_score` | Score an IOC's noise level (0.0–1.0) |
+| `mitre_lookup` | Resolve a MITRE ATT&CK technique ID to name + tactic |
+| `validate_spl` | Basic SPL syntax check (brackets, double-pipe, known commands) |
+| `refetch_url` | SSRF-validated URL re-fetch via the existing URL fetcher |
 
 ### Parser Selection Strategy
 
@@ -388,7 +469,8 @@ report_writer
 parser_mode: auto | docling | marker
 ```
 
-Resolution in `artifact_parser` node:
+Resolution in the `extractors/dispatcher.py` layer (called during evidence upload,
+before the LangGraph pipeline starts):
 
 1. If user explicitly set parser mode in wizard step, use it.
 2. If `auto`:
@@ -759,6 +841,13 @@ These items diverged from the original design during implementation:
 - **Splunk credentials:** Stored in `config_json` column of `siem_connectors` table in `threat_hunting.db`. API responses mask credentials as `***`. No external keystore dependency.
 - **`results_interpreter` / `report_writer`:** Implemented as standalone async functions (not LangGraph nodes) called from the execution runner and report writer, respectively, to keep the execution flow decoupled from the generation pipeline.
 - **Deep Retrohunt fan-out:** `intake_classifier` fans out to `threat_context_builder` AND `deep_retrohunt_planner` in parallel via LangGraph edges; both must complete before `hypothesis_generator` (LangGraph fan-in).
+- **`artifact_parser` / `ioc_normalizer` nodes:** Never implemented as separate LangGraph nodes. Artifact parsing is handled by `backend/threat_hunting/extractors/` at evidence-upload time; IOC extraction and noise scoring run in `backend/threat_hunting/iocs.py` during the same ingestion pass. `intake_classifier` reads the already-parsed results from the DB.
+- **LangChain chat-model classes not used (issue-006-B decision):** The original design listed "LangChain" as the model abstraction layer. In practice, LangChain's `ChatOpenAI`, `ChatAnthropic`, etc. are never instantiated. The project's own `LLMClient` handles all HTTP transport, credentials, retry, and security, and is called via `asyncio.to_thread` from LangGraph nodes. Only `langchain_core.messages` is used (optionally) as a prompt-assembly helper.
+- **LLM tool-calling (issue-006-B):** Four nodes (`intake_classifier`, `threat_context_builder`, `deep_retrohunt_planner`, `query_drafting_agent`) gained bounded tool-calling via a custom `complete_with_tools()` method on `LLMClient`. Tool dispatch goes through a closed-set `call_tool()` function with name validation, required-param checks, and extra-kwarg stripping. LangChain's `bind_tools` / `ToolNode` are not used. Full specification in [`agent-architecture.md`](agent-architecture.md).
+- **DB schema v4 (issue-005):** `hunting_packages` table gains `run_id TEXT` on `hunt_reports` and `task_results`. Each call to `start_generation` creates a new `hunting_packages` row; prior runs are never overwritten.
+- **URL fetch robustness (issue-006-A):** `url_fetcher.py` now sends browser-like headers, applies tenacity retry with exponential backoff, uses a trafilatura → readability-lxml → utf-8 fallback chain, and falls back to `browser_fetcher.py` (Playwright headless Chromium) for JS-heavy pages. `ssrf.py` blocks list extended with RFC 6598 CGNAT range `100.64.0.0/10`.
+- **Hypotheses `suggested_actions` (issue-006-E):** Each `Hypothesis` object now includes a `suggested_actions: list[str]` field with 2–4 concrete detection steps (SIEM query fragments, EDR artifacts, MITRE technique references, log sources).
+- **PDF reports (issue-006-F):** `render_report_pdf()` now uses reportlab `Table`/`TableStyle` for Evidence Summary, TTP Techniques, and Execution Results sections; includes a cover header, thick colored rule, and page numbers.
 
 ---
 
@@ -767,55 +856,70 @@ These items diverged from the original design during implementation:
 ```
 backend/
   threat_hunting/
-    db.py                        # schema v2, full CRUD
+    db.py                        # schema v4, full CRUD
     models.py                    # Pydantic I/O models
-    ssrf.py                      # URL fetch SSRF enforcement
+    ssrf.py                      # SSRF enforcement (incl. CGNAT 100.64/10)
     iocs.py                      # extraction, normalization, noise scoring
     extractors/
       dispatcher.py              # routes by mime/extension
       pdf_extractor.py           # PyMuPDF
       docx_extractor.py          # python-docx
       text_extractor.py          # plain text / markdown / CSV / JSON
-      url_fetcher.py             # httpx + trafilatura + SSRF validation
+      url_fetcher.py             # browser headers, tenacity retry, fallback chain,
+                                 #   Playwright trigger (issue-006-A)
+      browser_fetcher.py         # Playwright headless-Chromium fallback (issue-006-A)
     agents/
-      llm_bridge.py              # async bridge → existing LLMClient
-      state.py                   # HuntPipelineState TypedDict
-      pipeline.py                # LangGraph StateGraph (fan-out, approval gate)
-      runner.py                  # background pipeline, DB persistence
+      llm_bridge.py              # async bridge → LLMClient;
+                                 #   call_llm() + call_llm_with_tools() (issue-006-B)
+      state.py                   # HuntPipelineState TypedDict + Annotated reducers
+      pipeline.py                # LangGraph StateGraph (fan-out, approval gate,
+                                 #   post-approval resume graph)
+      runner.py                  # background pipeline, DB persistence (run_id model)
+      tools.py                   # 6 tool wrappers + call_tool() dispatcher (issue-006-B)
       nodes/
-        intake_classifier.py
-        threat_context_builder.py
-        hypothesis_generator.py
-        hunting_lead_planner.py
-        ttp_analyst.py
-        query_drafting_agent.py
-        deep_retrohunt_planner.py
-        report_writer.py         # also callable standalone
+        intake_classifier.py     # tool-enabled: extract_iocs, refetch_url
+        threat_context_builder.py # tool-enabled: mitre_lookup, refetch_url
+        hypothesis_generator.py  # prompt-only; suggested_actions (issue-006-E)
+        hunting_lead_planner.py  # prompt-only
+        ttp_analyst.py           # prompt-only
+        query_drafting_agent.py  # tool-enabled: validate_spl, mitre_lookup
+        deep_retrohunt_planner.py # tool-enabled: validate_spl, defang_ioc, noise_score
+        report_writer.py         # standalone; PDF tables/cover/page-numbers (issue-006-F)
     siem/
       base.py                    # SIEMConnectorBase ABC
       splunk.py                  # Splunk REST API v2
       executor.py                # background execution runner
   api/
     routes_threat_hunting.py     # all /api/threat-hunting/* routes
+                                 #   incl. run-scoped endpoints (issue-005)
 
 frontend/src/
   pages/
-    ThreatHunting.tsx            # package list
+    ThreatHunting.tsx            # package list with process-arrow (issue-006-D)
     threat-hunting/
       HuntPackageWizard.tsx
-      HuntDetail.tsx             # 5-tab detail: Evidence/IOCs/Analysis/Execution/Report
-      AnalysisTab.tsx            # generation + approval UI
+      HuntDetail.tsx             # 5-tab detail; re-run dialog (issue-006-G)
+      AnalysisTab.tsx            # generation + approval UI; model selector
+      WorkflowVisualizer.tsx     # 2-col layout; tools_used pills (issue-006-C)
+      MermaidVisualizer.tsx      # lazy Mermaid flowchart with source nodes
+      ReactFlowVisualizer.tsx    # lazy ReactFlow graph with source nodes
       RetrohuntPanel.tsx         # IOC review table + SPL draft
       ExecutionPanel.tsx         # SIEM execute + result cards
-      ReportPanel.tsx            # report view + MD/JSON export
+      ReportPanel.tsx            # report view + MD/JSON/PDF export
       AddEvidenceModal.tsx
   pages/configuration/
     SiemConnectorsTab.tsx        # Splunk connector CRUD (Configuration → General)
 
 data/
-  threat_hunting.db              # all TH state (packages, evidence, IOCs,
-                                 #   generation records, SIEM connectors,
-                                 #   task results, hunt reports)
+  threat_hunting.db              # schema v4: packages, evidence, IOCs,
+                                 #   hunting_packages (run_id model),
+                                 #   siem_connectors, task_results, hunt_reports
+
+docs/
+  platform-overview.md          # non-technical platform overview + Mermaid diagram
+  agent-architecture.md         # technical agent/tool-calling deep-dive
+  threat-hunting-framework-design.md  # this file
+  architecture.md               # whole-platform module map
 ```
 
 ---
