@@ -122,7 +122,6 @@ describe('ThreatHuntingSettingsTab', () => {
   })
 
   it('shows warning when both formats disabled', async () => {
-    const user = userEvent.setup()
     // Mock: both currently enabled
     const { api } = await import('../api/client')
     vi.mocked(api.getThReportFormats).mockResolvedValue({
@@ -164,11 +163,11 @@ describe('Configuration TH group tabs', () => {
     }))
 
     vi.doMock('../api/client', async () => {
-      const original = await vi.importActual('../api/client')
+      const original = await vi.importActual<typeof import('../api/client')>('../api/client')
       return {
-        ...(original as object),
+        ...original,
         api: {
-          ...((original as { api: unknown }).api),
+          ...original.api,
           getAgentVerbosity: vi.fn().mockResolvedValue({ agent_workflow_verbosity: 'info' }),
           getAgentVisualization: vi.fn().mockResolvedValue({ agent_workflow_visualization: 'timeline' }),
           getThResearchEffort: vi.fn().mockResolvedValue({ th_research_effort: 'medium' }),
