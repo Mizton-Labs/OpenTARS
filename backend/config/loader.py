@@ -551,6 +551,67 @@ def save_th_report_formats(value: dict[str, bool]) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Agent tools + document parsers toggle (issue-007) ────────────────────────
+# Controls which LLM-callable tools and document parsers are offered to agents.
+# All default to True (fully enabled). The 7 keys are kept in sync with
+# TOOL_METADATA in backend/threat_hunting/agents/tools.py.
+
+_AGENT_TOOLS_DEFAULT: dict[str, bool] = {
+    "extract_iocs": True,
+    "defang_ioc": True,
+    "noise_score": True,
+    "mitre_lookup": True,
+    "validate_spl": True,
+    "refetch_url": True,
+    "marker": True,  # PDF document parser; only takes effect when marker-pdf is installed
+}
+_AGENT_TOOLS_KEYS = frozenset(_AGENT_TOOLS_DEFAULT.keys())
+
+
+def load_agent_tools() -> dict[str, bool]:
+    """Return the enabled/disabled toggle map for agent tools + document parsers.
+
+    All 7 tools default to True.  Missing keys in application.yaml are filled
+    from the defaults so that new tools added in future releases are enabled
+    automatically without requiring a config migration.
+    """
+    raw = load_app_config().get("agent_tools", {})
+    if not isinstance(raw, dict):
+        logger.warning("agent_tools in %s is not a dict; using defaults", APP_CONFIG_PATH)
+        return dict(_AGENT_TOOLS_DEFAULT)
+    result = dict(_AGENT_TOOLS_DEFAULT)
+    for key in _AGENT_TOOLS_KEYS:
+        if key in raw:
+            result[key] = bool(raw[key])
+    return result
+
+
+def save_agent_tools(value: dict[str, bool]) -> None:
+    """Persist the agent-tools toggle map to application.yaml.
+
+    Raises:
+        ValueError: if *value* contains unknown keys or non-bool values.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("agent_tools must be a dict mapping tool names to booleans")
+    for key in value:
+        if key not in _AGENT_TOOLS_KEYS:
+            raise ValueError(
+                f"Unknown agent tool key: {key!r}. Allowed: {sorted(_AGENT_TOOLS_KEYS)}"
+            )
+        if not isinstance(value[key], bool):
+            raise ValueError(f"agent_tools[{key!r}] must be a boolean")
+    data = load_app_config()
+    # Merge: keep existing keys not in value (future-proof against partial saves)
+    existing = data.get("agent_tools", {})
+    if isinstance(existing, dict):
+        merged = {**existing, **value}
+    else:
+        merged = dict(value)
+    data["agent_tools"] = merged
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Authentication toggle (prompts-045) ──────────────────────────────────────
 # Env-var override set by mizton-threatbox --enable-auth at uvicorn
 # invocation time. Takes precedence over application.yaml on read.

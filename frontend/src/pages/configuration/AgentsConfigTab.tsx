@@ -1,17 +1,18 @@
 /**
- * Agents Configuration Tab — issue-local-004
+ * Agents Configuration Tab — issue-local-004 / issue-007
  *
  * Controls:
  *   1. Agentic Workflow Verbosity  (info | verbose | debug)
  *   2. Visualization Style         (timeline | mermaid | reactflow)
  *      — only meaningful / shown when verbosity is verbose or debug
+ *   3. Agent Tools & Document Parsers  (per-tool enable/disable, issue-007)
  */
 
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Activity, BarChart2, GitFork, Layers, Save, Loader2 } from 'lucide-react'
+import { Activity, BarChart2, GitFork, Layers, Save, Loader2, Wrench, AlertTriangle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api } from '../../api/client'
+import { api, type ToolCatalogEntry } from '../../api/client'
 
 // ── Verbosity option definitions ──────────────────────────────────────────────
 
@@ -78,9 +79,19 @@ export default function AgentsConfigTab() {
     queryKey: ['agent-visualization'],
     queryFn: () => api.getAgentVisualization(),
   })
+  // issue-007: agent tools + document parsers
+  const { data: toolsData, isLoading: toolsLoading } = useQuery({
+    queryKey: ['agent-tools'],
+    queryFn: () => api.getAgentTools(),
+  })
+  const { data: catalogData, isLoading: catalogLoading } = useQuery({
+    queryKey: ['agent-tools-catalog'],
+    queryFn: () => api.getAgentToolsCatalog(),
+  })
 
   const [verbosity, setVerbosity] = useState<VerbosityLevel>('info')
   const [visualization, setVisualization] = useState<VisualizationStyle>('timeline')
+  const [toolsEnabled, setToolsEnabled] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -95,23 +106,37 @@ export default function AgentsConfigTab() {
     }
   }, [vizData])
 
+  useEffect(() => {
+    if (toolsData?.agent_tools) {
+      setToolsEnabled(toolsData.agent_tools)
+    }
+  }, [toolsData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setAgentVerbosity(verbosity)
       await api.setAgentVisualization(visualization)
+      await api.setAgentTools(toolsEnabled)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agent-verbosity'] })
       qc.invalidateQueries({ queryKey: ['agent-visualization'] })
+      qc.invalidateQueries({ queryKey: ['agent-tools'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
-  const isLoading = vLoading || vizLoading
+  const isLoading = vLoading || vizLoading || toolsLoading || catalogLoading
+
+  // Compare local tools map against server value
+  const toolsDirty = Object.keys(toolsEnabled).some(
+    (k) => toolsEnabled[k] !== (toolsData?.agent_tools?.[k] ?? true),
+  )
   const isDirty =
     verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'info') ||
-    visualization !== (vizData?.agent_workflow_visualization ?? 'timeline')
+    visualization !== (vizData?.agent_workflow_visualization ?? 'timeline') ||
+    toolsDirty
 
   if (isLoading) {
     return (
@@ -246,6 +271,128 @@ export default function AgentsConfigTab() {
           </div>
         </div>
       )}
+
+      {/* ── Agent Tools & Document Parsers (issue-007) ────────────────────── */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-brand-400" />
+          <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            Agent Tools &amp; Document Parsers
+          </p>
+        </div>
+        <p className="text-xs text-gray-500">
+          Enable or disable individual tools that agents can call during a hunt pipeline run.
+          Disabled tools are hard-excluded — the LLM will not be offered them.
+          Changes take effect on the next generation run.
+        </p>
+
+        {catalogLoading || toolsLoading ? (
+          <div className="flex items-center gap-2 text-xs text-gray-500 py-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Loading tools…
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {(catalogData?.catalog ?? []).map((tool: ToolCatalogEntry) => {
+              const enabled = toolsEnabled[tool.name] ?? true
+              const isUnavailable = !tool.available
+              return (
+                <div
+                  key={tool.name}
+                  className={clsx(
+                    'rounded-lg border px-4 py-3 space-y-1.5 transition-colors',
+                    isUnavailable
+                      ? 'border-gray-800/40 bg-gray-900/20 opacity-60'
+                      : enabled
+                        ? 'border-gray-700 bg-gray-800/30'
+                        : 'border-gray-800/40 bg-gray-900/20',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={clsx(
+                          'text-sm font-medium',
+                          isUnavailable ? 'text-gray-600' : enabled ? 'text-gray-200' : 'text-gray-500',
+                        )}>
+                          {tool.label}
+                        </span>
+                        <span className={clsx(
+                          'text-[9px] font-mono px-1.5 py-0.5 rounded border',
+                          tool.category === 'document_parser'
+                            ? 'bg-amber-900/20 text-amber-400 border-amber-800/30'
+                            : 'bg-purple-900/20 text-purple-400 border-purple-800/30',
+                        )}>
+                          {tool.category === 'document_parser' ? 'parser' : 'agent tool'}
+                        </span>
+                        {isUnavailable && (
+                          <span className="text-[9px] text-gray-600 font-mono">
+                            not installed
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">
+                        {tool.description}
+                      </p>
+                      <p className="text-[10px] text-gray-600 mt-0.5 italic">
+                        {tool.used_by_description}
+                      </p>
+                    </div>
+                    {/* Toggle pill */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      disabled={isUnavailable}
+                      onClick={() =>
+                        setToolsEnabled((prev) => ({ ...prev, [tool.name]: !enabled }))
+                      }
+                      className={clsx(
+                        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200',
+                        isUnavailable
+                          ? 'cursor-not-allowed border-gray-700 bg-gray-800'
+                          : enabled
+                            ? 'border-green-500 bg-green-600'
+                            : 'border-gray-600 bg-gray-700',
+                      )}
+                    >
+                      <span
+                        className={clsx(
+                          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200',
+                          enabled ? 'translate-x-3.5' : 'translate-x-0.5',
+                          'mt-[1px]',
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Implication warning shown when tool is disabled */}
+                  {!enabled && !isUnavailable && (
+                    <div className="flex items-start gap-1.5 rounded border border-amber-800/30 bg-amber-900/10 px-2 py-1.5">
+                      <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-amber-300/80 leading-relaxed">
+                        {tool.implication_if_disabled}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Not-installed note for marker */}
+                  {isUnavailable && (
+                    <div className="flex items-start gap-1.5 rounded border border-gray-700/30 bg-gray-900/10 px-2 py-1.5">
+                      <AlertTriangle className="w-3 h-3 text-gray-600 shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-gray-600 leading-relaxed">
+                        {tool.name === 'marker'
+                          ? 'Install marker-pdf to enable this parser: pip install marker-pdf'
+                          : 'This tool is not available in the current environment.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Save button */}
       <div className="flex items-center gap-3">

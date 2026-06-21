@@ -40,6 +40,9 @@ from backend.threat_hunting.iocs import _defang, _noise_score, _normalize_ioc  #
 
 logger = logging.getLogger(__name__)
 
+# issue-007: normalized module-level constant (was an inline tuple)
+_TOOL_NAMES = ["validate_spl", "defang_ioc", "noise_score"]
+
 # ---------------------------------------------------------------------------
 # Noise-reason catalogue — human-readable explanations
 # ---------------------------------------------------------------------------
@@ -481,14 +484,11 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     decision = ""
     if spl_draft and not llm_parse_error:
         try:
+            from backend.config.loader import load_agent_tools
             from backend.threat_hunting.agents.llm_bridge import call_llm_with_tools
-            from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
+            from backend.threat_hunting.agents.tools import call_tool, get_enabled_tool_specs
 
-            _validate_tools = [
-                TOOL_SPEC_BY_NAME[n]
-                for n in ("validate_spl", "defang_ioc", "noise_score")
-                if n in TOOL_SPEC_BY_NAME
-            ]
+            _validate_tools = get_enabled_tool_specs(_TOOL_NAMES, load_agent_tools())
             if _validate_tools:
                 spl_validate_prompt = (
                     f"Validate the following SPL query for syntax issues:\n{spl_draft[:2000]}\n"

@@ -36,7 +36,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
     try:
         from backend.threat_hunting import db as th_db
         from backend.threat_hunting.agents.llm_bridge import call_llm_with_tools
-        from backend.threat_hunting.agents.tools import TOOL_SPEC_BY_NAME, call_tool
+        from backend.threat_hunting.agents.tools import call_tool, get_enabled_tool_specs
 
         pkg_id = state["hunt_package_id"]
 
@@ -72,7 +72,9 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             if i.get("item_type") in ("url", "page") and len(i.get("extracted_text") or "") < 500
         ]
         if url_items:
-            tool_specs = [TOOL_SPEC_BY_NAME[n] for n in _TOOL_NAMES if n in TOOL_SPEC_BY_NAME]
+            from backend.config.loader import load_agent_tools
+
+            tool_specs = get_enabled_tool_specs(_TOOL_NAMES, load_agent_tools())
             tool_prompt = (
                 f"The hunt package has {len(evidence_items)} evidence items with "
                 f"{len(all_iocs)} IOCs already extracted. "

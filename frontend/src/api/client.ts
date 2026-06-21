@@ -677,6 +677,15 @@ export const api = {
       body: JSON.stringify({ th_report_formats: value }),
     }),
 
+  // Agent tools + document parsers toggles (issue-007)
+  getAgentTools: () => request<{ agent_tools: Record<string, boolean> }>('/app/agent-tools'),
+  setAgentTools: (value: Record<string, boolean>) =>
+    request<{ agent_tools: Record<string, boolean> }>('/app/agent-tools', {
+      method: 'PUT',
+      body: JSON.stringify({ agent_tools: value }),
+    }),
+  getAgentToolsCatalog: () => request<{ catalog: ToolCatalogEntry[] }>('/app/agent-tools/catalog'),
+
   // Normalizer
   getNormalizerConfig: () => request<Record<string, unknown>>('/normalizer/config'),
   updateNormalizerConfig: (cfg: Record<string, unknown>) =>
@@ -1256,6 +1265,19 @@ export interface SmartRejectRequest {
 
 export type LLMProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai_compatible'
 
+/** Single entry from GET /api/app/agent-tools/catalog (issue-007). */
+export interface ToolCatalogEntry {
+  name: string
+  label: string
+  category: 'agent_tool' | 'document_parser'
+  description: string
+  used_by: string[]
+  used_by_description: string
+  implication_if_disabled: string
+  /** Runtime availability (always true for agent tools; reflects pip install for marker). */
+  available: boolean
+}
+
 export interface LLMProvider {
   name: string
   kind: LLMProviderKind
@@ -1548,11 +1570,21 @@ export type THuntPackageStatus =
   | 'completed'
   | 'archived'
 
-/** Phase summary entry (issue-006-D) — one per pipeline step. */
+/** Phase summary entry (issue-006-D, widened in issue-007). */
 export interface THPhaseEntry {
   step: string
   status: 'ok' | 'error' | 'partial' | 'skipped' | 'unknown'
   elapsed_s: number | null
+  /** Tools the model invoked during this step (issue-007). */
+  tools_used?: string[]
+  /** Model's brief rationale / decision text (issue-007). */
+  decision?: string
+  /** Count of items produced (hypotheses, leads, queries, etc.) (issue-007). */
+  item_count?: number
+  /** IOC count (deep_retrohunt_planner) (issue-007). */
+  ioc_count?: number
+  /** Noisy IOC count (deep_retrohunt_planner) (issue-007). */
+  noisy_count?: number
 }
 
 export interface THuntPackage {

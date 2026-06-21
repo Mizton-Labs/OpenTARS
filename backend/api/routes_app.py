@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from backend.auth.dependencies import require_admin_when_enabled
 from backend.config.loader import (
+    load_agent_tools,
     load_agent_verbosity,
     load_agent_visualization,
     load_app_base_prefix,
@@ -24,6 +25,7 @@ from backend.config.loader import (
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
+    save_agent_tools,
     save_agent_verbosity,
     save_agent_visualization,
     save_app_base_prefix,
@@ -325,6 +327,58 @@ async def set_th_report_formats(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"th_report_formats": value}
+
+
+# ── Agent tools + document parsers toggles (issue-007) ──────────────────────
+
+
+@router.get("/agent-tools")
+async def get_agent_tools() -> dict[str, Any]:
+    """Return the enabled/disabled toggle map for agent tools and document parsers."""
+    return {"agent_tools": load_agent_tools()}
+
+
+@router.put("/agent-tools")
+async def set_agent_tools(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the agent tools toggle map (admin-gated).
+
+    Body: {"agent_tools": {"extract_iocs": true, "refetch_url": false, ...}}
+    """
+    value = body.get("agent_tools")
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=("Body must contain 'agent_tools' as an object mapping tool names to booleans"),
+        )
+    try:
+        save_agent_tools(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"agent_tools": load_agent_tools()}
+
+
+@router.get("/agent-tools/catalog")
+async def get_agent_tools_catalog() -> dict[str, Any]:
+    """Return the full tool catalog with metadata and runtime availability.
+
+    Includes operator-facing labels, descriptions, per-tool agent assignments,
+    implications of disabling, and a live ``available`` flag (important for
+    ``marker`` which requires an optional ML package).
+    """
+    from backend.threat_hunting.agents.tools import TOOL_METADATA
+    from backend.threat_hunting.extractors.pdf_extractor import is_marker_available
+
+    catalog: list[dict[str, Any]] = []
+    for name, meta in TOOL_METADATA.items():
+        entry = dict(meta)
+        # Override 'available' for marker with the runtime check
+        if name == "marker":
+            entry["available"] = is_marker_available()
+        catalog.append({"name": name, **entry})
+    return {"catalog": catalog}
 
 
 # ── Branding logo endpoints (prompts-045) ────────────────────────────────────
