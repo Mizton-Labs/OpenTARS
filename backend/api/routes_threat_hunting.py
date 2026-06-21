@@ -650,3 +650,71 @@ async def get_result(pkg_id: str, result_id: str) -> dict:
 
     record["is_running"] = result_id in _ACTIVE_EXECUTIONS
     return record
+
+
+# ── Report endpoints (Phase 6) ────────────────────────────────────────────────
+
+
+class ReportGenerateBody(BaseModel):
+    provider_name: str | None = None
+    model_name: str | None = None
+
+
+@router.get("/packages/{pkg_id}/report")
+async def get_report(pkg_id: str) -> dict:
+    """Get the latest hunt report for a package.
+
+    Returns 404 if no report has been generated yet.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_hunt_report(pkg_id)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No report found. Run execution or generate a report manually.",
+        )
+    return report
+
+
+@router.post("/packages/{pkg_id}/report", status_code=201)
+async def generate_report(pkg_id: str, body: ReportGenerateBody, request: Request) -> dict:
+    """Manually trigger report generation for an approved or completed package.
+
+    Assembles all available pipeline and execution data, generates an LLM
+    executive summary (soft-fail), and writes the report to the database.
+    Idempotent — replaces any previous report.
+    """
+    pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    if pkg["status"] not in ("approved", "completed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Package must be approved or completed to generate a report (status: {pkg['status']!r})",
+        )
+
+    from backend.threat_hunting.agents.nodes.report_writer import write_report
+
+    # Extract caller identity for audit trail
+    created_by: str | None = None
+    try:
+        user = getattr(request.state, "user", None)
+        if user:
+            created_by = getattr(user, "username", None)
+    except Exception:
+        pass
+
+    try:
+        return await write_report(
+            pkg_id,
+            provider_name=body.provider_name,
+            model_name=body.model_name,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/report/list")
+async def list_reports(pkg_id: str) -> list[dict]:
+    """List all historical reports for a package (newest first)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_hunt_reports(pkg_id)

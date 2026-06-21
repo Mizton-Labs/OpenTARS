@@ -201,6 +201,23 @@ async def _run_execution(
         await th_db.update_hunt_package(hunt_package_id, status="completed")
         logger.info("Execution [%s]: completed", task_result_id[:8])
 
+        # 7. Auto-generate hunt report (soft-fail)
+        try:
+            from backend.threat_hunting.agents.nodes.report_writer import write_report
+
+            await write_report(
+                hunt_package_id,
+                provider_name=provider_name,
+                model_name=model_name,
+            )
+            logger.info("Execution [%s]: report generated", task_result_id[:8])
+        except Exception as report_exc:
+            logger.warning(
+                "Execution [%s]: report generation failed (non-fatal): %s",
+                task_result_id[:8],
+                report_exc,
+            )
+
     except Exception as exc:
         logger.exception("Execution [%s] error: %s", task_result_id[:8], exc)
         await th_db.update_task_result(

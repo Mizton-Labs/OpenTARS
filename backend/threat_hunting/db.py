@@ -718,3 +718,145 @@ async def list_task_results(hunt_package_id: str) -> list[dict[str, Any]]:
                 pass
         results.append(d)
     return results
+
+
+# ── Generation record (public read-only accessor) ─────────────────────────────
+
+
+async def get_generation_record_public(hunt_package_id: str) -> dict[str, Any] | None:
+    """Return the latest generation record for a hunt package.
+
+    JSON-decodes all structured fields.  Used by report_writer and the
+    report API to avoid importing the runner module.
+    """
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM hunting_packages WHERE hunt_package_id = ? ORDER BY created_at DESC LIMIT 1",
+            (hunt_package_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    d = dict(row)
+    for field in (
+        "hypotheses",
+        "hunting_leads",
+        "deep_retrohunt",
+        "ttp_analysis",
+        "query_drafts",
+        "generation_errors",
+    ):
+        raw = d.get(field)
+        if raw and isinstance(raw, str):
+            try:
+                d[field] = _json.loads(raw)
+            except Exception:
+                pass
+    if d.get("threat_context") and isinstance(d["threat_context"], str):
+        try:
+            d["threat_context"] = _json.loads(d["threat_context"])
+        except Exception:
+            pass
+    return d
+
+
+# ── Hunt Report CRUD ──────────────────────────────────────────────────────────
+#
+# The ``full_report`` column stores the complete structured report as JSON.
+# Schema:
+#   {
+#     "executive_summary": str,
+#     "hunt_name": str,
+#     "hunt_id": str,
+#     "generated_at": ISO datetime str,
+#     "generated_by": str | null,
+#     "package_status": str,
+#     "evidence_summary": {total_items, ioc_count, noisy_ioc_count},
+#     "threat_context": dict | null,
+#     "hypotheses": [...],
+#     "hunting_leads": [...],
+#     "deep_retrohunt_summary": {total_iocs, noisy_iocs, spl_macro_name} | null,
+#     "ttp_analysis": dict | null,
+#     "query_drafts_count": int,
+#     "execution_results": [...],
+#     "recommendations": [str, ...],
+#   }
+
+
+async def create_hunt_report(
+    hunt_package_id: str,
+    *,
+    executive_summary: str,
+    full_report: dict,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    import json as _json
+
+    report_id = _new_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO hunt_reports
+               (id, hunt_package_id, executive_summary, full_report, created_at, created_by)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                report_id,
+                hunt_package_id,
+                executive_summary,
+                _json.dumps(full_report, ensure_ascii=False, default=str),
+                now,
+                created_by,
+            ),
+        )
+        await db.commit()
+    return await get_hunt_report(hunt_package_id)  # type: ignore[return-value]
+
+
+async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
+    """Return the latest report for a hunt package (most recently created)."""
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM hunt_reports WHERE hunt_package_id = ? ORDER BY created_at DESC LIMIT 1",
+            (hunt_package_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    d = dict(row)
+    if d.get("full_report") and isinstance(d["full_report"], str):
+        try:
+            d["full_report"] = _json.loads(d["full_report"])
+        except Exception:
+            pass
+    return d
+
+
+async def list_hunt_reports(hunt_package_id: str) -> list[dict[str, Any]]:
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM hunt_reports WHERE hunt_package_id = ? ORDER BY created_at DESC",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get("full_report") and isinstance(d["full_report"], str):
+            try:
+                d["full_report"] = _json.loads(d["full_report"])
+            except Exception:
+                pass
+        results.append(d)
+    return results
