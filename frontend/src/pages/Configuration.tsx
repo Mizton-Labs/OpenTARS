@@ -21,6 +21,7 @@ import ThreatIntelCatalog from '../components/ThreatIntelCatalog'
 import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
 import LLMProvidersTab from './configuration/LLMProvidersTab'
+import SiemConnectorsTab from './configuration/SiemConnectorsTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
 import { getAppBasePrefix } from '../utils/basePrefix'
@@ -42,12 +43,14 @@ type Tab =
   | 'llm-providers'
   | 'user-management'
   | 'general-ti'
+  | 'siem-connectors'
 
 // General group: infrastructure / platform settings
 const GENERAL_TABS: { id: Tab; label: string }[] = [
-  { id: 'application',   label: 'Application' },
-  { id: 'global-fields', label: 'Global Field Defaults' },
-  { id: 'llm-providers', label: 'LLM Providers' },
+  { id: 'application',     label: 'Application' },
+  { id: 'global-fields',   label: 'Global Field Defaults' },
+  { id: 'llm-providers',   label: 'LLM Providers' },
+  { id: 'siem-connectors', label: 'SIEM Connectors' },
 ]
 
 // Threat Intel group: ingestion sources and TI-scoped settings
@@ -161,9 +164,10 @@ export default function Configuration() {
         {activeTab === 'remote-feed'   && <RemoteFeedTab />}
         {activeTab === 'threat-intel'    && <ThreatIntelCatalog />}
         {activeTab === 'global-fields'   && <GlobalFieldsTab />}
-        {activeTab === 'llm-providers'   && <div className="max-w-3xl"><LLMProvidersTab /></div>}
-        {activeTab === 'user-management' && <UserManagementTab />}
-        {activeTab === 'general-ti'      && <GeneralTISettingsTab />}
+        {activeTab === 'llm-providers'    && <div className="max-w-3xl"><LLMProvidersTab /></div>}
+        {activeTab === 'user-management'  && <UserManagementTab />}
+        {activeTab === 'general-ti'       && <GeneralTISettingsTab />}
+        {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}
       </div>
     </div>
   )

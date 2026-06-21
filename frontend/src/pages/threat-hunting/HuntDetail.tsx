@@ -6,8 +6,9 @@ import { api, type THEvidenceItem, type THExtractedIOC } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
+import ExecutionPanel from './ExecutionPanel'
 
-type DetailTab = 'evidence' | 'iocs' | 'analysis'
+type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution'
 
 export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: () => void }) {
   const { isResearcher } = useAuth()
@@ -89,6 +90,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           >
             Analysis
           </button>
+          {/* Execution tab — shown when package is approved or completed */}
+          {(pkg?.status === 'approved' || pkg?.status === 'completed') && (
+            <button
+              onClick={() => setActiveTab('execution')}
+              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'execution' ? 'tab-active' : 'tab-inactive')}
+            >
+              Execution
+            </button>
+          )}
         </nav>
       </div>
 
@@ -159,6 +169,14 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
       {/* Analysis tab */}
       {activeTab === 'analysis' && <AnalysisTab pkgId={pkgId} />}
+
+      {/* Execution tab */}
+      {activeTab === 'execution' && (
+        <ExecutionPanel
+          pkgId={pkgId}
+          retrohunt={undefined}
+        />
+      )}
 
       {/* Add item modal */}
       {showAddItem && (

@@ -1,5 +1,5 @@
 """
-Threat Hunting API routes (issue-local-002, Phase 1 + 2 + 3).
+Threat Hunting API routes (issue-local-002, Phase 1–5).
 
 All routes require authentication when auth is enabled. Admin and
 threat-researcher roles have write access; threat-viewer has read-only access
@@ -19,6 +19,19 @@ Generation endpoints (Phase 3):
   GET  /packages/{id}/generate/status    — poll generation status + draft
   POST /packages/{id}/approve            — approve generated package
   POST /packages/{id}/reject             — reject generated package
+
+SIEM connector endpoints (Phase 5):
+  GET    /connectors                     — list SIEM connectors
+  POST   /connectors                     — create connector
+  GET    /connectors/{id}                — get connector
+  PUT    /connectors/{id}                — update connector
+  DELETE /connectors/{id}                — delete connector
+  POST   /connectors/{id}/test           — test connection
+
+Execution endpoints (Phase 5):
+  POST /packages/{id}/execute            — start SIEM execution
+  GET  /packages/{id}/results            — list task results
+  GET  /packages/{id}/results/{rid}      — get single task result
 """
 
 from __future__ import annotations
@@ -443,3 +456,197 @@ async def reject_generation(pkg_id: str, body: RejectBody) -> dict:
         return await _reject(pkg_id, notes=body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ── SIEM Connector endpoints (Phase 5) ────────────────────────────────────────
+
+
+class ConnectorCreateBody(BaseModel):
+    name: str
+    kind: str = "splunk"
+    base_url: str
+    auth_method: str = "token"
+    api_token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    verify_tls: bool = True
+    default_index: str = "main"
+    retrohunt_macro: str = "threathunt_ioc_search"
+
+
+class ConnectorUpdateBody(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    auth_method: str | None = None
+    api_token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    verify_tls: bool | None = None
+    default_index: str | None = None
+    retrohunt_macro: str | None = None
+
+
+@router.get("/connectors")
+async def list_connectors() -> list[dict]:
+    """List all SIEM connectors. Credentials are masked."""
+    return await th_db.list_siem_connectors()
+
+
+@router.post("/connectors", status_code=201)
+async def create_connector(body: ConnectorCreateBody) -> dict:
+    """Create a new SIEM connector profile."""
+    try:
+        return await th_db.create_siem_connector(
+            body.name,
+            kind=body.kind,
+            base_url=body.base_url,
+            auth_method=body.auth_method,
+            api_token=body.api_token,
+            username=body.username,
+            password=body.password,
+            verify_tls=body.verify_tls,
+            default_index=body.default_index,
+            retrohunt_macro=body.retrohunt_macro,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/connectors/{conn_id}")
+async def get_connector(conn_id: str) -> dict:
+    """Get a SIEM connector by ID (credentials masked)."""
+    conn = await th_db.get_siem_connector(conn_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    return conn
+
+
+@router.put("/connectors/{conn_id}")
+async def update_connector(conn_id: str, body: ConnectorUpdateBody) -> dict:
+    """Update a SIEM connector. Only supplied fields are changed."""
+    result = await th_db.update_siem_connector(
+        conn_id,
+        name=body.name,
+        base_url=body.base_url,
+        auth_method=body.auth_method,
+        api_token=body.api_token,
+        username=body.username,
+        password=body.password,
+        verify_tls=body.verify_tls,
+        default_index=body.default_index,
+        retrohunt_macro=body.retrohunt_macro,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    return result
+
+
+@router.delete("/connectors/{conn_id}", status_code=204)
+async def delete_connector(conn_id: str) -> None:
+    """Delete a SIEM connector."""
+    deleted = await th_db.delete_siem_connector(conn_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+
+@router.post("/connectors/{conn_id}/test")
+async def test_connector(conn_id: str) -> dict:
+    """Test a SIEM connector connection.
+
+    Returns {ok: bool, message: str, server_info: dict|null}.
+    Does NOT require the connector to be verified first.
+    """
+    conn_raw = await th_db.get_connector_for_use(conn_id)
+    if not conn_raw:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    from backend.threat_hunting.siem.splunk import SplunkConnector
+
+    kind = conn_raw.get("kind", "splunk")
+    if kind != "splunk":
+        raise HTTPException(
+            status_code=400, detail=f"Connector kind {kind!r} not supported in Phase 5"
+        )
+
+    cfg = conn_raw.get("_cfg", {})
+    connector = SplunkConnector(
+        base_url=conn_raw["base_url"],
+        auth_method=conn_raw.get("auth_method", "token"),
+        api_token=cfg.get("api_token"),
+        username=cfg.get("username"),
+        password=cfg.get("password"),
+        verify_tls=bool(cfg.get("verify_tls", True)),
+    )
+    result = await connector.test_connection()
+
+    # Mark as verified if test passed
+    if result.ok:
+        await th_db.update_siem_connector(conn_id, verified=True)
+
+    return {
+        "ok": result.ok,
+        "message": result.message,
+        "server_info": result.server_info,
+    }
+
+
+# ── Execution endpoints (Phase 5) ─────────────────────────────────────────────
+
+
+class ExecuteBody(BaseModel):
+    connector_id: str
+    spl: str  # the SPL query to execute (from deep_retrohunt.spl_draft or custom)
+    earliest: str = "-24h"
+    latest: str = "now"
+    provider_name: str | None = None
+    model_name: str | None = None
+
+
+@router.post("/packages/{pkg_id}/execute", status_code=202)
+async def execute_hunt(pkg_id: str, body: ExecuteBody) -> dict:
+    """Start SIEM execution for an approved hunt package.
+
+    The hunt package must be in 'approved' status. Returns a TaskResult
+    record immediately; execution runs in the background.
+    """
+    pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    if pkg["status"] not in ("approved", "completed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Hunt package must be approved before execution (current status: {pkg['status']!r})",
+        )
+
+    from backend.threat_hunting.siem.executor import start_execution
+
+    try:
+        return await start_execution(
+            pkg_id,
+            body.connector_id,
+            spl=body.spl,
+            earliest=body.earliest,
+            latest=body.latest,
+            provider_name=body.provider_name,
+            model_name=body.model_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/results")
+async def list_results(pkg_id: str) -> list[dict]:
+    """List all task results for a hunt package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_task_results(pkg_id)
+
+
+@router.get("/packages/{pkg_id}/results/{result_id}")
+async def get_result(pkg_id: str, result_id: str) -> dict:
+    """Get a single task result."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    record = await th_db.get_task_result(result_id)
+    if not record or record.get("hunt_package_id") != pkg_id:
+        raise HTTPException(status_code=404, detail="Task result not found")
+    from backend.threat_hunting.siem.executor import _ACTIVE_EXECUTIONS
+
+    record["is_running"] = result_id in _ACTIVE_EXECUTIONS
+    return record
