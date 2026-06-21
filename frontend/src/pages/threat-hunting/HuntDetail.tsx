@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary } from '../../api/client'
+import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
@@ -11,12 +11,19 @@ import ReportPanel from './ReportPanel'
 
 type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report'
 
+const EFFORT_OPTIONS = ['low', 'medium', 'high'] as const
+
 export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: () => void }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
   const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
+
+  // issue-006-G: re-run dialog state
+  const [showRerunDialog, setShowRerunDialog] = useState(false)
+  const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
+  const [rerunEffort, setRerunEffort] = useState<string>('medium')
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -41,6 +48,30 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     refetchInterval: 5000, // keep run list fresh
   })
 
+  // issue-006-G: LLM providers for re-run dialog model selector
+  const { data: rerunProviders = [] } = useQuery({
+    queryKey: ['llm-providers'],
+    queryFn: () => api.llm.listProviders(),
+    staleTime: 60_000,
+    enabled: showRerunDialog,
+  })
+
+  const rerunModelOptions = useMemo(() => {
+    const opts: { provider: string; model: string }[] = []
+    const seen = new Set<string>()
+    for (const p of rerunProviders as LLMProviderSummary[]) {
+      for (const m of p.available_models ?? []) {
+        const key = `${p.name}\x00${m}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        opts.push({ provider: p.name, model: m })
+      }
+    }
+    return opts
+  }, [rerunProviders])
+
+  const rerunChosenModel = rerunModelChoice !== '' ? (rerunModelOptions[Number(rerunModelChoice)] ?? null) : null
+
   // Auto-select the latest run when runs load/change
   useEffect(() => {
     if (runs.length > 0 && !activeRunId) {
@@ -57,15 +88,20 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     },
   })
 
-  // Re-run: start a new generation; switches to the new run automatically
+  // issue-006-G: Re-run with model+effort from dialog
   const rerunMut = useMutation({
-    mutationFn: () => api.threatHunting.startGeneration(pkgId),
+    mutationFn: () => api.threatHunting.startGeneration(pkgId, {
+      research_effort: rerunEffort || 'medium',
+      provider_name: rerunChosenModel?.provider ?? undefined,
+      model_name: rerunChosenModel?.model ?? undefined,
+    }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       const newRunId = data.run_id ?? data.id
       if (newRunId) setActiveRunId(newRunId)
       setActiveTab('analysis')
+      setShowRerunDialog(false)
     },
   })
 
@@ -97,17 +133,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
         <div className="flex items-center gap-2">
-          {/* Re-run button — visible when package is finished and no run is active */}
+          {/* Re-run button — visible when package is finished and no run is active (issue-006-G: opens dialog) */}
           {isResearcher && isFinished && !latestRunActive && (
             <button
               className="btn-secondary flex items-center gap-2 text-sm"
               disabled={rerunMut.isPending}
-              onClick={() => rerunMut.mutate()}
-              title="Re-run this hunt package — creates a new independent set of results"
+              onClick={() => setShowRerunDialog(true)}
+              title="Re-run this hunt package — choose model and effort level"
             >
-              {rerunMut.isPending
-                ? <><span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" /></>
-                : <RefreshCw className="w-4 h-4" />}
+              <RefreshCw className="w-4 h-4" />
               Re-run
             </button>
           )}
@@ -301,6 +335,90 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             setShowAddItem(false)
           }}
         />
+      )}
+
+      {/* issue-006-G: Re-run dialog — model + effort selector */}
+      {showRerunDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-xl w-full max-w-sm mx-4 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-100">Re-run Hunt Package</h3>
+              <button
+                className="btn-ghost p-1.5 text-gray-500 hover:text-gray-300"
+                onClick={() => setShowRerunDialog(false)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Model selector */}
+            <div className="space-y-1.5">
+              <label className="block text-xs text-gray-400">Model</label>
+              <div className="relative">
+                <select
+                  className="input w-full text-xs pr-7 appearance-none"
+                  value={rerunModelChoice}
+                  onChange={(e) => setRerunModelChoice(e.target.value)}
+                >
+                  <option value="">Configured default</option>
+                  {rerunModelOptions.map((opt, i) => (
+                    <option key={`${opt.provider}:${opt.model}`} value={String(i)}>
+                      {opt.provider} · {opt.model}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Effort pills */}
+            <div className="space-y-1.5">
+              <label className="block text-xs text-gray-400">Research Effort</label>
+              <div className="flex gap-2">
+                {EFFORT_OPTIONS.map((e) => (
+                  <button
+                    key={e}
+                    className={clsx(
+                      'flex-1 py-1.5 text-xs rounded border transition-colors',
+                      rerunEffort === e
+                        ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
+                        : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
+                    )}
+                    onClick={() => setRerunEffort(e)}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Selected summary */}
+            <p className="text-[10px] text-gray-600">
+              {rerunChosenModel
+                ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
+                : 'Default model'}{' '}
+              · effort: {rerunEffort}
+            </p>
+
+            {/* Actions */}
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                className="btn-ghost text-xs"
+                onClick={() => setShowRerunDialog(false)}
+                disabled={rerunMut.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-xs"
+                disabled={rerunMut.isPending}
+                onClick={() => rerunMut.mutate()}
+              >
+                {rerunMut.isPending ? 'Starting…' : 'Start Re-run'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
