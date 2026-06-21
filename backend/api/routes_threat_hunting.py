@@ -1,5 +1,5 @@
 """
-Threat Hunting API routes (issue-local-002, Phase 1 + 2).
+Threat Hunting API routes (issue-local-002, Phase 1 + 2 + 3).
 
 All routes require authentication when auth is enabled. Admin and
 threat-researcher roles have write access; threat-viewer has read-only access
@@ -13,6 +13,12 @@ Evidence endpoints:
   GET  /packages/{id}/evidence           — list evidence items
   DELETE /packages/{id}/evidence/{eid}   — remove an evidence item
   GET  /packages/{id}/iocs               — list all extracted IOCs
+
+Generation endpoints (Phase 3):
+  POST /packages/{id}/generate           — start LLM pipeline
+  GET  /packages/{id}/generate/status    — poll generation status + draft
+  POST /packages/{id}/approve            — approve generated package
+  POST /packages/{id}/reject             — reject generated package
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import json
 import logging
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 
 from backend.threat_hunting import db as th_db
 from backend.threat_hunting.extractors.dispatcher import extract_file
@@ -344,3 +351,95 @@ async def list_iocs(pkg_id: str) -> list[dict]:
     """List all IOCs extracted across all evidence items for a hunt package."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
     return await th_db.list_extracted_iocs(pkg_id)
+
+
+# ── Generation (Phase 3) ──────────────────────────────────────────────────────
+
+
+class GenerateBody(BaseModel):
+    provider_name: str | None = None
+    model_name: str | None = None
+
+
+class ApproveBody(BaseModel):
+    notes: str = ""
+
+
+class RejectBody(BaseModel):
+    notes: str = ""
+
+
+@router.post("/packages/{pkg_id}/generate", status_code=202)
+async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
+    """Start the LLM agent pipeline for a hunt package.
+
+    Returns immediately with status=running. Poll /generate/status for progress.
+    Requires at least one evidence item.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    # Require evidence
+    evidence = await th_db.list_evidence_items(pkg_id)
+    if not evidence:
+        raise HTTPException(
+            status_code=400,
+            detail="Hunt package has no evidence items. Add at least one before generating.",
+        )
+
+    from backend.threat_hunting.agents.runner import start_generation as _start
+
+    record = await _start(
+        pkg_id,
+        provider_name=body.provider_name,
+        model_name=body.model_name,
+    )
+    return record
+
+
+@router.get("/packages/{pkg_id}/generate/status")
+async def get_generation_status(pkg_id: str) -> dict:
+    """Poll the generation status and retrieve the draft hunting package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import get_generation_status as _status
+
+    record = await _status(pkg_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No generation record found. Start generation first.",
+        )
+    return record
+
+
+@router.post("/packages/{pkg_id}/approve")
+async def approve_generation(pkg_id: str, body: ApproveBody) -> dict:
+    """Approve the generated hunting package.
+
+    Resumes the LangGraph pipeline through the approval gate and
+    marks the hunt package status as 'approved'.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import approve_generation as _approve
+
+    try:
+        return await _approve(pkg_id, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/packages/{pkg_id}/reject")
+async def reject_generation(pkg_id: str, body: RejectBody) -> dict:
+    """Reject the generated hunting package.
+
+    Marks the generation as rejected and resets the hunt package to draft.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import reject_generation as _reject
+
+    try:
+        return await _reject(pkg_id, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

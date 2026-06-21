@@ -5,12 +5,15 @@ import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type THExtractedIOC } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
+import AnalysisTab from './AnalysisTab'
+
+type DetailTab = 'evidence' | 'iocs' | 'analysis'
 
 export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: () => void }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
   const [showAddItem, setShowAddItem] = useState(false)
-  const [activeTab, setActiveTab] = useState<'evidence' | 'iocs'>('evidence')
+  const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -68,15 +71,24 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
       {/* Tabs */}
       <div className="border-b border-gray-800">
         <nav className="flex gap-6">
-          {(['evidence', 'iocs'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={clsx('pb-3 text-sm font-medium transition-colors capitalize', activeTab === tab ? 'tab-active' : 'tab-inactive')}
-            >
-              {tab === 'evidence' ? `Evidence (${evidence.length})` : `IOCs (${(iocs as THExtractedIOC[]).length})`}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveTab('evidence')}
+            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'evidence' ? 'tab-active' : 'tab-inactive')}
+          >
+            Evidence ({evidence.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('iocs')}
+            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'iocs' ? 'tab-active' : 'tab-inactive')}
+          >
+            IOCs ({(iocs as THExtractedIOC[]).length})
+          </button>
+          <button
+            onClick={() => setActiveTab('analysis')}
+            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'analysis' ? 'tab-active' : 'tab-inactive')}
+          >
+            Analysis
+          </button>
         </nav>
       </div>
 
@@ -144,6 +156,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           )}
         </div>
       )}
+
+      {/* Analysis tab */}
+      {activeTab === 'analysis' && <AnalysisTab pkgId={pkgId} />}
 
       {/* Add item modal */}
       {showAddItem && (

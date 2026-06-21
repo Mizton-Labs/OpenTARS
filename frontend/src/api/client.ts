@@ -959,6 +959,27 @@ export const api = {
       request<THExtractedIOC[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs`,
       ),
+
+    // Generation (Phase 3)
+    startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string } = {}) =>
+      request<THGenerationRecord>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/generate`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    getGenerationStatus: (pkgId: string) =>
+      request<THGenerationRecord>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/generate/status`,
+      ),
+    approveGeneration: (pkgId: string, notes = '') =>
+      request<{ generation_status: string }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/approve`,
+        { method: 'POST', body: JSON.stringify({ notes }) },
+      ),
+    rejectGeneration: (pkgId: string, notes = '') =>
+      request<{ generation_status: string }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/reject`,
+        { method: 'POST', body: JSON.stringify({ notes }) },
+      ),
   },
 }
 
@@ -1451,4 +1472,80 @@ export interface THExtractedIOC {
   noise_score: number
   flagged_noisy: boolean
   created_at: string
+}
+
+export interface THGenerationRecord {
+  id?: string
+  hunt_package_id: string
+  generation_status:
+    | 'running'
+    | 'awaiting_approval'
+    | 'approved'
+    | 'rejected'
+    | 'completed'
+    | 'error'
+  is_running?: boolean
+  provider_name?: string | null
+  model_name?: string | null
+  /** Agent pipeline step currently executing (Phase 3 progress tracking). */
+  current_step?: string | null
+  /** Agent pipeline steps already completed (Phase 3 progress tracking). */
+  completed_steps?: string[] | null
+  threat_context?: Record<string, unknown> | null
+  hypotheses?: THHypothesis[] | null
+  hunting_leads?: THHuntingLead[] | null
+  ttp_analysis?: THBehavioralTTPAnalysis | null
+  query_drafts?: THQueryDraft[] | null
+  generation_errors?: string[] | null
+  created_at?: string
+}
+
+export interface THHypothesis {
+  id: string
+  title: string
+  description: string
+  justification: string
+  relevance: 'high' | 'medium' | 'low'
+  ioc_basis: string[]
+}
+
+export interface THHuntTask {
+  id: string
+  title: string
+  description: string
+  datasource: string
+  query_hint: string
+}
+
+export interface THHuntingLead {
+  id: string
+  hypothesis_id: string
+  title: string
+  description: string
+  priority: 'high' | 'medium' | 'low'
+  tasks: THHuntTask[]
+}
+
+export interface THTTPTechnique {
+  technique_id: string
+  technique_name: string
+  tactic: string
+  description: string
+  evidence_basis: string
+}
+
+export interface THBehavioralTTPAnalysis {
+  summary: string
+  techniques: THTTPTechnique[]
+  detection_opportunities: string[]
+}
+
+export interface THQueryDraft {
+  id: string
+  language: 'spl' | 'kql' | 'eql' | 'cql' | 'es_dsl'
+  title: string
+  description: string
+  query: string
+  data_sources: string[]
+  lead_id: string | null
 }
