@@ -18,6 +18,7 @@ import '@xyflow/react/dist/style.css'
 import { type THGenerationRecord } from '../../api/client'
 
 const PIPELINE_STEPS = [
+  // ── LangGraph pipeline ──────────────────────────────────────────────────────
   { id: 'intake_classifier',      label: 'Intake Classifier',      x: 250, y: 0   },
   { id: 'threat_context_builder', label: 'Threat Context Builder',  x: 50,  y: 120 },
   { id: 'deep_retrohunt_planner', label: 'Deep Retrohunt Planner',  x: 450, y: 120 },
@@ -25,9 +26,23 @@ const PIPELINE_STEPS = [
   { id: 'hunting_lead_planner',   label: 'Hunting Lead Planner',    x: 250, y: 360 },
   { id: 'ttp_analyst',            label: 'TTP Analyst',             x: 250, y: 480 },
   { id: 'query_drafting_agent',   label: 'Query Drafting Agent',    x: 250, y: 600 },
+  // ── Approval gate ───────────────────────────────────────────────────────────
+  { id: 'approval_gate',          label: '⚑ Approval Gate',         x: 250, y: 720 },
+  // ── SIEM execution (issue-local-009) ────────────────────────────────────────
+  { id: 'siem_connect',           label: 'SIEM Connect',            x: 250, y: 840  },
+  { id: 'siem_submit',            label: 'SIEM Submit',             x: 250, y: 960  },
+  { id: 'siem_poll',              label: 'SIEM Poll',               x: 250, y: 1080 },
+  { id: 'siem_fetch',             label: 'SIEM Fetch',              x: 250, y: 1200 },
+  { id: 'siem_interpret',         label: 'SIEM Interpret',          x: 250, y: 1320 },
+  // ── Report generation (issue-local-009) ─────────────────────────────────────
+  { id: 'report_assemble',        label: 'Assemble Report',         x: 250, y: 1440 },
+  { id: 'report_exec_summary',    label: 'Exec Summary',            x: 250, y: 1560 },
+  { id: 'report_findings',        label: 'Findings',                x: 250, y: 1680 },
+  { id: 'report_render',          label: 'Render Report',           x: 250, y: 1800 },
 ]
 
 const PIPELINE_EDGES_DEF = [
+  // Pipeline
   { source: 'intake_classifier',      target: 'threat_context_builder' },
   { source: 'intake_classifier',      target: 'deep_retrohunt_planner' },
   { source: 'threat_context_builder', target: 'hypothesis_generator' },
@@ -35,15 +50,29 @@ const PIPELINE_EDGES_DEF = [
   { source: 'hypothesis_generator',   target: 'hunting_lead_planner' },
   { source: 'hunting_lead_planner',   target: 'ttp_analyst' },
   { source: 'ttp_analyst',            target: 'query_drafting_agent' },
+  { source: 'query_drafting_agent',   target: 'approval_gate' },
+  // Execution
+  { source: 'approval_gate',          target: 'siem_connect' },
+  { source: 'siem_connect',           target: 'siem_submit' },
+  { source: 'siem_submit',            target: 'siem_poll' },
+  { source: 'siem_poll',              target: 'siem_fetch' },
+  { source: 'siem_fetch',             target: 'siem_interpret' },
+  // Report
+  { source: 'siem_interpret',         target: 'report_assemble' },
+  { source: 'report_assemble',        target: 'report_exec_summary' },
+  { source: 'report_exec_summary',    target: 'report_findings' },
+  { source: 'report_findings',        target: 'report_render' },
 ]
 
 function nodeColor(id: string, completed: Set<string>, active: string): string {
-  if (completed.has(id)) return '#14532d' // green
-  if (active === id) return '#1e3a5f'     // blue
-  return '#1f2937'                         // gray
+  if (id === 'approval_gate') return '#78350f'  // amber — always distinct
+  if (completed.has(id)) return '#14532d'        // green
+  if (active === id) return '#1e3a5f'            // blue
+  return '#1f2937'                               // gray
 }
 
 function nodeBorderColor(id: string, completed: Set<string>, active: string): string {
+  if (id === 'approval_gate') return '#f59e0b'
   if (completed.has(id)) return '#22c55e'
   if (active === id) return '#3b82f6'
   return '#374151'
@@ -126,7 +155,7 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
     return [...sourceEdges, ...pipelineEdges]
   }, [active, intakeSources])
 
-  const graphHeight = intakeSources.length > 0 ? 800 : 680
+  const graphHeight = intakeSources.length > 0 ? 1000 : 900
 
   return (
     <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: graphHeight }}>

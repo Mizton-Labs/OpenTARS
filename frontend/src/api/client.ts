@@ -1570,10 +1570,11 @@ export type THuntPackageStatus =
   | 'completed'
   | 'archived'
 
-/** Phase summary entry (issue-006-D, widened in issue-007). */
+/** Phase summary entry (issue-006-D, widened in issue-007, issue-local-009). */
 export interface THPhaseEntry {
   step: string
-  status: 'ok' | 'error' | 'partial' | 'skipped' | 'unknown'
+  /** issue-local-009: 'running' added for in-progress execution/report steps */
+  status: 'ok' | 'error' | 'partial' | 'skipped' | 'unknown' | 'running'
   elapsed_s: number | null
   /** Tools the model invoked during this step (issue-007). */
   tools_used?: string[]
@@ -1648,7 +1649,8 @@ export interface THIntakeSource {
 
 export interface THStepLog {
   step: string
-  status: 'ok' | 'error' | 'partial' | 'skipped'
+  /** issue-local-009: 'running' added for in-progress execution/report steps */
+  status: 'ok' | 'error' | 'partial' | 'skipped' | 'running'
   elapsed_s: number
   item_count?: number
   ioc_count?: number
@@ -1686,6 +1688,10 @@ export interface THGenerationRecord {
     | 'awaiting_approval'
     | 'approved'
     | 'rejected'
+    /** issue-local-009: SIEM execution phase */
+    | 'executing'
+    /** issue-local-009: report generation phase */
+    | 'reporting'
     | 'completed'
     | 'error'
   is_running?: boolean
