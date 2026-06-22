@@ -100,6 +100,7 @@ async def _interpret_results(
                 "If the results appear to be benign or the result set is empty, "
                 "say so clearly. Do not invent details not present in the data."
             ),
+            json_output=False,
         )
         return await call_llm(
             user,
@@ -116,6 +117,31 @@ async def _interpret_results(
 # ── Core execution ────────────────────────────────────────────────────────────
 
 
+async def _step_log(
+    run_id: str | None,
+    step: str,
+    status: str,
+    *,
+    elapsed_s: float | None = None,
+    decision: str = "",
+    item_count: int | None = None,
+) -> None:
+    """Write a single fine-grained step entry to the run's step_logs (soft-fail)."""
+    if not run_id:
+        return
+    try:
+        entry: dict[str, Any] = {"step": step, "status": status}
+        if elapsed_s is not None:
+            entry["elapsed_s"] = round(elapsed_s, 2)
+        if decision:
+            entry["decision"] = decision
+        if item_count is not None:
+            entry["item_count"] = item_count
+        await th_db.append_run_step_log(run_id, entry)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_step_log soft-fail for run %s step %s: %s", run_id, step, exc)
+
+
 async def _run_execution(
     task_result_id: str,
     hunt_package_id: str,
@@ -126,19 +152,76 @@ async def _run_execution(
     *,
     provider_name: str | None = None,
     model_name: str | None = None,
+    run_id: str | None = None,
 ) -> None:
-    """Background task: run the SIEM search and record results."""
-    try:
-        connector = _build_connector(connector_raw)
+    """Background task: run the SIEM search and record results.
 
-        # 1. Submit search
+    issue-local-009: writes fine-grained step_logs so the UI can show live
+    execution progress via the phase-cards rail.  All step writes are soft-fail.
+    """
+    import time as _time
+
+    _t0 = _time.monotonic()
+
+    def _elapsed() -> float:
+        return round(_time.monotonic() - _t0, 2)
+
+    try:
+        # Set generation_status = executing on the run row (soft-fail)
+        if run_id:
+            try:
+                await th_db.set_run_generation_status(run_id, "executing")
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ── Step: siem_connect ────────────────────────────────────────────────
+        connector_name = connector_raw.get("name", connector_raw.get("kind", "siem"))
+        await _step_log(
+            run_id,
+            "siem_connect",
+            "running",
+            decision=f"Connecting to {connector_name}",
+        )
+        t_step = _time.monotonic()
+        connector = _build_connector(connector_raw)
+        await _step_log(
+            run_id,
+            "siem_connect",
+            "ok",
+            elapsed_s=_time.monotonic() - t_step,
+            decision=f"Connected to {connector_name}",
+        )
+
+        # ── Step: siem_submit ─────────────────────────────────────────────────
+        await _step_log(
+            run_id,
+            "siem_submit",
+            "running",
+            decision=f"Submitting SPL search (earliest={earliest}, latest={latest})",
+        )
+        t_step = _time.monotonic()
         sid = await connector.submit_search(
             spl, earliest=earliest, latest=latest, hunt_id=hunt_package_id[:8]
         )
         logger.info("Execution [%s]: sid=%s submitted", task_result_id[:8], sid)
         await th_db.update_task_result(task_result_id, status="running")
+        await _step_log(
+            run_id,
+            "siem_submit",
+            "ok",
+            elapsed_s=_time.monotonic() - t_step,
+            decision=f"Search submitted (sid={sid[:12] if sid else '?'})",
+        )
 
-        # 2. Poll until done
+        # ── Step: siem_poll ───────────────────────────────────────────────────
+        await _step_log(
+            run_id,
+            "siem_poll",
+            "running",
+            decision="Waiting for search job to complete…",
+        )
+        t_step = _time.monotonic()
+        _last_progress = -1.0
         for _ in range(_MAX_POLL_ROUNDS):
             await asyncio.sleep(_POLL_INTERVAL_S)
             job = await connector.poll_job(sid)
@@ -150,8 +233,28 @@ async def _run_execution(
                 job.progress * 100,
                 job.event_count,
             )
+            # Update poll step on meaningful progress change (≥5% or done)
+            if abs(job.progress - _last_progress) >= 0.05 or job.done:
+                _last_progress = job.progress
+                await _step_log(
+                    run_id,
+                    "siem_poll",
+                    "ok" if job.done else "running",
+                    elapsed_s=_time.monotonic() - t_step,
+                    decision=(
+                        f"Progress {job.progress * 100:.0f}% — {job.event_count} events so far"
+                    ),
+                    item_count=job.event_count,
+                )
             if job.done:
                 if job.failed:
+                    await _step_log(
+                        run_id,
+                        "siem_poll",
+                        "error",
+                        elapsed_s=_time.monotonic() - t_step,
+                        decision=f"Search job failed: {job.message}",
+                    )
                     await th_db.update_task_result(
                         task_result_id,
                         status="failed",
@@ -161,6 +264,13 @@ async def _run_execution(
                     return
                 break
         else:
+            await _step_log(
+                run_id,
+                "siem_poll",
+                "error",
+                elapsed_s=_time.monotonic() - t_step,
+                decision="Search timed out after 6 minutes",
+            )
             await th_db.update_task_result(
                 task_result_id,
                 status="failed",
@@ -169,7 +279,14 @@ async def _run_execution(
             )
             return
 
-        # 3. Fetch results
+        # ── Step: siem_fetch ──────────────────────────────────────────────────
+        await _step_log(
+            run_id,
+            "siem_fetch",
+            "running",
+            decision=f"Fetching up to {_MAX_RESULTS} result rows…",
+        )
+        t_step = _time.monotonic()
         raw_results = await connector.fetch_results(sid, offset=0, count=_MAX_RESULTS)
         logger.info(
             "Execution [%s]: %d results fetched for sid=%s",
@@ -177,14 +294,39 @@ async def _run_execution(
             len(raw_results),
             sid,
         )
+        await _step_log(
+            run_id,
+            "siem_fetch",
+            "ok",
+            elapsed_s=_time.monotonic() - t_step,
+            decision=f"Fetched {len(raw_results)} event(s) from SIEM",
+            item_count=len(raw_results),
+        )
 
-        # 4. Interpret with LLM
+        # ── Step: siem_interpret ──────────────────────────────────────────────
+        await _step_log(
+            run_id,
+            "siem_interpret",
+            "running",
+            decision="LLM interpreting SIEM results…",
+        )
+        t_step = _time.monotonic()
         findings = await _interpret_results(
             raw_results,
             hunt_package_id,
             spl,
             provider_name=provider_name,
             model_name=model_name,
+        )
+        await _step_log(
+            run_id,
+            "siem_interpret",
+            "ok",
+            elapsed_s=_time.monotonic() - t_step,
+            decision=(
+                f"Interpreted {len(raw_results)} event(s): "
+                + (findings[:120] if findings else "(no findings)")
+            ),
         )
 
         # 5. Persist results
@@ -201,12 +343,14 @@ async def _run_execution(
         await th_db.update_hunt_package(hunt_package_id, status="completed")
         logger.info("Execution [%s]: completed", task_result_id[:8])
 
-        # 7. Auto-generate hunt report (soft-fail)
+        # 7. Auto-generate hunt report (soft-fail) — report_writer sets
+        #    generation_status="reporting" and writes its own step_logs
         try:
             from backend.threat_hunting.agents.nodes.report_writer import write_report
 
             await write_report(
                 hunt_package_id,
+                run_id=run_id,
                 provider_name=provider_name,
                 model_name=model_name,
             )
@@ -289,6 +433,7 @@ async def start_execution(
             latest,
             provider_name=provider_name,
             model_name=model_name,
+            run_id=run_id,
         )
     )
     _ACTIVE_EXECUTIONS[result_id] = task

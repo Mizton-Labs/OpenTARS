@@ -33,6 +33,46 @@ from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm
 logger = logging.getLogger(__name__)
 
 
+def _clean_prose_response(text: str) -> str:
+    """Strip JSON framing from a prose LLM response.
+
+    issue-local-009 Part 2: ``build_prompt`` historically injected a JSON-only
+    system prompt.  Some models still wrap prose answers in a JSON object even
+    when instructed otherwise.  This helper:
+
+      1. Strips ```json / ``` fences.
+      2. If the remainder parses as a JSON object whose *only value* is a
+         non-empty string, unwraps that string (handles the common pattern of
+         ``{"executive_summary": "…"}`` or ``{"summary": "…"}``).
+      3. Otherwise returns the text as-is (no destructive edits).
+    """
+    import json as _json
+    import re
+
+    cleaned = text.strip()
+    # Strip markdown fences
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned, flags=re.MULTILINE)
+    cleaned = cleaned.strip()
+
+    # Attempt to detect a single-value JSON wrapper
+    try:
+        parsed = _json.loads(cleaned)
+        if isinstance(parsed, dict):
+            values = [v for v in parsed.values() if isinstance(v, str) and v.strip()]
+            if len(parsed) == 1 and values:
+                return values[0].strip()
+            # Also handle {"text": "...", ...} when all non-string values are empty/None
+            non_empty = {k: v for k, v in parsed.items() if v not in (None, "", [], {})}
+            if len(non_empty) == 1:
+                only = next(iter(non_empty.values()))
+                if isinstance(only, str) and only.strip():
+                    return only.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return cleaned
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -193,15 +233,17 @@ async def _generate_executive_summary(
             "Do NOT use markdown. Do NOT use bullet points. "
             "3-6 plain sentences only. Be factual — do not invent details."
         ),
+        json_output=False,
     )
 
-    return await call_llm(
+    raw = await call_llm(
         user,
         system=system,
         provider_name=provider_name,
         model=model_name,
         max_tokens=400,
     )
+    return _clean_prose_response(raw)
 
 
 # ── LLM Findings/Conclusion section (issue-008-2C-C) ────────────────────────
@@ -296,16 +338,18 @@ async def _generate_findings(
             "If no SIEM execution was performed, state that clearly and base conclusions "
             "on the available threat intelligence and hypotheses only."
         ),
+        json_output=False,
     )
 
     try:
-        return await call_llm(
+        raw = await call_llm(
             user,
             system=system,
             provider_name=provider_name,
             model=model_name,
             max_tokens=1200,
         )
+        return _clean_prose_response(raw)
     except Exception as exc:  # noqa: BLE001
         logger.warning("report_writer: findings generation failed: %s", exc)
         return _build_fallback_findings(full_report)
@@ -363,6 +407,30 @@ def _build_fallback_findings(full_report: dict[str, Any]) -> str:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
+async def _report_step_log(
+    run_id: str | None,
+    step: str,
+    status: str,
+    *,
+    elapsed_s: float | None = None,
+    decision: str = "",
+) -> None:
+    """Write a report-phase step entry into the run's step_logs (soft-fail)."""
+    if not run_id:
+        return
+    try:
+        from backend.threat_hunting import db as th_db
+
+        entry: dict[str, Any] = {"step": step, "status": status}
+        if elapsed_s is not None:
+            entry["elapsed_s"] = round(elapsed_s, 2)
+        if decision:
+            entry["decision"] = decision
+        await th_db.append_run_step_log(run_id, entry)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_report_step_log soft-fail step=%s: %s", step, exc)
+
+
 async def write_report(
     hunt_package_id: str,
     *,
@@ -381,13 +449,25 @@ async def write_report(
 
     When *run_id* is None the latest run is used (back-compat).
 
-    Loads all relevant data from the DB, assembles the structured report,
-    generates an LLM executive summary (soft-fail), and writes to hunt_reports.
+    issue-local-009: writes fine-grained step_logs (report_assemble,
+    report_exec_summary, report_findings, report_render) and sets
+    generation_status=reporting during execution.
 
     Returns the persisted report dict.
     """
     start = time.monotonic()
     from backend.threat_hunting import db as th_db
+
+    # Signal reporting phase on the run row (soft-fail)
+    if run_id:
+        try:
+            await th_db.set_run_generation_status(run_id, "reporting")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ── Step: report_assemble ─────────────────────────────────────────────────
+    await _report_step_log(run_id, "report_assemble", "running", decision="Loading hunt data…")
+    t_step = time.monotonic()
 
     # Load all source data
     pkg = await th_db.get_hunt_package(hunt_package_id)
@@ -411,14 +491,35 @@ async def write_report(
         evidence_items,
         task_results,
     )
+    await _report_step_log(
+        run_id,
+        "report_assemble",
+        "ok",
+        elapsed_s=time.monotonic() - t_step,
+        decision=(
+            f"Assembled report: {len(evidence_items)} evidence item(s), "
+            f"{len(task_results)} execution result(s)"
+        ),
+    )
 
-    # Stage 2: LLM executive summary (soft-fail)
+    # ── Step: report_exec_summary ─────────────────────────────────────────────
+    await _report_step_log(
+        run_id, "report_exec_summary", "running", decision="LLM generating executive summary…"
+    )
+    t_step = time.monotonic()
     executive_summary = ""
     try:
         from backend.llm.errors import LLMDisabledError
 
         executive_summary = await _generate_executive_summary(
             full_report, provider_name=provider_name, model_name=model_name
+        )
+        await _report_step_log(
+            run_id,
+            "report_exec_summary",
+            "ok",
+            elapsed_s=time.monotonic() - t_step,
+            decision="Executive summary generated",
         )
     except Exception as exc:
         from backend.llm.errors import LLMDisabledError
@@ -428,16 +529,34 @@ async def write_report(
         else:
             logger.exception("report_writer: executive summary generation failed: %s", exc)
         executive_summary = _build_fallback_summary(full_report)
+        await _report_step_log(
+            run_id,
+            "report_exec_summary",
+            "ok",
+            elapsed_s=time.monotonic() - t_step,
+            decision="Executive summary generated (template fallback)",
+        )
 
     full_report["executive_summary"] = executive_summary
 
-    # Stage 2b: LLM Findings/Conclusion section (issue-008-2C-C, soft-fail)
+    # ── Step: report_findings ─────────────────────────────────────────────────
+    await _report_step_log(
+        run_id, "report_findings", "running", decision="LLM generating findings section…"
+    )
+    t_step = time.monotonic()
     findings = ""
     try:
         from backend.llm.errors import LLMDisabledError
 
         findings = await _generate_findings(
             full_report, provider_name=provider_name, model_name=model_name
+        )
+        await _report_step_log(
+            run_id,
+            "report_findings",
+            "ok",
+            elapsed_s=time.monotonic() - t_step,
+            decision="Findings/Conclusion section generated",
         )
     except Exception as exc:
         from backend.llm.errors import LLMDisabledError
@@ -447,7 +566,18 @@ async def write_report(
         else:
             logger.warning("report_writer: findings generation failed: %s", exc)
         findings = _build_fallback_findings(full_report)
+        await _report_step_log(
+            run_id,
+            "report_findings",
+            "ok",
+            elapsed_s=time.monotonic() - t_step,
+            decision="Findings/Conclusion section generated (template fallback)",
+        )
     full_report["findings"] = findings or None
+
+    # ── Step: report_render ───────────────────────────────────────────────────
+    await _report_step_log(run_id, "report_render", "running", decision="Rendering report formats…")
+    t_step = time.monotonic()
 
     # Stage 3: resolve which formats to generate (default from loader if not provided)
     if report_formats is None:
@@ -486,6 +616,22 @@ async def write_report(
         await th_db.update_hunt_package(hunt_package_id, status="completed")
 
     elapsed = time.monotonic() - start
+    fmt_names = [k for k, v in (report_formats or {}).items() if v]
+    await _report_step_log(
+        run_id,
+        "report_render",
+        "ok",
+        elapsed_s=time.monotonic() - t_step,
+        decision=f"Report saved — formats: {', '.join(fmt_names) or 'default'}",
+    )
+
+    # Restore generation_status to completed (soft-fail)
+    if run_id:
+        try:
+            await th_db.set_run_generation_status(run_id, "completed")
+        except Exception:  # noqa: BLE001
+            pass
+
     logger.info("report_writer: report generated for %s in %.2fs", hunt_package_id[:8], elapsed)
     return report
 

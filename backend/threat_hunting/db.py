@@ -1163,6 +1163,71 @@ async def get_hunt_report_by_run(run_id: str) -> dict[str, Any] | None:
     return _decode_report_row(dict(row))
 
 
+# ── Run-level step_log helpers (issue-local-009) ─────────────────────────────
+
+
+async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
+    """Merge *entry* into the step_logs list of an existing hunting_packages row.
+
+    Uses last-write-wins per ``step`` key (same merge strategy as
+    ``state._reduce_step_logs``).  Creates the step if not present; updates in
+    place if the step already exists.  No-ops when *run_id* is not found.
+
+    Args:
+        run_id: Primary key of the hunting_packages row.
+        entry:  A step-log dict; must contain a ``"step"`` key.
+    """
+    import json as _json
+
+    step_key = entry.get("step")
+    if not step_key:
+        return
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT step_logs FROM hunting_packages WHERE id = ?", (run_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        if not row:
+            return
+
+        try:
+            logs: list[dict[str, Any]] = _json.loads(row[0] or "[]")
+            if not isinstance(logs, list):
+                logs = []
+        except Exception:
+            logs = []
+
+        # Last-write-wins merge keyed on step name
+        idx = next((i for i, lg in enumerate(logs) if lg.get("step") == step_key), None)
+        if idx is None:
+            logs.append(entry)
+        else:
+            logs[idx] = {**logs[idx], **entry}
+
+        await db.execute(
+            "UPDATE hunting_packages SET step_logs = ? WHERE id = ?",
+            (_json.dumps(logs, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+
+
+async def set_run_generation_status(run_id: str, status: str) -> None:
+    """Update only the generation_status of an existing hunting_packages run row.
+
+    No-ops when *run_id* is not found.  Used by executor and report_writer to
+    surface ``executing`` / ``reporting`` status without touching pipeline state.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            "UPDATE hunting_packages SET generation_status = ? WHERE id = ?",
+            (status, run_id),
+        )
+        await db.commit()
+
+
 async def list_hunt_reports(hunt_package_id: str) -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
