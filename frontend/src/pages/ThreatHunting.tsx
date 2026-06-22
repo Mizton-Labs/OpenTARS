@@ -28,6 +28,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const STEP_SHORT_LABELS: Record<string, string> = {
+  // Pipeline (LangGraph) steps
   intake_classifier: 'Intake',
   threat_context_builder: 'Context',
   deep_retrohunt_planner: 'Retrohunt',
@@ -35,9 +36,21 @@ const STEP_SHORT_LABELS: Record<string, string> = {
   hunting_lead_planner: 'Leads',
   ttp_analyst: 'TTP',
   query_drafting_agent: 'Queries',
+  // Execution steps (issue-local-009)
+  siem_connect: 'Connect',
+  siem_submit: 'Submit',
+  siem_poll: 'Poll',
+  siem_fetch: 'Fetch',
+  siem_interpret: 'Interpret',
+  // Report steps (issue-local-009)
+  report_assemble: 'Assemble',
+  report_exec_summary: 'Summary',
+  report_findings: 'Findings',
+  report_render: 'Render',
 }
 
 const STEP_ORDER = [
+  // LangGraph pipeline
   'intake_classifier',
   'threat_context_builder',
   'deep_retrohunt_planner',
@@ -45,6 +58,17 @@ const STEP_ORDER = [
   'hunting_lead_planner',
   'ttp_analyst',
   'query_drafting_agent',
+  // SIEM execution (issue-local-009)
+  'siem_connect',
+  'siem_submit',
+  'siem_poll',
+  'siem_fetch',
+  'siem_interpret',
+  // Report generation (issue-local-009)
+  'report_assemble',
+  'report_exec_summary',
+  'report_findings',
+  'report_render',
 ]
 
 // Terminal statuses — a step with one of these is finished (not in-progress).
@@ -88,7 +112,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
         {/* ── Card body ── */}
         <div
           className={clsx(
-            'px-2.5 py-1.5 rounded text-[11px] font-semibold border-2 transition-all min-w-[72px] text-center select-none',
+            'px-4 py-2.5 rounded text-[15px] font-semibold border-2 transition-all min-w-[104px] text-center select-none',
             // Solid fills — high contrast against the bg-gray-900 card background.
             // Border-2 so the color line is clearly visible at small sizes.
             isActive
@@ -108,9 +132,9 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
           title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
         >
           {/* Glyph + step name */}
-          <div className="flex items-center justify-center gap-1">
+          <div className="flex items-center justify-center gap-1.5">
             <span className={clsx(
-              'text-[13px] font-bold leading-none',
+              'text-[18px] font-bold leading-none',
               isActive ? 'text-blue-200' :
               isDone ? isPartial ? 'text-amber-300' : 'text-green-300' :
               isError ? 'text-red-300' :
@@ -124,9 +148,9 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
           </div>
 
           {/* Status word + elapsed */}
-          <div className="flex items-center justify-center gap-1.5 mt-0.5">
+          <div className="flex items-center justify-center gap-1.5 mt-1">
             <span className={clsx(
-              'text-[9px] font-normal leading-none',
+              'text-[12px] font-normal leading-none',
               isActive ? 'text-blue-300' :
               isDone ? isPartial ? 'text-amber-400' : 'text-green-400' :
               isError ? 'text-red-400' :
@@ -136,7 +160,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
               {statusWord}
             </span>
             {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
-              <span className="text-[9px] font-mono opacity-60 leading-none">
+              <span className="text-[12px] font-mono opacity-60 leading-none">
                 {phase.elapsed_s}s
               </span>
             )}
@@ -145,16 +169,16 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
 
         {/* ── Inline detail (done steps only) ── */}
         {isDone && (hasCounts || hasTools) && (
-          <div className="mt-1 space-y-0.5 max-w-[90px]" onClick={(e) => e.stopPropagation()}>
+          <div className="mt-1 space-y-0.5 max-w-[132px]" onClick={(e) => e.stopPropagation()}>
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
-                  <span className="text-[9px] font-mono text-brand-400 leading-none">
+                  <span className="text-[12px] font-mono text-brand-400 leading-none">
                     {phase!.item_count} items
                   </span>
                 )}
                 {phase!.ioc_count != null && (
-                  <span className="text-[9px] font-mono text-blue-400 leading-none">
+                  <span className="text-[12px] font-mono text-blue-400 leading-none">
                     {phase!.ioc_count} IOC{phase!.noisy_count ? ` (${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
@@ -165,7 +189,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
                 {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[9px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
+                    className="text-[12px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
                     title={t}
                   >
                     {t.replace(/_/g, ' ')}
@@ -178,7 +202,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
       </div>
 
       {!isLast && (
-        <ChevronRight className="w-3 h-3 text-gray-500 shrink-0 mt-3" />
+        <ChevronRight className="w-4 h-4 text-gray-500 shrink-0 mt-4" />
       )}
     </div>
   )
@@ -197,7 +221,9 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
     phaseByStep[p.step] = p
   }
 
-  const isRunning = pkg.generation_status === 'running'
+  // issue-local-009: active across all three runtime phases
+  const ACTIVE_STATUSES = new Set(['running', 'executing', 'reporting'])
+  const isRunning = pkg.generation_status != null && ACTIVE_STATUSES.has(pkg.generation_status)
 
   // fix: derive the active step as the first STEP_ORDER step that has no
   // terminal status yet (ok/partial/error/skipped). Falls back to null.
@@ -235,11 +261,15 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
               ? 'bg-green-900/30 text-green-400 border border-green-700/40'
               : pkg.generation_status === 'running'
                 ? 'bg-blue-900/30 text-blue-300 border border-blue-700/40'
-                : pkg.generation_status === 'awaiting_approval'
-                  ? 'bg-amber-900/30 text-amber-300 border border-amber-700/40'
-                  : pkg.generation_status === 'error'
-                    ? 'bg-red-900/30 text-red-400 border border-red-700/40'
-                    : 'bg-gray-800/40 text-gray-500 border border-gray-700/30',
+                : pkg.generation_status === 'executing'
+                  ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/40'
+                  : pkg.generation_status === 'reporting'
+                    ? 'bg-purple-900/30 text-purple-300 border border-purple-700/40'
+                    : pkg.generation_status === 'awaiting_approval'
+                      ? 'bg-amber-900/30 text-amber-300 border border-amber-700/40'
+                      : pkg.generation_status === 'error'
+                        ? 'bg-red-900/30 text-red-400 border border-red-700/40'
+                        : 'bg-gray-800/40 text-gray-500 border border-gray-700/30',
           )}>
             {pkg.generation_status.replace(/_/g, ' ')}
           </span>
@@ -259,7 +289,7 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
       )}
 
       {/* Phase rail — always rendered */}
-      <div className="flex items-start flex-wrap gap-1">
+      <div className="flex items-start flex-wrap gap-1.5">
         {STEP_ORDER.map((stepId, i) => (
           <PhaseCard
             key={stepId}
@@ -287,13 +317,15 @@ export default function ThreatHunting() {
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
     queryFn: api.threatHunting.listPackages,
-    // fix: poll every 4s while any package is running; stop when all idle.
+    // issue-local-009: poll every 4s while any package is active in any phase
+    // (running = pipeline, executing = SIEM, reporting = report generation).
     refetchInterval: (query) => {
       const data = query.state.data as THuntPackage[] | undefined
-      const anyRunning = (data ?? []).some(
-        (p) => p.generation_status === 'running',
+      const activeStatuses = new Set(['running', 'executing', 'reporting'])
+      const anyActive = (data ?? []).some(
+        (p) => p.generation_status != null && activeStatuses.has(p.generation_status),
       )
-      return anyRunning ? 4000 : false
+      return anyActive ? 4000 : false
     },
   })
 

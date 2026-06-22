@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { type THGenerationRecord } from '../../api/client'
 
 const STEP_LABELS: Record<string, string> = {
+  // Pipeline
   intake_classifier: 'Intake Classifier',
   threat_context_builder: 'Threat Context Builder',
   deep_retrohunt_planner: 'Deep Retrohunt Planner',
@@ -17,6 +18,17 @@ const STEP_LABELS: Record<string, string> = {
   hunting_lead_planner: 'Hunting Lead Planner',
   ttp_analyst: 'TTP Analyst',
   query_drafting_agent: 'Query Drafting Agent',
+  // SIEM execution
+  siem_connect: 'SIEM Connect',
+  siem_submit: 'SIEM Submit',
+  siem_poll: 'SIEM Poll',
+  siem_fetch: 'SIEM Fetch',
+  siem_interpret: 'SIEM Interpret',
+  // Report generation
+  report_assemble: 'Assemble Report',
+  report_exec_summary: 'Exec Summary',
+  report_findings: 'Findings',
+  report_render: 'Render Report',
 }
 
 function buildMermaidDiagram(genRecord: THGenerationRecord): string {
@@ -60,6 +72,28 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     '',
   )
 
+  // Approval gate
+  lines.push('  approval_gate{{"Approval Gate"}}', '')
+
+  // SIEM execution nodes (issue-local-009)
+  lines.push(
+    `  siem_connect["${STEP_LABELS.siem_connect}"]`,
+    `  siem_submit["${STEP_LABELS.siem_submit}"]`,
+    `  siem_poll["${STEP_LABELS.siem_poll}"]`,
+    `  siem_fetch["${STEP_LABELS.siem_fetch}"]`,
+    `  siem_interpret["${STEP_LABELS.siem_interpret}"]`,
+    '',
+  )
+
+  // Report generation nodes (issue-local-009)
+  lines.push(
+    `  report_assemble["${STEP_LABELS.report_assemble}"]`,
+    `  report_exec_summary["${STEP_LABELS.report_exec_summary}"]`,
+    `  report_findings["${STEP_LABELS.report_findings}"]`,
+    `  report_render["${STEP_LABELS.report_render}"]`,
+    '',
+  )
+
   // Source → intake_classifier edges
   for (let i = 0; i < intakeSources.length; i++) {
     lines.push(`  src_${i} --> intake_classifier`)
@@ -74,6 +108,26 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     '  hypothesis_generator --> hunting_lead_planner',
     '  hunting_lead_planner --> ttp_analyst',
     '  ttp_analyst --> query_drafting_agent',
+    '  query_drafting_agent --> approval_gate',
+    '',
+  )
+
+  // Execution edges (issue-local-009)
+  lines.push(
+    '  approval_gate --> siem_connect',
+    '  siem_connect --> siem_submit',
+    '  siem_submit --> siem_poll',
+    '  siem_poll --> siem_fetch',
+    '  siem_fetch --> siem_interpret',
+    '  siem_interpret --> report_assemble',
+    '',
+  )
+
+  // Report edges (issue-local-009)
+  lines.push(
+    '  report_assemble --> report_exec_summary',
+    '  report_exec_summary --> report_findings',
+    '  report_findings --> report_render',
     '',
   )
 
@@ -81,6 +135,9 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
   for (const id of Object.keys(STEP_LABELS)) {
     lines.push(`  ${nodeStyle(id)}`)
   }
+
+  // Approval gate style
+  lines.push('  style approval_gate fill:#78350f,stroke:#f59e0b,color:#fef3c7')
 
   // Style source nodes (amber)
   for (let i = 0; i < intakeSources.length; i++) {

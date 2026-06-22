@@ -41,6 +41,7 @@ const ReactFlowVisualizer = lazy(() => import('./ReactFlowVisualizer'))
 // ── Pipeline step metadata ────────────────────────────────────────────────────
 
 const PIPELINE_STEPS = [
+  // ── LangGraph pipeline ──────────────────────────────────────────────────────
   { id: 'intake_classifier',       label: 'Intake Classifier',       description: 'Loads evidence, builds corpus, extracts IOC summary' },
   { id: 'threat_context_builder',  label: 'Threat Context Builder',  description: 'Produces structured threat actor/campaign context' },
   { id: 'deep_retrohunt_planner',  label: 'Deep Retrohunt Planner',  description: 'Sanitizes IOCs, noise-scores, drafts SPL macro' },
@@ -48,6 +49,17 @@ const PIPELINE_STEPS = [
   { id: 'hunting_lead_planner',    label: 'Hunting Lead Planner',    description: 'Converts hypotheses into concrete hunting leads' },
   { id: 'ttp_analyst',             label: 'TTP Analyst',             description: 'Maps evidence to MITRE ATT&CK techniques' },
   { id: 'query_drafting_agent',    label: 'Query Drafting Agent',    description: 'Drafts SPL, KQL, and ES DSL SIEM queries' },
+  // ── SIEM execution (issue-local-009) ────────────────────────────────────────
+  { id: 'siem_connect',            label: 'SIEM Connect',            description: 'Builds and verifies the SIEM connector' },
+  { id: 'siem_submit',             label: 'SIEM Submit',             description: 'Submits SPL retrohunt search, obtains job SID' },
+  { id: 'siem_poll',               label: 'SIEM Poll',               description: 'Polls search job until complete, tracks progress' },
+  { id: 'siem_fetch',              label: 'SIEM Fetch',              description: 'Retrieves result rows from completed search job' },
+  { id: 'siem_interpret',          label: 'SIEM Interpret',          description: 'LLM interprets SIEM results into plain findings' },
+  // ── Report generation (issue-local-009) ─────────────────────────────────────
+  { id: 'report_assemble',         label: 'Assemble Report',         description: 'Loads all hunt data and assembles report structure' },
+  { id: 'report_exec_summary',     label: 'Exec Summary',            description: 'LLM generates executive summary for stakeholders' },
+  { id: 'report_findings',         label: 'Findings',                description: 'LLM generates detailed Findings/Conclusion section' },
+  { id: 'report_render',           label: 'Render Report',           description: 'Renders and persists PDF and Markdown formats' },
 ]
 
 // ── Step log icon ─────────────────────────────────────────────────────────────

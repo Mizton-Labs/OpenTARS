@@ -201,5 +201,6 @@ class HuntPipelineState(TypedDict, total=False):
     errors: Annotated[list[str], _reduce_errors]
     step_logs: Annotated[list[dict[str, Any]], _reduce_step_logs]
     generation_status: (
-        str  # 'running' | 'awaiting_approval' | 'approved' | 'rejected' | 'completed' | 'error'
+        str  # 'running' | 'awaiting_approval' | 'approved' | 'rejected'
+             # | 'executing' | 'reporting' | 'completed' | 'error'
     )
