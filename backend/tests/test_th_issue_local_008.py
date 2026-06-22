@@ -17,13 +17,12 @@ Tests for issue-local-008:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ─── 2A: run_created_at in list_hunt_packages ─────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_list_hunt_packages_includes_run_created_at() -> None:
@@ -50,16 +49,20 @@ async def test_list_hunt_packages_includes_run_created_at() -> None:
     class _FakeCur:
         def __init__(self, rows):
             self._rows = rows
+
         async def fetchall(self):
             return self._rows
+
         async def close(self):
             pass
 
     class _FakeConn:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             pass
+
         async def execute(self, query, *args):
             if "hunt_packages" in query and "hunting_packages" not in query:
                 return _FakeCur([_DictRow(pkg_row_dict)])
@@ -80,9 +83,11 @@ async def test_list_hunt_packages_includes_run_created_at() -> None:
 
 # ─── 2B: upload routes no longer call extract_iocs_from_text ──────────────────
 
+
 def test_upload_file_route_does_not_call_extract_iocs() -> None:
     """File upload route must not call extract_iocs_from_text after issue-008-2B."""
     import inspect
+
     import backend.api.routes_threat_hunting as routes
 
     source = inspect.getsource(routes.add_evidence_file)
@@ -93,6 +98,7 @@ def test_upload_file_route_does_not_call_extract_iocs() -> None:
 
 def test_upload_text_route_does_not_call_extract_iocs() -> None:
     import inspect
+
     import backend.api.routes_threat_hunting as routes
 
     source = inspect.getsource(routes.add_evidence_text)
@@ -102,6 +108,7 @@ def test_upload_text_route_does_not_call_extract_iocs() -> None:
 
 def test_upload_watcher_route_does_not_call_extract_iocs() -> None:
     import inspect
+
     import backend.api.routes_threat_hunting as routes
 
     source = inspect.getsource(routes.add_evidence_watcher)
@@ -112,6 +119,7 @@ def test_upload_watcher_route_does_not_call_extract_iocs() -> None:
 def test_add_evidence_url_does_not_fetch() -> None:
     """add_evidence_url must NOT call fetch_url (deferred to pipeline)."""
     import inspect
+
     import backend.api.routes_threat_hunting as routes
 
     source = inspect.getsource(routes.add_evidence_url)
@@ -123,6 +131,7 @@ def test_add_evidence_url_does_not_fetch() -> None:
 def test_add_evidence_url_stores_pending_status() -> None:
     """add_evidence_url must store parse_status='pending'."""
     import inspect
+
     import backend.api.routes_threat_hunting as routes
 
     source = inspect.getsource(routes.add_evidence_url)
@@ -131,6 +140,7 @@ def test_add_evidence_url_stores_pending_status() -> None:
 
 
 # ─── 2B: db helpers ──────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_clear_extracted_iocs_is_importable() -> None:
@@ -158,17 +168,21 @@ async def test_update_evidence_item_builds_correct_sql() -> None:
     class _FakeCursor:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             pass
 
     class _FakeConn:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             pass
+
         async def execute(self, sql, params=None):
             executed_sqls.append(sql)
             return _FakeCursor()
+
         async def commit(self):
             pass
 
@@ -190,9 +204,11 @@ async def test_update_evidence_item_builds_correct_sql() -> None:
 
 # ─── 2B: intake_classifier clears IOCs and re-extracts ───────────────────────
 
+
 def test_intake_classifier_calls_clear_extracted_iocs() -> None:
     """intake_classifier must call clear_extracted_iocs before extracting."""
     import inspect
+
     import backend.threat_hunting.agents.nodes.intake_classifier as ic
 
     source = inspect.getsource(ic)
@@ -202,6 +218,7 @@ def test_intake_classifier_calls_clear_extracted_iocs() -> None:
 def test_intake_classifier_calls_add_extracted_iocs() -> None:
     """intake_classifier must call add_extracted_iocs (now the only place it runs)."""
     import inspect
+
     import backend.threat_hunting.agents.nodes.intake_classifier as ic
 
     source = inspect.getsource(ic)
@@ -211,6 +228,7 @@ def test_intake_classifier_calls_add_extracted_iocs() -> None:
 def test_intake_classifier_fetches_pending_urls() -> None:
     """intake_classifier must fetch evidence items with parse_status='pending'."""
     import inspect
+
     import backend.threat_hunting.agents.nodes.intake_classifier as ic
 
     source = inspect.getsource(ic)
@@ -221,18 +239,25 @@ def test_intake_classifier_fetches_pending_urls() -> None:
 def test_intake_classifier_uses_prefer_playwright_for_high_effort() -> None:
     """intake_classifier must pass prefer_playwright=True when effort=high."""
     import inspect
+
     import backend.threat_hunting.agents.nodes.intake_classifier as ic
 
     source = inspect.getsource(ic)
     assert "prefer_playwright" in source
-    assert 'effort == "high"' in source or "effort==\"high\"" in source or "prefer_playwright = effort ==" in source
+    assert (
+        'effort == "high"' in source
+        or 'effort=="high"' in source
+        or "prefer_playwright = effort ==" in source
+    )
 
 
 # ─── 2C-A: auto-report on pipeline completion ─────────────────────────────────
 
+
 def test_runner_triggers_write_report_on_completion() -> None:
     """runner._run_pipeline must call write_report when final_status='completed'."""
     import inspect
+
     import backend.threat_hunting.agents.runner as runner
 
     source = inspect.getsource(runner._run_pipeline)
@@ -241,6 +266,7 @@ def test_runner_triggers_write_report_on_completion() -> None:
 
 
 # ─── 2C-B: hypotheses detail in report ───────────────────────────────────────
+
 
 def test_assemble_report_includes_hypotheses_with_suggested_actions() -> None:
     """assemble_report must preserve suggested_actions on hypotheses."""
@@ -273,19 +299,32 @@ def test_render_report_markdown_includes_suggested_actions() -> None:
     from backend.threat_hunting.agents.nodes.report_writer import render_report_markdown
 
     full_report = {
-        "hunt_name": "Test", "hunt_id": "1", "generated_at": "now",
-        "generated_by": None, "package_status": "approved",
-        "executive_summary": "", "findings": None,
+        "hunt_name": "Test",
+        "hunt_id": "1",
+        "generated_at": "now",
+        "generated_by": None,
+        "package_status": "approved",
+        "executive_summary": "",
+        "findings": None,
         "evidence_summary": {"total_items": 0, "ioc_count": 0, "item_types": []},
         "threat_context": None,
-        "hypotheses": [{
-            "id": "H1", "title": "Test Hyp", "description": "desc",
-            "justification": "just", "relevance": "high",
-            "ioc_basis": ["8.8.8.8"],
-            "suggested_actions": ["Check firewall logs"],
-        }],
-        "hunting_leads": [], "deep_retrohunt_summary": None, "ttp_analysis": None,
-        "query_drafts_count": 0, "execution_results": [], "recommendations": [],
+        "hypotheses": [
+            {
+                "id": "H1",
+                "title": "Test Hyp",
+                "description": "desc",
+                "justification": "just",
+                "relevance": "high",
+                "ioc_basis": ["8.8.8.8"],
+                "suggested_actions": ["Check firewall logs"],
+            }
+        ],
+        "hunting_leads": [],
+        "deep_retrohunt_summary": None,
+        "ttp_analysis": None,
+        "query_drafts_count": 0,
+        "execution_results": [],
+        "recommendations": [],
     }
     md = render_report_markdown(full_report)
     assert "Check firewall logs" in md
@@ -293,6 +332,7 @@ def test_render_report_markdown_includes_suggested_actions() -> None:
 
 
 # ─── 2C-C: Findings/Conclusion section ───────────────────────────────────────
+
 
 def test_assemble_report_has_findings_key() -> None:
     """assemble_report must include a 'findings' key."""
@@ -327,14 +367,21 @@ def test_render_report_markdown_findings_placed_after_recommendations() -> None:
     from backend.threat_hunting.agents.nodes.report_writer import render_report_markdown
 
     full_report = {
-        "hunt_name": "Test", "hunt_id": "1", "generated_at": "now",
-        "generated_by": None, "package_status": "approved",
+        "hunt_name": "Test",
+        "hunt_id": "1",
+        "generated_at": "now",
+        "generated_by": None,
+        "package_status": "approved",
         "executive_summary": "Exec summary.",
         "findings": "Key conclusion: threat not detected.",
         "evidence_summary": {"total_items": 0, "ioc_count": 0, "item_types": []},
-        "threat_context": None, "hypotheses": [], "hunting_leads": [],
-        "deep_retrohunt_summary": None, "ttp_analysis": None,
-        "query_drafts_count": 0, "execution_results": [],
+        "threat_context": None,
+        "hypotheses": [],
+        "hunting_leads": [],
+        "deep_retrohunt_summary": None,
+        "ttp_analysis": None,
+        "query_drafts_count": 0,
+        "execution_results": [],
         "recommendations": ["Investigate further"],
     }
     md = render_report_markdown(full_report)
@@ -363,6 +410,7 @@ def test_build_fallback_findings_returns_string() -> None:
 
 # ─── 2D: effort profile knobs ─────────────────────────────────────────────────
 
+
 def test_high_effort_force_all_tools_true() -> None:
     """High effort profile must have force_all_tools=True."""
     from backend.threat_hunting.agents.effort_profile import get_effort_profile
@@ -383,9 +431,11 @@ def test_medium_low_effort_force_all_tools_false() -> None:
 
 # ─── 2D: fetch_url prefer_playwright ─────────────────────────────────────────
 
+
 def test_fetch_url_accepts_prefer_playwright() -> None:
     """fetch_url must accept a prefer_playwright keyword argument."""
     import inspect
+
     from backend.threat_hunting.extractors.url_fetcher import fetch_url
 
     sig = inspect.signature(fetch_url)
@@ -399,7 +449,11 @@ def test_should_force_playwright_prefer_playwright_true() -> None:
     # Even with long clean text and 200 status, prefer_playwright overrides
     good_text = "A" * 1000
     forced, reason = _should_force_playwright(
-        good_text, "trafilatura", "text/html", 200, b"<html>...</html>",
+        good_text,
+        "trafilatura",
+        "text/html",
+        200,
+        b"<html>...</html>",
         prefer_playwright=True,
     )
     assert forced is True
@@ -412,13 +466,18 @@ def test_should_force_playwright_false_when_not_requested() -> None:
 
     good_text = "ESET researchers analyzed the EDR killer toolkit. " * 30
     forced, reason = _should_force_playwright(
-        good_text, "trafilatura/1.12", "text/html", 200, b"<html>...</html>",
+        good_text,
+        "trafilatura/1.12",
+        "text/html",
+        200,
+        b"<html>...</html>",
         prefer_playwright=False,
     )
     assert forced is False
 
 
 # ─── 2D: tool_refetch_url prefer_playwright propagation ───────────────────────
+
 
 @pytest.mark.asyncio
 async def test_tool_refetch_url_passes_prefer_playwright() -> None:
@@ -431,6 +490,4 @@ async def test_tool_refetch_url_passes_prefer_playwright() -> None:
     ) as mock_fetch:
         await tools_module.tool_refetch_url("https://example.com/", prefer_playwright=True)
 
-    mock_fetch.assert_called_once_with(
-        "https://example.com/", prefer_playwright=True
-    )
+    mock_fetch.assert_called_once_with("https://example.com/", prefer_playwright=True)
