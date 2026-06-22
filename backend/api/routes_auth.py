@@ -18,9 +18,9 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/password
   DELETE /api/auth/users/{user_id}
 """
-
 from __future__ import annotations
 
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -33,6 +33,7 @@ from backend.auth.dependencies import (
     require_admin,
     set_session_cookie,
 )
+from backend.auth.oidc_config import load_sso_config, save_sso_config
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
     SESSION_TTL,
@@ -44,6 +45,8 @@ from backend.auth.service import (
     verify_password,
 )
 from backend.config.loader import load_auth_enabled, load_password_policy
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -113,6 +116,12 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _safe_error_param(error: str) -> str:
+    """Return a URL-safe error code (strip any attacker-supplied content)."""
+    import re as _re
+    return _re.sub(r"[^A-Za-z0-9_-]", "_", str(error))[:40]
+
+
 def _validate_username(username: str) -> None:
     if not _USERNAME_RE.match(username or ""):
         raise HTTPException(
@@ -165,11 +174,143 @@ async def auth_status() -> dict:
 
     Also publishes the password policy so the SPA can mirror server-side
     validation. The policy is non-sensitive (length + character-class counts).
+
+    issue-local-010: also publishes SSO availability so the login page can
+    show the SSO button without an extra round trip.
     """
+    sso_cfg = load_sso_config()
     return {
         "auth_enabled": load_auth_enabled(),
         "password_policy": load_password_policy(),
+        "sso_enabled": bool(sso_cfg.get("enabled")),
+        "sso_button_label": sso_cfg.get("button_label", "Sign in with SSO"),
     }
+
+
+# ── OIDC / SSO endpoints (issue-local-010) ───────────────────────────────────
+
+
+@router.get("/oidc/login")
+async def oidc_login(request: Request, next: str = "/") -> Response:
+    """Initiate an OIDC Authorization Code flow.
+
+    Redirects the browser to the IdP's authorize endpoint.
+    Public — no session required.
+    """
+    from fastapi.responses import RedirectResponse
+
+    from backend.auth.oidc import build_authorization_url
+
+    try:
+        authorize_url = await build_authorization_url(
+            request_base_url=str(request.base_url),
+            next_path=next,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("OIDC login initiation failed: %s", exc)
+        raise HTTPException(status_code=502, detail="SSO initiation failed") from exc
+
+    return RedirectResponse(url=authorize_url, status_code=302)
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    response: Response,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> Response:
+    """Handle the OIDC authorization callback from the IdP.
+
+    On success: mints a session cookie and redirects to the SPA.
+    On failure: redirects to the login page with an error parameter.
+    Public — no session required.
+    """
+    from fastapi.responses import RedirectResponse
+
+    from backend.auth.oidc import handle_callback
+    from backend.auth.service import SESSION_TTL
+
+    # IdP returned an error
+    if error:
+        logger.warning("OIDC callback error from IdP: %s — %s", error, error_description)
+        return RedirectResponse(
+            url=f"/login?sso_error={_safe_error_param(error)}",
+            status_code=302,
+        )
+
+    if not code or not state:
+        return RedirectResponse(url="/login?sso_error=missing_params", status_code=302)
+
+    try:
+        _user_id, raw_token, next_path = await handle_callback(
+            code=code,
+            state=state,
+            request_base_url=str(request.base_url),
+        )
+    except ValueError as exc:
+        logger.warning("OIDC callback rejected: %s", exc)
+        return RedirectResponse(url="/login?sso_error=auth_failed", status_code=302)
+    except Exception as exc:
+        logger.exception("OIDC callback unexpected error: %s", exc)
+        return RedirectResponse(url="/login?sso_error=server_error", status_code=302)
+
+    redirect = RedirectResponse(url=next_path or "/viewer", status_code=302)
+    set_session_cookie(request, redirect, raw_token, max_age=int(SESSION_TTL.total_seconds()))
+    return redirect
+
+
+# ── SSO config admin API (issue-local-010) ───────────────────────────────────
+
+
+class SsoConfigBody(BaseModel):
+    enabled: bool = False
+    provider_preset: str = "generic"
+    issuer: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    scopes: str = "openid profile email"
+    button_label: str = "Sign in with SSO"
+    username_claim: str = "preferred_username"
+    role_claim: str = "roles"
+    role_mapping: dict[str, str] = {}
+    default_role: str = "threat-viewer"
+    auto_provision: bool = True
+
+
+@router.get("/sso/config")
+async def get_sso_config(_user: dict = Depends(require_admin)) -> dict:
+    """Return the current SSO config (client_secret redacted). Admin only."""
+    return load_sso_config()
+
+
+@router.put("/sso/config")
+async def update_sso_config(
+    body: SsoConfigBody,
+    _user: dict = Depends(require_admin),
+) -> dict:
+    """Validate and persist SSO config. Admin only.
+
+    Sends back the redacted config so the UI can reflect the saved state.
+    """
+    cfg = body.model_dump()
+    try:
+        save_sso_config(cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return load_sso_config()
+
+
+@router.get("/sso/callback-url")
+async def get_sso_callback_url(request: Request, _user: dict = Depends(require_admin)) -> dict:
+    """Return the OIDC callback URL that must be registered in the IdP. Admin only."""
+    from backend.auth.oidc import get_callback_url_for_display
+
+    return {"callback_url": get_callback_url_for_display(str(request.base_url))}
 
 
 @router.post("/login")
