@@ -20,6 +20,9 @@ secrets/
 # LLM provider config holds API keys; real file is generated at runtime,
 # only the .example template is committed (prompts-021D).
 config/llm-providers.yaml
+# SSO/OIDC config holds the client secret; real file is local-only,
+# only the .example template is committed (issue-local-010).
+config/sso.yaml
 
 # ──────────────────────────────────────────
 # Python

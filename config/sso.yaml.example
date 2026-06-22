@@ -1,0 +1,96 @@
+# SSO / OIDC configuration for Mizton-ThreatBox (issue-local-010)
+#
+# Copy this file to config/sso.yaml and fill in your IdP details.
+# config/sso.yaml is gitignored — never commit it (it contains your client secret).
+#
+# Alternatively, supply values via environment variables (take precedence over yaml):
+#   MIZTON_THREATBOX_SSO_ENABLED        — "true" / "false"
+#   MIZTON_THREATBOX_SSO_CLIENT_ID      — IdP application/client ID
+#   MIZTON_THREATBOX_SSO_CLIENT_SECRET  — IdP client secret (SPN secret)
+#   MIZTON_THREATBOX_SSO_ISSUER         — full issuer URL (or use TENANT_ID below)
+#   MIZTON_THREATBOX_SSO_TENANT_ID      — replaces <tenant_id> in the issuer URL
+#   MIZTON_THREATBOX_SSO_BUTTON_LABEL   — button text on the login page
+#   MIZTON_THREATBOX_SSO_DEFAULT_ROLE   — default app role for unmapped users
+#
+# Callback URL (register this as a Redirect URI / Web platform in your IdP):
+#   https://<your-host>/api/auth/oidc/callback
+#   (or include a sub-path prefix if you use app_base_prefix)
+# The exact URL is also shown in Configuration → SSO once you save a config.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE: Microsoft Entra ID (Azure AD)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# In the Azure Portal:
+#   1. App registrations → New registration
+#      - Redirect URI: Web → https://<your-host>/api/auth/oidc/callback
+#   2. Certificates & secrets → New client secret  (this is your SPN secret)
+#   3. Expose an API → App roles (optional, for role mapping)
+#      - Create roles: ThreatBox-Admin, ThreatBox-Researcher, ThreatBox-Viewer
+#      - Assign users/groups to roles
+#   4. Token configuration → Add groups claim (alternative to App Roles)
+#   5. API permissions → openid, profile, email  (delegated, admin consent)
+#
+enabled: true
+provider_preset: entra
+issuer: "https://login.microsoftonline.com/<your-tenant-id>/v2.0"
+client_id: "<your-client-id>"
+client_secret: "<your-client-secret-SPN-secret>"
+scopes: "openid profile email"
+button_label: "Sign in with Microsoft"
+
+# Claim that carries the user's role(s). For Entra App Roles use "roles".
+# For group claims use "groups" (returns GUIDs — map them below).
+username_claim: preferred_username
+role_claim: roles
+
+# Map IdP claim values → Mizton-ThreatBox roles.
+# For Entra App Roles the key is the role's "Value" (not display name).
+# For group claims the key is the group Object ID GUID.
+role_mapping:
+  ThreatBox-Admin: admin
+  ThreatBox-Researcher: threat-researcher
+  ThreatBox-Viewer: threat-viewer
+
+# Role given to SSO users whose claims don't match any entry above.
+default_role: threat-viewer
+
+# Automatically create a Mizton-ThreatBox account on first SSO login.
+# Set to false if you prefer to pre-create accounts manually.
+auto_provision: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE: Generic OIDC (Okta, Keycloak, Auth0, Google, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# enabled: true
+# provider_preset: generic         # or: okta / keycloak / google
+# issuer: "https://your-idp.example.com"   # must have /.well-known/openid-configuration
+# client_id: "<your-client-id>"
+# client_secret: "<your-client-secret>"
+# scopes: "openid profile email"
+# button_label: "Sign in with SSO"
+# username_claim: preferred_username
+# role_claim: roles
+# role_mapping:
+#   admin_group: admin
+#   researcher_group: threat-researcher
+# default_role: threat-viewer
+# auto_provision: true
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE: Google Workspace
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# enabled: true
+# provider_preset: google
+# issuer: "https://accounts.google.com"
+# client_id: "<your-client-id>.apps.googleusercontent.com"
+# client_secret: "<your-client-secret>"
+# scopes: "openid profile email"
+# button_label: "Sign in with Google"
+# username_claim: email
+# role_claim: ""       # Google OIDC doesn't carry group/role claims by default
+# role_mapping: {}
+# default_role: threat-viewer
+# auto_provision: true
