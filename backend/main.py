@@ -187,6 +187,9 @@ _PUBLIC_API_PATHS = frozenset(
         "/api/health",
         "/api/auth/login",
         "/api/auth/status",
+        # issue-local-010: OIDC flow endpoints — must be public (no session yet)
+        "/api/auth/oidc/login",
+        "/api/auth/oidc/callback",
     }
 )
 

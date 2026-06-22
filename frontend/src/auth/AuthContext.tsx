@@ -27,6 +27,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthContextValue['user']>(null)
   const [passwordPolicy, setPasswordPolicy] =
     useState<PasswordPolicy>(DEFAULT_PASSWORD_POLICY)
+  // issue-local-010: SSO availability
+  const [ssoEnabled, setSsoEnabled] = useState(false)
+  const [ssoButtonLabel, setSsoButtonLabel] = useState('Sign in with SSO')
 
   const loadMe = useCallback(async () => {
     try {
@@ -41,9 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const bootstrap = useCallback(async () => {
     setLoading(true)
     try {
-      const { auth_enabled, password_policy } = await api.auth.status()
+      const { auth_enabled, password_policy, sso_enabled, sso_button_label } = await api.auth.status()
       setAuthEnabled(auth_enabled)
       setPasswordPolicy(password_policy ?? DEFAULT_PASSWORD_POLICY)
+      setSsoEnabled(sso_enabled ?? false)
+      setSsoButtonLabel(sso_button_label ?? 'Sign in with SSO')
       if (auth_enabled) {
         await loadMe()
       } else {
@@ -93,6 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isResearcher: !authEnabled || role === 'admin' || role === 'threat-researcher',
     isViewer: !authEnabled || user !== null,
     passwordPolicy,
+    ssoEnabled,
+    ssoButtonLabel,
     login,
     logout,
     refresh: loadMe,

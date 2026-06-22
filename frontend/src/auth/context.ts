@@ -26,6 +26,10 @@ export interface AuthContextValue {
    */
   isViewer: boolean
   passwordPolicy: PasswordPolicy
+  /** issue-local-010: whether SSO/OIDC is enabled (published by /api/auth/status). */
+  ssoEnabled: boolean
+  /** issue-local-010: button label configured by the admin (e.g. "Sign in with Microsoft"). */
+  ssoButtonLabel: string
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   refresh: () => Promise<void>

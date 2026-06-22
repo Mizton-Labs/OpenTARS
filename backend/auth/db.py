@@ -22,6 +22,11 @@ users
   * must_change_password — 1 when the current password is a generated default
                     (first-run bootstrap or --reset-admin-password); the user is
                     forced to change it before any other action (prompts-047)
+  * idp           — NULL for local accounts; IdP identifier for SSO accounts
+                    (e.g. 'entra', 'google', 'generic') (issue-local-010)
+  * external_id   — NULL for local accounts; IdP subject claim (``sub``) for
+                    SSO accounts; used to match returning SSO users even if
+                    their username claim changes (issue-local-010)
 
 sessions
   * token_hash    — SHA-256 hex of the opaque session token (PK). The raw
@@ -30,6 +35,16 @@ sessions
   * user_id       — FK-ish reference to users.id
   * created_at    — UTC ISO8601
   * expires_at    — UTC ISO8601; lookups reject expired rows
+
+oidc_flows
+  Short-lived OIDC state table for Authorization Code flow (issue-local-010).
+  Stores the PKCE + state + nonce for each in-flight login until the callback
+  arrives.  Entries expire after 10 minutes and are deleted on use.
+  * state         — opaque random string (PK); validated in callback
+  * nonce         — random nonce embedded in ID token; validated after exchange
+  * code_verifier — PKCE verifier; sent in the token exchange
+  * next_path     — safe redirect destination after login (same-origin validated)
+  * expires_at    — UTC ISO8601; entries older than this are rejected
 
 Security note: this module deals only in *hashes*. Plaintext passwords and raw
 session tokens never touch disk. Hashing/token generation live in
@@ -50,7 +65,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 3
+_USERS_SCHEMA_VERSION = 4
 
 # Canonical role set (issue-local-002): expanded for the Threat Hunting module.
 # Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
@@ -89,6 +104,17 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 """
 
+# issue-local-010: OIDC in-flight flows (state / nonce / PKCE)
+CREATE_OIDC_FLOWS_TABLE = """
+CREATE TABLE IF NOT EXISTS oidc_flows (
+    state         TEXT NOT NULL PRIMARY KEY,
+    nonce         TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    next_path     TEXT NOT NULL DEFAULT '/',
+    expires_at    TEXT NOT NULL
+);
+"""
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -106,6 +132,7 @@ async def init_users_db() -> None:
         await db.execute(CREATE_SESSIONS_TABLE)
         await db.execute(CREATE_SESSIONS_IDX_USER)
         await db.execute(CREATE_SCHEMA_VERSION_TABLE)
+        await db.execute(CREATE_OIDC_FLOWS_TABLE)
         await _migrate_users_schema(db)
         cur = await db.execute("SELECT version FROM schema_version LIMIT 1")
         row = await cur.fetchone()
@@ -132,6 +159,12 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
       'sender' -> 'feed-sender'
     Uses UPDATE ... WHERE role = <old> so existing admins are untouched and the
     migration is idempotent (re-running on an already-migrated DB is a no-op).
+
+    v3 -> v4 (issue-local-010): SSO support.
+      - Add nullable ``idp`` column (IdP identifier for SSO accounts).
+      - Add nullable ``external_id`` column (IdP subject claim for SSO accounts).
+      - Ensure ``oidc_flows`` table exists (handled by CREATE_OIDC_FLOWS_TABLE in
+        init_users_db; listed here for documentation completeness).
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -155,6 +188,13 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
             "Migrating users schema v2->v3: renamed %d 'sender' role(s) to 'feed-sender'",
             cur.rowcount,
         )
+    # v4: SSO columns — ADD COLUMN is idempotent (no-op if column already exists)
+    if "idp" not in cols:
+        logger.info("Migrating users schema v3->v4: adding idp column")
+        await db.execute("ALTER TABLE users ADD COLUMN idp TEXT")
+    if "external_id" not in cols:
+        logger.info("Migrating users schema v3->v4: adding external_id column")
+        await db.execute("ALTER TABLE users ADD COLUMN external_id TEXT")
 
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
@@ -169,10 +209,15 @@ def _user_row_to_dict(row: Any) -> dict[str, Any]:
         "enabled": bool(row[4]),
         "created_at": row[5],
         "must_change_password": bool(row[6]),
+        # issue-local-010: SSO columns (may be absent in old rows before migration)
+        "idp": row[7] if len(row) > 7 else None,
+        "external_id": row[8] if len(row) > 8 else None,
     }
 
 
-_USER_COLS = "id, username, password_hash, role, enabled, created_at, must_change_password"
+_USER_COLS = (
+    "id, username, password_hash, role, enabled, created_at, must_change_password, idp, external_id"
+)
 
 
 async def create_user(
@@ -181,21 +226,30 @@ async def create_user(
     role: str = "threat-viewer",
     *,
     must_change_password: bool = False,
+    idp: str | None = None,
+    external_id: str | None = None,
 ) -> int:
-    """Insert a new user; return its id. Raises on duplicate username."""
+    """Insert a new user; return its id. Raises on duplicate username.
+
+    *idp* and *external_id* are set for SSO-provisioned accounts (issue-local-010).
+    Local accounts leave both as NULL.
+    """
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r}")
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute(
             "INSERT INTO users "
-            "(username, password_hash, role, enabled, created_at, must_change_password) "
-            "VALUES (?, ?, ?, 1, ?, ?)",
+            "(username, password_hash, role, enabled, created_at, must_change_password, "
+            " idp, external_id) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, ?)",
             (
                 username,
                 password_hash,
                 role,
                 _utc_now_iso(),
                 1 if must_change_password else 0,
+                idp,
+                external_id,
             ),
         )
         await db.commit()
@@ -213,6 +267,22 @@ async def get_user_by_username(username: str) -> dict[str, Any] | None:
 async def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute(f"SELECT {_USER_COLS} FROM users WHERE id = ?", (user_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return _user_row_to_dict(row) if row else None
+
+
+async def get_user_by_external_id(idp: str, external_id: str) -> dict[str, Any] | None:
+    """Return a user matched by SSO IdP + subject claim, or None (issue-local-010).
+
+    Used during OIDC callback to match a returning SSO user even if their
+    ``preferred_username`` claim has changed (e.g. an email rename in Entra).
+    """
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            f"SELECT {_USER_COLS} FROM users WHERE idp = ? AND external_id = ?",
+            (idp, external_id),
+        )
         row = await cur.fetchone()
         await cur.close()
     return _user_row_to_dict(row) if row else None
@@ -385,3 +455,62 @@ def _is_expired(expires_at: str) -> bool:
     if exp.tzinfo is None:
         exp = exp.replace(tzinfo=timezone.utc)
     return exp <= datetime.now(timezone.utc)
+
+
+# ── OIDC in-flight flows (issue-local-010) ────────────────────────────────────
+
+
+async def create_oidc_flow(
+    state: str,
+    nonce: str,
+    code_verifier: str,
+    next_path: str,
+    expires_at: str,
+) -> None:
+    """Insert a short-lived OIDC flow record."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO oidc_flows (state, nonce, code_verifier, next_path, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (state, nonce, code_verifier, next_path, expires_at),
+        )
+        await db.commit()
+
+
+async def consume_oidc_flow(state: str) -> dict[str, Any] | None:
+    """Fetch and delete an OIDC flow by state. Returns None if missing or expired.
+
+    Atomically consumes the record so replayed callbacks cannot reuse a state.
+    """
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT state, nonce, code_verifier, next_path, expires_at "
+            "FROM oidc_flows WHERE state = ?",
+            (state,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        if row is None:
+            return None
+        # Always delete (consumed or expired)
+        await db.execute("DELETE FROM oidc_flows WHERE state = ?", (state,))
+        await db.commit()
+
+    if _is_expired(row[4]):
+        return None
+    return {
+        "state": row[0],
+        "nonce": row[1],
+        "code_verifier": row[2],
+        "next_path": row[3],
+        "expires_at": row[4],
+    }
+
+
+async def purge_expired_oidc_flows() -> int:
+    """Delete all expired OIDC flow records; return the number removed."""
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM oidc_flows WHERE expires_at < ?", (now,))
+        await db.commit()
+        return cur.rowcount

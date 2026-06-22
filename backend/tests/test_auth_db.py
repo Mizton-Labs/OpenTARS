@@ -283,5 +283,5 @@ async def test_migration_adds_must_change_password_to_legacy_db(tmp_path, monkey
 
     async with aiosqlite.connect(db_path) as conn:
         cur = await conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert (await cur.fetchone())[0] == 3  # version bumped through v2 and v3
+        assert (await cur.fetchone())[0] == 4  # version bumped through v2, v3, and v4 (SSO)
         await cur.close()

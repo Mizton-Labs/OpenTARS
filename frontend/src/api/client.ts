@@ -19,6 +19,16 @@ const _prefix = getAppBasePrefix()
 const BASE = _prefix ? `${_prefix}/api` : 'api'
 
 /**
+ * Build the SSO/OIDC login initiation URL (issue-local-010).
+ * Navigating to this URL starts the Authorization Code flow.
+ * @param next  SPA path to return to after successful login (same-origin).
+ */
+export function ssoLoginUrl(next: string = '/viewer'): string {
+  const base = _prefix ? `${_prefix}/api/auth/oidc/login` : '/api/auth/oidc/login'
+  return `${base}?next=${encodeURIComponent(next)}`
+}
+
+/**
  * URL for the branding logo image (prompts-045). Uses the same relative BASE
  * as the API client so it resolves under any reverse-proxy prefix. Pass a
  * cache-buster (e.g. a counter bumped after upload/delete) to force the
@@ -369,6 +379,26 @@ export interface PasswordPolicy {
 export interface AuthStatus {
   auth_enabled: boolean
   password_policy?: PasswordPolicy
+  /** issue-local-010: SSO availability published by /api/auth/status */
+  sso_enabled?: boolean
+  sso_button_label?: string
+}
+
+/** SSO / OIDC configuration (issue-local-010). client_secret is always redacted. */
+export interface SsoConfig {
+  enabled: boolean
+  provider_preset: 'entra' | 'okta' | 'google' | 'keycloak' | 'generic'
+  issuer: string
+  client_id: string
+  /** Always "***" on reads — write-only field. */
+  client_secret: string
+  scopes: string
+  button_label: string
+  username_claim: string
+  role_claim: string
+  role_mapping: Record<string, string>
+  default_role: string
+  auto_provision: boolean
 }
 
 export const api = {
@@ -411,6 +441,14 @@ export const api = {
       }),
     deleteUser: (id: number) =>
       request<{ status: string; id: number }>(`/auth/users/${id}`, { method: 'DELETE' }),
+    // SSO config (issue-local-010) — admin only
+    getSsoConfig: () => request<SsoConfig>('/auth/sso/config'),
+    updateSsoConfig: (cfg: Partial<SsoConfig>) =>
+      request<SsoConfig>('/auth/sso/config', {
+        method: 'PUT',
+        body: JSON.stringify(cfg),
+      }),
+    getSsoCallbackUrl: () => request<{ callback_url: string }>('/auth/sso/callback-url'),
   },
 
   // Viewer

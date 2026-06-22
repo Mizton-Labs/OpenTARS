@@ -9,6 +9,58 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — SSO / OIDC authentication support (issue-local-010)
+
+- **Generic OIDC Authorization Code + PKCE flow** via `authlib>=1.3.0`. Works with Microsoft Entra ID (Azure AD), Okta, Google Workspace, Keycloak, Auth0, and any OIDC provider with a discovery document. Provider is selected via `provider_preset`; Entra is just one named preset.
+- **SSO coexists with local login**: the login page shows a configurable "Sign in with SSO" button above a divider and the existing username/password form. Local admin always works as a break-glass path.
+- **Write-only-secret config** at `config/sso.yaml` (gitignored). Mirrors `llm-providers.yaml` hygiene: `client_secret` is always redacted to `"***"` on reads; sentinel round-trips preserve the stored value. `config/sso.yaml.example` committed with annotated Entra, Google, and generic OIDC templates. Env overrides: `MIZTON_THREATBOX_SSO_ENABLED`, `..._SSO_CLIENT_ID`, `..._SSO_CLIENT_SECRET`, `..._SSO_ISSUER`, `..._SSO_TENANT_ID`, `..._SSO_BUTTON_LABEL`, `..._SSO_DEFAULT_ROLE`.
+- **Role mapping**: configurable `role_claim` (e.g. `roles` for Entra App Roles, `groups` for group GUIDs) with a `role_mapping` dict (claim value → app role). Most-privileged match wins when a user has multiple matching claims. Unmapped users get `default_role` (default `threat-viewer`).
+- **Auto-provisioning**: on first SSO login, a Mizton-ThreatBox account is automatically created with an unusable local password. `auto_provision: false` requires manual account creation. Returning SSO users are matched by `(idp, sub)` first (stable across email renames), then by username.
+- **DB schema v4 migration**: two nullable columns added to `users` (`idp`, `external_id`) for SSO account tracking; new `oidc_flows` table stores short-lived OIDC state/nonce/PKCE (10-min TTL, consumed atomically on callback to prevent replay). Migration is idempotent; existing local accounts are unaffected (both columns NULL).
+- **New backend modules**: `backend/auth/oidc_config.py` (config load/save/validate/redact/map_claims), `backend/auth/oidc.py` (discovery cache, PKCE, authorization URL builder, callback handler, ID-token verification via joserfc/JWKS, user upsert).
+- **New routes** (all under `/api/auth`):
+  - `GET /api/auth/oidc/login` — public; redirects browser to IdP authorize endpoint.
+  - `GET /api/auth/oidc/callback` — public; exchanges code, verifies ID token, mints `sf_session` cookie, 302-redirects to SPA; SSO errors redirected to `/login?sso_error=…`.
+  - `GET /api/auth/sso/config` — admin; returns redacted SSO config.
+  - `PUT /api/auth/sso/config` — admin; validates and persists SSO config.
+  - `GET /api/auth/sso/callback-url` — admin; returns the computed redirect URI to copy into the IdP registration.
+  - `GET /api/auth/status` extended: now publishes `sso_enabled` and `sso_button_label`.
+  - Both OIDC paths added to `_PUBLIC_API_PATHS` in `main.py`.
+- **Frontend**:
+  - `client.ts`: new `SsoConfig` type; `AuthStatus` extended with `sso_enabled`/`sso_button_label`; `api.auth.getSsoConfig/updateSsoConfig/getSsoCallbackUrl`; `ssoLoginUrl()` helper.
+  - `auth/context.ts` + `AuthContext.tsx`: `ssoEnabled`/`ssoButtonLabel` added to `AuthContextValue`, populated from `/status` on bootstrap.
+  - `Login.tsx`: SSO button (`LogIn` icon + configurable label) rendered above a divider when `ssoEnabled`; `?sso_error=` query param decoded to human-readable messages; `autoFocus` moved to password form only when SSO is visible.
+  - `SsoConfigTab.tsx`: new admin-only tab (Configuration → General → SSO / OIDC) — toggle, preset selector, issuer, client credentials (write-only masked secret), scopes, button label, username/role claim, role-mapping editor (dynamic rows), default-role selector, auto-provision toggle, read-only callback URL with copy button, setup guide.
+  - `Configuration.tsx`: `sso-config` tab added to `GENERAL_TABS` and tab renderer.
+- **Callback URL** (register this in your IdP): `https://<host>/api/auth/oidc/callback` (or `https://<host>/<base-prefix>/api/auth/oidc/callback` if using `app_base_prefix`). Exact URL shown in Configuration → SSO → Callback URL field.
+- **36 new backend tests** in `test_auth_issue_local_010.py`: config validation, secret redaction/merge, env overrides, tenant-ID substitution, `map_claims_to_role` (6 cases), DB v4 migration idempotency, `oidc_flows` create/consume/expiry roundtrips, `get_user_by_external_id`, URL sanitization and callback-URL builder, public allowlist, SSO endpoint structural checks.
+- **Breaking (existing tests)**: `test_auth_db.py::test_migration_adds_must_change_password_to_legacy_db` updated — schema version assertion changed from `3` → `4`.
+
+### Added — Execution/report workflow visibility, report prose fix, ruff CI fix (issue-local-009)
+
+- **Part 1 — Fine-grained workflow visibility for SIEM execution + report generation**:
+  - New DB helpers `append_run_step_log(run_id, entry)` (last-write-wins merge) and `set_run_generation_status(run_id, status)` in `db.py`.
+  - New `generation_status` values: `executing` (SIEM execution phase) and `reporting` (report generation phase).
+  - `executor._run_execution` now writes 5 fine-grained step_logs: `siem_connect`, `siem_submit`, `siem_poll` (live progress %), `siem_fetch`, `siem_interpret`. Sets `generation_status="executing"` on the run row during execution. Passes `run_id` to `write_report` for scoped report.
+  - `report_writer.write_report` now writes 4 fine-grained step_logs: `report_assemble`, `report_exec_summary`, `report_findings`, `report_render`. Sets `generation_status="reporting"` during generation, restores to `"completed"` when done. All step writes are soft-fail.
+  - Frontend: `STEP_ORDER` and `STEP_SHORT_LABELS` in `ThreatHunting.tsx` extended with 9 new step IDs (5 siem\_\* + 4 report\_\*). Poll condition widened to also poll during `executing` and `reporting` statuses. Generation status badge has new amber (`executing`) and purple (`reporting`) color treatments. `ProcessArrow.isRunning` covers all three active statuses.
+  - `WorkflowVisualizer.tsx`, `MermaidVisualizer.tsx`, `ReactFlowVisualizer.tsx` all updated with execution and report nodes/edges (+ approval gate node between pipeline and SIEM steps).
+  - `client.ts`: `THGenerationRecord.generation_status` union extended with `executing`/`reporting`; `THStepLog.status` and `THPhaseEntry.status` extended with `running` for in-progress steps.
+
+- **Part 2 — Fix: Executive Summary and Findings sections showed raw JSON**:
+  - `build_prompt()` gains `json_output: bool = True` param. When `False`, the system prompt omits all JSON-only directives and instead instructs the model to write clear prose. User prompt also drops the "return ONLY the JSON" suffix.
+  - `_generate_executive_summary` and `_generate_findings` in `report_writer.py` now call `build_prompt(..., json_output=False)`.
+  - New `_clean_prose_response(text)` helper in `report_writer.py`: strips ` ```json ``` ` fences; unwraps single-value JSON dicts (e.g. `{"executive_summary": "…"}` → the inner string). Applied to both prose LLM returns.
+  - `_interpret_results` in `executor.py` also updated to use `json_output=False` (SIEM interpretation always produces plain text).
+
+- **Part 3 — Fix: Ruff CI failures in test_th_issue_local_008.py**: 12× I001 (unsorted per-function imports) and 1× F401 (unused `asyncio` import) fixed via `ruff check --fix` + `ruff format`. All 13 errors resolved; tests still pass.
+
+- **21 new backend tests** in `test_th_issue_local_009.py`:
+  - `append_run_step_log`: insert, last-write-wins merge, no-op when run missing.
+  - `build_prompt(json_output=False)`: JSON directives absent; prose system prompt used.
+  - `_clean_prose_response`: passthrough, fence stripping, single-key dict unwrap (5 variants), multi-key dict preserved.
+  - Structural: executor `_step_log` helper + `run_id` param + step name coverage; report_writer `_report_step_log` + step name coverage.
+
 ### Added — Hunt-list process-arrow, IOC agent task, report findings, effort-aware tools (issue-local-008)
 
 - **2A — Always-visible process-arrow rail**: phase rail now rendered on every hunt-list card regardless of run state (was null for draft/never-run); live ticking timer when running (from run_created_at); total elapsed when finished; per-step tools-used pills + item/IOC counts inline on done steps (no longer click-to-expand); `list_hunt_packages` fixed subquery to use `ORDER BY created_at DESC` + adds `run_created_at` to projection.
