@@ -24,6 +24,7 @@ import LLMProvidersTab from './configuration/LLMProvidersTab'
 import SiemConnectorsTab from './configuration/SiemConnectorsTab'
 import AgentsConfigTab from './configuration/AgentsConfigTab'
 import ThreatHuntingSettingsTab from './configuration/ThreatHuntingSettingsTab'
+import SsoConfigTab from './configuration/SsoConfigTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
 import { getAppBasePrefix } from '../utils/basePrefix'
@@ -48,6 +49,7 @@ type Tab =
   | 'siem-connectors'
   | 'agents-config'
   | 'th-settings'
+  | 'sso-config'
 
 // General group: infrastructure / platform settings
 const GENERAL_TABS: { id: Tab; label: string }[] = [
@@ -55,6 +57,7 @@ const GENERAL_TABS: { id: Tab; label: string }[] = [
   { id: 'global-fields',   label: 'Global Field Defaults' },
   { id: 'llm-providers',   label: 'LLM Providers' },
   { id: 'siem-connectors', label: 'SIEM Connectors' },
+  { id: 'sso-config',      label: 'SSO / OIDC' },
 ]
 
 // Threat Intel group: ingestion sources and TI-scoped settings
@@ -180,6 +183,7 @@ export default function Configuration() {
         {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}
         {activeTab === 'agents-config'    && <AgentsConfigTab />}
         {activeTab === 'th-settings'      && <ThreatHuntingSettingsTab />}
+        {activeTab === 'sso-config'       && <SsoConfigTab />}
       </div>
     </div>
   )

@@ -46,6 +46,8 @@ function mockAuth(user: AuthUser) {
     isResearcher: user.role === 'admin' || user.role === 'threat-researcher',
     isViewer: true,
     passwordPolicy: { min_length: 8, required_classes: 3, max_bytes: 72 },
+    ssoEnabled: false,
+    ssoButtonLabel: 'Sign in with SSO',
     login: vi.fn(),
     logout: vi.fn(),
     refresh: vi.fn(),
