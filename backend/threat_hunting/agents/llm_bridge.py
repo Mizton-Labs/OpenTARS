@@ -149,25 +149,38 @@ def build_prompt(
     context_sections: list[tuple[str, str]],
     output_format: str,
     additional_instructions: str = "",
+    json_output: bool = True,
 ) -> tuple[str, str]:
     """Build a (system_prompt, user_prompt) pair for a hunting agent node.
 
     Args:
         task_description: One-sentence description of what this agent does.
         context_sections: List of (section_title, content) tuples.
-        output_format: Description of the expected JSON output structure.
+        output_format: Description of the expected output structure.
         additional_instructions: Optional extra constraints for the LLM.
+        json_output: When True (default) the system prompt instructs the model
+            to return valid JSON only.  Set to False for prose outputs such as
+            executive summaries and findings sections where JSON framing causes
+            the LLM to wrap its answer in a JSON object.
 
     Returns:
         (system_prompt, user_prompt) strings.
     """
-    system = (
-        "You are an expert Threat Intelligence and Threat Hunting analyst. "
-        "You produce structured, actionable analysis in JSON format. "
-        "Be precise, specific, and base all conclusions on the provided evidence. "
-        "Do not fabricate indicators, campaigns, or techniques not present in the evidence. "
-        "Always output valid JSON as instructed — no prose before or after the JSON block."
-    )
+    if json_output:
+        system = (
+            "You are an expert Threat Intelligence and Threat Hunting analyst. "
+            "You produce structured, actionable analysis in JSON format. "
+            "Be precise, specific, and base all conclusions on the provided evidence. "
+            "Do not fabricate indicators, campaigns, or techniques not present in the evidence. "
+            "Always output valid JSON as instructed — no prose before or after the JSON block."
+        )
+    else:
+        system = (
+            "You are an expert Threat Intelligence and Threat Hunting analyst. "
+            "You produce clear, precise, factual prose. "
+            "Be specific and base all conclusions on the provided evidence. "
+            "Do not fabricate indicators, campaigns, or techniques not present in the evidence."
+        )
 
     context_parts: list[str] = []
     for title, content in context_sections:
@@ -179,7 +192,10 @@ def build_prompt(
         user += "\n\n".join(context_parts) + "\n\n"
     if additional_instructions:
         user += f"Additional instructions: {additional_instructions}\n\n"
-    user += f"Output format (return ONLY the JSON, no markdown fences):\n{output_format}"
+    if json_output:
+        user += f"Output format (return ONLY the JSON, no markdown fences):\n{output_format}"
+    else:
+        user += f"Output format:\n{output_format}"
 
     return system, user
 
