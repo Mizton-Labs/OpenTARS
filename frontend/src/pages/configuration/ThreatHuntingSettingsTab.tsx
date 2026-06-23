@@ -51,7 +51,7 @@ export default function ThreatHuntingSettingsTab() {
     queryFn: () => api.getThReportFormats(),
   })
 
-  const [effort, setEffort] = useState<ResearchEffort>('medium')
+  const [effort, setEffort] = useState<ResearchEffort>('high')
   const [pdfEnabled, setPdfEnabled] = useState(true)
   const [markdownEnabled, setMarkdownEnabled] = useState(true)
   const [saved, setSaved] = useState(false)
@@ -84,7 +84,7 @@ export default function ThreatHuntingSettingsTab() {
 
   const isLoading = effortLoading || formatsLoading
   const isDirty =
-    effort !== (effortData?.th_research_effort ?? 'medium') ||
+    effort !== (effortData?.th_research_effort ?? 'high') ||
     pdfEnabled !== (formatsData?.th_report_formats?.pdf ?? true) ||
     markdownEnabled !== (formatsData?.th_report_formats?.markdown ?? true)
 

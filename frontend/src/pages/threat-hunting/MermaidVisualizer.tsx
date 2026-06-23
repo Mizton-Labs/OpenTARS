@@ -4,6 +4,11 @@
  *
  * issue-006-C: adds Threat Intel source nodes at the top of the diagram
  * (above intake_classifier), sourced from step_logs[intake_classifier].intake_sources.
+ *
+ * Current additions:
+ *   - Part 1a: evidence nodes use stadium shape ([...]) and teal classDef
+ *   - Part 1b: showSubtasks prop — renders subtask child nodes per step
+ *   - Part 1c: active node pulse animation injected into SVG after render
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -31,7 +36,7 @@ const STEP_LABELS: Record<string, string> = {
   report_render: 'Render Report',
 }
 
-function buildMermaidDiagram(genRecord: THGenerationRecord): string {
+function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false): string {
   const completed = new Set(genRecord.completed_steps ?? [])
   const active = genRecord.current_step ?? ''
 
@@ -47,7 +52,7 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
 
   const lines: string[] = ['flowchart TD']
 
-  // Source nodes (amber) — one per evidence source
+  // Source nodes — stadium shape ([...]) for Part 1a
   if (intakeSources.length > 0) {
     for (let i = 0; i < intakeSources.length; i++) {
       const src = intakeSources[i]
@@ -55,7 +60,8 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
         .replace(/"/g, "'")
         .slice(0, 30)
       const nodeId = `src_${i}`
-      lines.push(`  ${nodeId}["${safeLabel}\\n(${src.item_type})"]`)
+      // Stadium shape uses ([ ... ])
+      lines.push(`  ${nodeId}(["${safeLabel}\\n(${src.item_type})"])`)
     }
     lines.push('')
   }
@@ -94,6 +100,19 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     '',
   )
 
+  // Subtask nodes (Part 1b) — subroutine shape {[ ... ]}
+  if (showSubtasks) {
+    for (const stepLog of (genRecord.step_logs ?? [])) {
+      const toolsUsed = stepLog.tools_used ?? []
+      for (let i = 0; i < toolsUsed.length; i++) {
+        const subId = `sub_${stepLog.step}_${i}`
+        const toolName = toolsUsed[i].replace(/"/g, "'")
+        lines.push(`  ${subId}[["${toolName}"]]`)
+      }
+    }
+    lines.push('')
+  }
+
   // Source → intake_classifier edges
   for (let i = 0; i < intakeSources.length; i++) {
     lines.push(`  src_${i} --> intake_classifier`)
@@ -131,6 +150,18 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     '',
   )
 
+  // Subtask edges (Part 1b)
+  if (showSubtasks) {
+    for (const stepLog of (genRecord.step_logs ?? [])) {
+      const toolsUsed = stepLog.tools_used ?? []
+      for (let i = 0; i < toolsUsed.length; i++) {
+        const subId = `sub_${stepLog.step}_${i}`
+        lines.push(`  ${stepLog.step} --> ${subId}`)
+      }
+    }
+    lines.push('')
+  }
+
   // Style pipeline nodes
   for (const id of Object.keys(STEP_LABELS)) {
     lines.push(`  ${nodeStyle(id)}`)
@@ -138,6 +169,11 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
 
   // Approval gate style
   lines.push('  style approval_gate fill:#78350f,stroke:#f59e0b,color:#fef3c7')
+
+  // Part 1a: classDef for evidence nodes (teal category)
+  lines.push('  classDef evidence fill:#0e4f4f,stroke:#14b8a6,color:#ccfbf1')
+  // classDef for subtask nodes (violet/purple)
+  lines.push('  classDef subtask fill:#2d1b69,stroke:#7c3aed,color:#c4b5fd')
 
   // Style source nodes — color varies by sub_status (issue-local-011 Part 7c)
   for (let i = 0; i < intakeSources.length; i++) {
@@ -149,16 +185,35 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
     } else if (subStatus === 'error') {
       fill = '#7f1d1d'; stroke = '#ef4444'
     } else {
-      // partial, pending, or undefined → amber (original style)
-      fill = '#78350f'; stroke = '#f59e0b'
+      // partial, pending, or undefined → teal (Part 1a: distinct from amber agent style)
+      fill = '#0e4f4f'; stroke = '#14b8a6'
     }
-    lines.push(`  style src_${i} fill:${fill},stroke:${stroke},color:#fef3c7`)
+    lines.push(`  style src_${i} fill:${fill},stroke:${stroke},color:#ccfbf1`)
+    // Also assign to classDef evidence (additional styling via class)
+    lines.push(`  class src_${i} evidence`)
+  }
+
+  // Assign subtask class
+  if (showSubtasks) {
+    for (const stepLog of (genRecord.step_logs ?? [])) {
+      const toolsUsed = stepLog.tools_used ?? []
+      for (let i = 0; i < toolsUsed.length; i++) {
+        const subId = `sub_${stepLog.step}_${i}`
+        lines.push(`  class ${subId} subtask`)
+      }
+    }
   }
 
   return lines.join('\n')
 }
 
-export default function MermaidVisualizer({ genRecord }: { genRecord: THGenerationRecord }) {
+export default function MermaidVisualizer({
+  genRecord,
+  showSubtasks = false,
+}: {
+  genRecord: THGenerationRecord
+  showSubtasks?: boolean
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -179,12 +234,30 @@ export default function MermaidVisualizer({ genRecord }: { genRecord: THGenerati
           },
         })
 
-        const diagram = buildMermaidDiagram(genRecord)
+        const diagram = buildMermaidDiagram(genRecord, showSubtasks)
         const { svg } = await mermaid.render(`mermaid-pipeline-${Date.now()}`, diagram)
 
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg
           setError(null)
+
+          // Part 1c: inject active node pulse animation into the SVG
+          const active = genRecord.current_step
+          const container = containerRef.current
+          const styleEl = document.createElement('style')
+          styleEl.textContent = [
+            '@keyframes nodeGlow {',
+            '  0%,100% { filter: drop-shadow(0 0 6px #3b82f6); }',
+            '  50%      { filter: drop-shadow(0 0 14px #3b82f6); }',
+            '}',
+            '.active-node rect { animation: nodeGlow 1.5s ease-in-out infinite; }',
+          ].join('\n')
+          container.querySelector('svg')?.appendChild(styleEl)
+
+          if (active) {
+            const activeEl = container.querySelector(`#${CSS.escape(active)}`)
+            activeEl?.classList.add('active-node')
+          }
         }
       } catch (err) {
         if (!cancelled) setError(String(err))
@@ -195,9 +268,9 @@ export default function MermaidVisualizer({ genRecord }: { genRecord: THGenerati
     return () => {
       cancelled = true
     }
-    // Re-render whenever the active step or completed set changes
+    // Re-render whenever the active step, completed set, or showSubtasks changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genRecord.current_step, genRecord.completed_steps?.length])
+  }, [genRecord.current_step, genRecord.completed_steps?.length, showSubtasks])
 
   if (error) {
     return (

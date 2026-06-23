@@ -129,6 +129,26 @@ async def archive_package(pkg_id: str) -> None:
     await th_db.update_hunt_package(pkg_id, status="archived")
 
 
+@router.post("/packages/{pkg_id}/clone", response_model=HuntPackageOut, status_code=201)
+async def clone_package(pkg_id: str, body: dict, request: Request) -> dict:
+    """Clone a hunt package — copies evidence only, resets to draft.
+
+    issue-local-012: creates a new package with the provided name, copying all
+    evidence items (including file blobs) with parse_status reset to 'pending'.
+    Runs, reports, IOCs, and generation state are NOT copied.
+
+    Request body: {"name": "New package name"}
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    new_name = (body.get("name") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    return await th_db.clone_hunt_package(pkg_id, new_name, created_by=created_by)
+
+
 # ── Evidence: file upload ─────────────────────────────────────────────────────
 
 

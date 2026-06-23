@@ -16,7 +16,7 @@
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Shield, Trash2, ChevronRight, Timer } from 'lucide-react'
+import { Plus, Shield, Trash2, ChevronRight, Timer, Copy, UserCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -345,6 +345,13 @@ interface ConfirmTarget {
   label: string
 }
 
+// ── Clone dialog state ────────────────────────────────────────────────────────
+interface CloneTarget {
+  id: string
+  originalName: string
+  newName: string
+}
+
 export default function ThreatHunting() {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -353,6 +360,9 @@ export default function ThreatHunting() {
 
   // Part 4: archive confirmation
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null)
+
+  // Part 3b (clone): clone dialog state
+  const [cloneTarget, setCloneTarget] = useState<CloneTarget | null>(null)
 
   // Part 3b: theme
   const { theme, setTheme } = useHuntTheme()
@@ -375,6 +385,16 @@ export default function ThreatHunting() {
   const archiveMut = useMutation({
     mutationFn: (id: string) => api.threatHunting.archivePackage(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['th-packages'] }),
+  })
+
+  const cloneMut = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api.threatHunting.clonePackage(id, name),
+    onSuccess: (newPkg) => {
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setCloneTarget(null)
+      setSelectedId(newPkg.id)
+    },
   })
 
   if (selectedId) {
@@ -458,38 +478,61 @@ export default function ThreatHunting() {
             >
               <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium text-gray-100 truncate">{pkg.name}</p>
-                    <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
-                      {pkg.status}
-                    </span>
-                    {pkg.generation_status && pkg.generation_status !== 'completed' && (
-                      <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
-                        {pkg.generation_status.replace(/_/g, ' ')}
-                      </span>
-                    )}
-                  </div>
-                  {pkg.description && (
-                    <p className="text-xs text-gray-500 truncate mt-0.5">{pkg.description}</p>
-                  )}
-                  <p className="text-[10px] text-gray-600 mt-1">
-                    {pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''} ·{' '}
-                    {new Date(pkg.created_at).toLocaleDateString()}
-                  </p>
+                   <div className="flex items-center gap-2 flex-wrap">
+                     {/* Part 3a: text-base font-semibold */}
+                     <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
+                     <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+                       {pkg.status}
+                     </span>
+                     {pkg.generation_status && pkg.generation_status !== 'completed' && (
+                       <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
+                         {pkg.generation_status.replace(/_/g, ' ')}
+                       </span>
+                     )}
+                   </div>
+                   {/* Part 3a: text-sm text-gray-400 */}
+                   {pkg.description && (
+                     <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
+                   )}
+                   {/* Part 3a: text-xs text-gray-500; Part 5: created_by */}
+                   <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                     <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
+                     <span>·</span>
+                     <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
+                     {pkg.created_by && (
+                       <span className="flex items-center gap-0.5">
+                         <UserCircle className="w-3 h-3" />
+                         {pkg.created_by}
+                       </span>
+                     )}
+                   </p>
                   <ProcessArrow pkg={pkg} theme={theme} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {isResearcher && (
-                    <button
-                      className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
-                      title="Archive"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <>
+                      {/* Part 3b: Clone button */}
+                      <button
+                        className="btn-ghost p-1.5 text-gray-600 hover:text-brand-400"
+                        title="Clone hunt package"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setCloneTarget({ id: pkg.id, originalName: pkg.name, newName: `Copy of ${pkg.name}` })
+                        }}
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
+                        title="Archive"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })
+                        }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
                   )}
                   <ChevronRight className="w-4 h-4 text-gray-600" />
                 </div>
@@ -518,6 +561,46 @@ export default function ThreatHunting() {
           }}
           onCancel={() => setConfirmTarget(null)}
         />
+      )}
+
+      {/* Part 3b: Clone dialog */}
+      {cloneTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+            <h2 className="text-base font-semibold text-gray-100">Clone Hunt Package</h2>
+            <p className="text-sm text-gray-400">
+              Enter a name for the cloned package (cloning &quot;{cloneTarget.originalName}&quot;).
+            </p>
+            <input
+              className="input w-full"
+              value={cloneTarget.newName}
+              onChange={(e) => setCloneTarget({ ...cloneTarget, newName: e.target.value })}
+              placeholder="New package name"
+              autoFocus
+            />
+            {cloneMut.isError && (
+              <p className="text-xs text-red-400">
+                Clone failed: {cloneMut.error instanceof Error ? cloneMut.error.message : String(cloneMut.error)}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn-ghost text-sm"
+                onClick={() => { setCloneTarget(null); cloneMut.reset() }}
+                disabled={cloneMut.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-sm flex items-center gap-2"
+                disabled={!cloneTarget.newName.trim() || cloneMut.isPending}
+                onClick={() => cloneMut.mutate({ id: cloneTarget.id, name: cloneTarget.newName.trim() })}
+              >
+                {cloneMut.isPending ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Cloning…</> : 'Clone'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

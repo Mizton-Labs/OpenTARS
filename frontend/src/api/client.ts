@@ -702,6 +702,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ agent_workflow_visualization: value }),
     }),
+  getAgentShowSubtasks: () => request<{ agent_workflow_show_subtasks: boolean }>('/app/agent-show-subtasks'),
+  setAgentShowSubtasks: (value: boolean) =>
+    request<{ agent_workflow_show_subtasks: boolean }>('/app/agent-show-subtasks', {
+      method: 'PUT',
+      body: JSON.stringify({ agent_workflow_show_subtasks: value }),
+    }),
   getThResearchEffort: () => request<{ th_research_effort: string }>('/app/th-research-effort'),
   setThResearchEffort: (value: string) =>
     request<{ th_research_effort: string }>('/app/th-research-effort', {
@@ -993,6 +999,11 @@ export const api = {
     archivePackage: (id: string) =>
       request<void>(`/threat-hunting/packages/${encodeURIComponent(id)}`, {
         method: 'DELETE',
+      }),
+    clonePackage: (pkgId: string, name: string) =>
+      request<THuntPackage>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/clone`, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
       }),
 
     // Evidence — file upload (multipart, with XHR progress reporting)

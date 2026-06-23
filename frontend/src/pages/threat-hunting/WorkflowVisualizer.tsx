@@ -18,9 +18,13 @@
  *   - tools_used pills per step in timeline view
  *   - decision sub-text per step in timeline view
  *   - 2-col layout: always-visible compact task list on left + diagram on right
+ *
+ * Current additions (Part 1b):
+ *   - showSubtasks toggle toolbar row above diagram
+ *   - passes showSubtasks prop to MermaidVisualizer / ReactFlowVisualizer
  */
 
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import {
   CheckCircle,
   Loader2,
@@ -300,6 +304,19 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
     staleTime: 30_000,
   })
 
+  // Part 1b: show-subtasks setting
+  const { data: subtasksData } = useQuery({
+    queryKey: ['agent-show-subtasks'],
+    queryFn: () => api.getAgentShowSubtasks(),
+    staleTime: 30_000,
+  })
+  const showSubtasksDefault = subtasksData?.agent_workflow_show_subtasks ?? false
+  const [showSubtasks, setShowSubtasks] = useState(false)
+
+  useEffect(() => {
+    setShowSubtasks(showSubtasksDefault)
+  }, [showSubtasksDefault])
+
   const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as 'info' | 'verbose' | 'debug'
   const visualization = (vizData?.agent_workflow_visualization ?? 'timeline') as 'timeline' | 'mermaid' | 'reactflow'
 
@@ -339,9 +356,36 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   // Verbose / Debug — issue-006-C: 2-col layout (task list LEFT, diagram RIGHT)
   const debug = verbosity === 'debug'
 
+  // Part 1b: toolbar row component
+  const SubtasksToolbar = (
+    <div className="col-span-2 flex items-center gap-3 pb-1 border-b border-gray-800/50">
+      <button
+        className="text-xs text-gray-400 flex items-center gap-1.5 cursor-pointer select-none hover:text-gray-200 transition-colors"
+        onClick={() => {
+          const next = !showSubtasks
+          setShowSubtasks(next)
+          // fire-and-forget
+          void api.setAgentShowSubtasks(next)
+        }}
+      >
+        <span
+          className={clsx(
+            'inline-block w-3 h-3 border rounded-sm flex-shrink-0 transition-colors',
+            showSubtasks
+              ? 'bg-brand-500 border-brand-400'
+              : 'bg-transparent border-gray-600',
+          )}
+        />
+        Show subtasks
+      </button>
+    </div>
+  )
+
   if (visualization === 'mermaid') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        {/* Part 1b: toolbar row spans both columns */}
+        {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
           <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
@@ -356,7 +400,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
               </div>
             }
           >
-            <MermaidVisualizer genRecord={genRecord} />
+            <MermaidVisualizer genRecord={genRecord} showSubtasks={showSubtasks} />
           </Suspense>
         </div>
       </div>
@@ -366,6 +410,8 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   if (visualization === 'reactflow') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        {/* Part 1b: toolbar row spans both columns */}
+        {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
           <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
@@ -380,7 +426,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
               </div>
             }
           >
-            <ReactFlowVisualizer genRecord={genRecord} />
+            <ReactFlowVisualizer genRecord={genRecord} showSubtasks={showSubtasks} />
           </Suspense>
         </div>
       </div>

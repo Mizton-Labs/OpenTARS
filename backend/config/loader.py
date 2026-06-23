@@ -422,7 +422,7 @@ def save_watcher_max_events(value: int) -> None:
 #   verbose — animated pipeline card: per-step status, tools, timing, item counts
 #   debug   — verbose + scoped backend log buffer in a bottom textbox
 
-_AGENT_VERBOSITY_DEFAULT = "info"
+_AGENT_VERBOSITY_DEFAULT = "debug"  # issue-local-012: changed from "info"
 _AGENT_VERBOSITY_VALUES = frozenset({"info", "verbose", "debug"})
 
 
@@ -456,7 +456,7 @@ def save_agent_verbosity(value: str) -> None:
 #   mermaid   — live Mermaid flowchart diagram (lazy-loaded)
 #   reactflow — interactive ReactFlow node/edge graph (lazy-loaded)
 
-_AGENT_VISUALIZATION_DEFAULT = "timeline"
+_AGENT_VISUALIZATION_DEFAULT = "reactflow"  # issue-local-012: changed from "timeline"
 _AGENT_VISUALIZATION_VALUES = frozenset({"timeline", "mermaid", "reactflow"})
 
 
@@ -490,7 +490,7 @@ def save_agent_visualization(value: str) -> None:
 #   medium — current defaults (balanced)
 #   low    — minimal output; always runs IOC extraction + deep retrohunt
 
-_TH_RESEARCH_EFFORT_DEFAULT = "medium"
+_TH_RESEARCH_EFFORT_DEFAULT = "high"  # issue-local-012: changed from "medium"
 _TH_RESEARCH_EFFORT_VALUES = frozenset({"high", "medium", "low"})
 
 
@@ -816,6 +816,31 @@ def load_password_policy() -> dict[str, int]:
 
 _MAX_DECOMPRESSED_DEFAULT = 100 * 1024 * 1024  # 100 MiB
 _MAX_DECOMPRESSED_MIN = 1024  # 1 KiB lower bound (sanity)
+
+
+# ── Agent workflow granular subtasks toggle (issue-local-012) ────────────────
+# Controls whether the workflow diagram shows derived granular subtask nodes
+# (evidence items per intake step, tool-call nodes per agent step) in addition
+# to the main pipeline and evidence nodes.
+#   false — show main nodes only (default)
+#   true  — also show granular subtask nodes (derived from tools_used/intake_sources)
+
+_AGENT_SHOW_SUBTASKS_DEFAULT = False
+
+
+def load_agent_show_subtasks() -> bool:
+    """Return whether granular subtask nodes are shown in the workflow diagram."""
+    raw = load_app_config().get("agent_workflow_show_subtasks", _AGENT_SHOW_SUBTASKS_DEFAULT)
+    return bool(raw)
+
+
+def save_agent_show_subtasks(value: bool) -> None:
+    """Persist the agent workflow show_subtasks flag to application.yaml."""
+    if not isinstance(value, bool):
+        raise ValueError("agent_workflow_show_subtasks must be a boolean")
+    data = load_app_config()
+    data["agent_workflow_show_subtasks"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
 
 
 def load_max_decompressed_bytes() -> int:

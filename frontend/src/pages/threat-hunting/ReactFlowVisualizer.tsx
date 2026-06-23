@@ -4,6 +4,12 @@
  *
  * issue-006-C: adds Threat Intel source nodes above intake_classifier,
  * distributed horizontally at y=-120.
+ *
+ * Current additions:
+ *   - Part 1a: evidence source nodes use pill/capsule shape (borderRadius 20px) +
+ *              dashed border + teal fallback color for pending/undefined sub_status
+ *   - Part 1b: showSubtasks prop — renders subtask child nodes per step
+ *   - Part 1c: active node gets .node-active class for CSS pulse animation
  */
 
 import { useMemo } from 'react'
@@ -78,7 +84,13 @@ function nodeBorderColor(id: string, completed: Set<string>, active: string): st
   return '#374151'
 }
 
-export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenerationRecord }) {
+export default function ReactFlowVisualizer({
+  genRecord,
+  showSubtasks = false,
+}: {
+  genRecord: THGenerationRecord
+  showSubtasks?: boolean
+}) {
   const completed = useMemo(() => new Set(genRecord.completed_steps ?? []), [genRecord.completed_steps])
   const active = genRecord.current_step ?? ''
 
@@ -94,6 +106,8 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
       id: s.id,
       position: { x: s.x, y: s.y },
       data: { label: s.label },
+      // Part 1c: apply .node-active class for the CSS glow animation
+      className: active === s.id ? 'node-active' : undefined,
       style: {
         background: nodeColor(s.id, completed, active),
         border: `1px solid ${nodeBorderColor(s.id, completed, active)}`,
@@ -108,45 +122,79 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
     }))
 
     // Source nodes — color by sub_status (issue-local-011 Part 7d)
-    if (intakeSources.length === 0) return pipelineNodes
-    const totalWidth = 500
-    const spacing = intakeSources.length > 1 ? totalWidth / (intakeSources.length - 1) : 0
-    const startX = intakeSources.length === 1 ? 250 : 0
-    const sourceNodes: Node[] = intakeSources.map((src, i) => {
-      const subStatus = src.sub_status
-      let bg: string, border: string, color: string
-      if (subStatus === 'ok') {
-        bg = '#14532d'; border = '1px solid #22c55e'; color = '#d1fae5'
-      } else if (subStatus === 'error') {
-        bg = '#7f1d1d'; border = '1px solid #ef4444'; color = '#fee2e2'
-      } else if (subStatus === 'partial') {
-        bg = '#78350f'; border = '1px solid #f59e0b'; color = '#fef3c7'
-      } else {
-        // pending or undefined → gray
-        bg = '#1f2937'; border = '1px solid #374151'; color = '#6b7280'
-      }
-      return {
-        id: `src_${i}`,
-        position: { x: startX + i * spacing, y: -120 },
-        data: {
-          label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
-        },
-        style: {
-          background: bg,
-          border,
-          color,
-          borderRadius: '8px',
-          padding: '4px 10px',
-          fontSize: '10px',
-          fontWeight: 500,
-          minWidth: '120px',
-          textAlign: 'center' as const,
-        },
-      }
-    })
+    // Part 1a: pill shape (borderRadius 20px) + dashed border + teal for pending/undefined
+    const sourceNodes: Node[] = (() => {
+      if (intakeSources.length === 0) return []
+      const totalWidth = 500
+      const spacing = intakeSources.length > 1 ? totalWidth / (intakeSources.length - 1) : 0
+      const startX = intakeSources.length === 1 ? 250 : 0
+      return intakeSources.map((src, i) => {
+        const subStatus = src.sub_status
+        let bg: string, borderColor: string, color: string
+        if (subStatus === 'ok') {
+          bg = '#14532d'; borderColor = '#22c55e'; color = '#d1fae5'
+        } else if (subStatus === 'error') {
+          bg = '#7f1d1d'; borderColor = '#ef4444'; color = '#fee2e2'
+        } else if (subStatus === 'partial') {
+          bg = '#78350f'; borderColor = '#f59e0b'; color = '#fef3c7'
+        } else {
+          // pending or undefined → teal (Part 1a distinct color)
+          bg = '#0e4f4f'; borderColor = '#14b8a6'; color = '#ccfbf1'
+        }
+        return {
+          id: `src_${i}`,
+          position: { x: startX + i * spacing, y: -120 },
+          data: {
+            label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
+          },
+          style: {
+            background: bg,
+            // Part 1a: dashed border + pill/capsule shape
+            border: `1px dashed ${borderColor}`,
+            borderRadius: '20px',
+            color,
+            padding: '4px 10px',
+            fontSize: '10px',
+            fontWeight: 500,
+            minWidth: '120px',
+            textAlign: 'center' as const,
+          },
+        }
+      })
+    })()
 
-    return [...sourceNodes, ...pipelineNodes]
-  }, [completed, active, intakeSources])
+    // Part 1b: subtask nodes
+    const subtaskNodes: Node[] = (() => {
+      if (!showSubtasks) return []
+      const result: Node[] = []
+      for (const stepLog of (genRecord.step_logs ?? [])) {
+        const toolsUsed = stepLog.tools_used ?? []
+        // Find the parent step's position
+        const parentStep = PIPELINE_STEPS.find((s) => s.id === stepLog.step)
+        if (!parentStep) continue
+        const count = toolsUsed.length
+        for (let i = 0; i < count; i++) {
+          const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * 120
+          result.push({
+            id: `sub_${stepLog.step}_${i}`,
+            position: { x: parentStep.x + offsetX, y: parentStep.y + 80 },
+            data: { label: toolsUsed[i] },
+            style: {
+              background: '#2d1b69',
+              border: '1px solid #7c3aed',
+              borderRadius: '4px',
+              color: '#c4b5fd',
+              fontSize: '10px',
+              padding: '4px 8px',
+            },
+          })
+        }
+      }
+      return result
+    })()
+
+    return [...sourceNodes, ...pipelineNodes, ...subtaskNodes]
+  }, [completed, active, intakeSources, showSubtasks, genRecord.step_logs])
 
   const edges: Edge[] = useMemo(() => {
     const pipelineEdges: Edge[] = PIPELINE_EDGES_DEF.map((e, i) => ({
@@ -162,12 +210,31 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
       id: `src_e${i}`,
       source: `src_${i}`,
       target: 'intake_classifier',
-      style: { stroke: '#f59e0b', strokeWidth: 1, strokeDasharray: '4 2' },
+      style: { stroke: '#14b8a6', strokeWidth: 1, strokeDasharray: '4 2' },
       animated: false,
     }))
 
-    return [...sourceEdges, ...pipelineEdges]
-  }, [active, intakeSources])
+    // Part 1b: subtask edges
+    const subtaskEdges: Edge[] = (() => {
+      if (!showSubtasks) return []
+      const result: Edge[] = []
+      for (const stepLog of (genRecord.step_logs ?? [])) {
+        const toolsUsed = stepLog.tools_used ?? []
+        for (let i = 0; i < toolsUsed.length; i++) {
+          result.push({
+            id: `sub_e_${stepLog.step}_${i}`,
+            source: stepLog.step,
+            target: `sub_${stepLog.step}_${i}`,
+            style: { stroke: '#7c3aed', strokeWidth: 1, strokeDasharray: '3 2' },
+            animated: false,
+          })
+        }
+      }
+      return result
+    })()
+
+    return [...sourceEdges, ...pipelineEdges, ...subtaskEdges]
+  }, [active, intakeSources, showSubtasks, genRecord.step_logs])
 
   const graphHeight = intakeSources.length > 0 ? 1000 : 900
 

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from backend.auth.dependencies import require_admin_when_enabled
 from backend.config.loader import (
+    load_agent_show_subtasks,
     load_agent_tools,
     load_agent_verbosity,
     load_agent_visualization,
@@ -25,6 +26,7 @@ from backend.config.loader import (
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
+    save_agent_show_subtasks,
     save_agent_tools,
     save_agent_verbosity,
     save_agent_visualization,
@@ -265,6 +267,34 @@ async def set_agent_visualization(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"agent_workflow_visualization": value}
+
+
+# ── Agent workflow granular subtasks toggle (issue-local-012) ────────────────
+
+
+@router.get("/agent-show-subtasks")
+async def get_agent_show_subtasks() -> dict[str, bool]:
+    """Return whether granular subtask nodes are shown in the workflow diagram."""
+    return {"agent_workflow_show_subtasks": load_agent_show_subtasks()}
+
+
+@router.put("/agent-show-subtasks")
+async def set_agent_show_subtasks(
+    body: dict,
+    _user: object = Depends(require_admin_when_enabled),
+) -> dict[str, bool]:
+    """Persist the granular subtasks toggle."""
+    value = body.get("agent_workflow_show_subtasks")
+    if not isinstance(value, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'agent_workflow_show_subtasks' as a boolean",
+        )
+    try:
+        save_agent_show_subtasks(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"agent_workflow_show_subtasks": value}
 
 
 # ── Threat Hunting research effort (issue-local-004) ─────────────────────────
