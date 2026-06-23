@@ -8,6 +8,11 @@
  *      with a per-card status glyph (✓ · ✕ · ⟳ · ⊘ · ⋯) for color-independent scanning.
  *   4. Fixed active-step detection — keep last entry per step (handles parallel fan-out
  *      and duplicate step names); derive running step correctly.
+ *
+ * issue-local-011:
+ *   5. Card size reduced to ~1.25x original (Part 3a).
+ *   6. 2-theme system (Classic / Modern) stored in localStorage (Part 3b).
+ *   7. Delete/archive confirmation dialog (Part 4).
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -17,6 +22,8 @@ import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { useHuntTheme, type HuntTheme } from './threat-hunting/useHuntTheme'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -79,9 +86,10 @@ interface PhaseCardProps {
   stepId: string
   currentStep: string | null | undefined
   isLast: boolean
+  theme: HuntTheme
 }
 
-function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
+function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps) {
   const isActive = currentStep === stepId
   const isPartial = phase?.status === 'partial'
   const isDone = phase?.status === 'ok' || isPartial
@@ -106,35 +114,54 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
           ? 'skipped'
           : 'pending'
 
+  // ── Theme-specific card body classes ──────────────────────────────────────
+  const classicActive   = 'border-blue-400 bg-blue-800/60 text-blue-100 animate-pulse'
+  const classicDone     = isPartial
+    ? 'border-amber-400 bg-amber-800/50 text-amber-100'
+    : 'border-green-500 bg-green-800/60 text-green-100'
+  const classicError    = 'border-red-500 bg-red-800/60 text-red-100'
+  const classicSkipped  = 'border-gray-600 bg-gray-800/50 text-gray-400'
+  const classicPending  = 'border-gray-700 border-dashed bg-gray-900/50 text-gray-600'
+
+  const modernActive    = 'border border-blue-500/60 bg-blue-900/30 text-blue-200 animate-pulse'
+  const modernDone      = isPartial
+    ? 'border border-amber-500/60 bg-amber-900/20 text-amber-200'
+    : 'border border-green-600/50 bg-green-900/20 text-green-200'
+  const modernError     = 'border border-red-500/50 bg-red-900/20 text-red-300'
+  const modernSkipped   = 'border border-gray-600/40 bg-gray-800/30 text-gray-500'
+  const modernPending   = 'border border-gray-700/30 border-dashed bg-gray-900/20 text-gray-600'
+
+  const isClassic = theme === 'classic'
+  const bodyClass = isActive
+    ? (isClassic ? classicActive : modernActive)
+    : isDone
+      ? (isClassic ? classicDone : modernDone)
+      : isError
+        ? (isClassic ? classicError : modernError)
+        : isSkipped
+          ? (isClassic ? classicSkipped : modernSkipped)
+          : isPending
+            ? (isClassic ? classicPending : modernPending)
+            : (isClassic ? classicPending : modernPending)
+
   return (
-    <div className="flex items-start gap-1.5">
+    <div className="flex items-start gap-1">
       <div className="flex flex-col">
         {/* ── Card body ── */}
         <div
           className={clsx(
-            'px-4 py-2.5 rounded text-[15px] font-semibold border-2 transition-all min-w-[104px] text-center select-none',
-            // Solid fills — high contrast against the bg-gray-900 card background.
-            // Border-2 so the color line is clearly visible at small sizes.
-            isActive
-              ? 'border-blue-400 bg-blue-800/60 text-blue-100 animate-pulse'
-              : isDone
-                ? isPartial
-                  ? 'border-amber-400 bg-amber-800/50 text-amber-100'
-                  : 'border-green-500 bg-green-800/60 text-green-100'
-                : isError
-                  ? 'border-red-500 bg-red-800/60 text-red-100'
-                  : isSkipped
-                    ? 'border-gray-600 bg-gray-800/50 text-gray-400'
-                    : isPending
-                      ? 'border-gray-700 border-dashed bg-gray-900/50 text-gray-600'
-                      : 'border-gray-700 bg-gray-900/50 text-gray-600',
+            // Part 3a: reduced sizing (px-3 py-2 text-[13px] min-w-[88px])
+            'px-3 py-2 rounded text-[13px] font-semibold transition-all min-w-[88px] text-center select-none',
+            isClassic ? 'border-2' : '',
+            bodyClass,
           )}
           title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
         >
           {/* Glyph + step name */}
-          <div className="flex items-center justify-center gap-1.5">
+          <div className="flex items-center justify-center gap-1">
             <span className={clsx(
-              'text-[18px] font-bold leading-none',
+              // Part 3a: glyph text-[15px]
+              'text-[15px] font-bold leading-none',
               isActive ? 'text-blue-200' :
               isDone ? isPartial ? 'text-amber-300' : 'text-green-300' :
               isError ? 'text-red-300' :
@@ -147,10 +174,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
             </span>
           </div>
 
-          {/* Status word + elapsed */}
-          <div className="flex items-center justify-center gap-1.5 mt-1">
+          {/* Status word + elapsed — Part 3a: text-[10px] mt-0.5 */}
+          <div className="flex items-center justify-center gap-1.5 mt-0.5">
             <span className={clsx(
-              'text-[12px] font-normal leading-none',
+              'text-[10px] font-normal leading-none',
               isActive ? 'text-blue-300' :
               isDone ? isPartial ? 'text-amber-400' : 'text-green-400' :
               isError ? 'text-red-400' :
@@ -160,25 +187,25 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
               {statusWord}
             </span>
             {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
-              <span className="text-[12px] font-mono opacity-60 leading-none">
+              <span className="text-[10px] font-mono opacity-60 leading-none">
                 {phase.elapsed_s}s
               </span>
             )}
           </div>
         </div>
 
-        {/* ── Inline detail (done steps only) ── */}
+        {/* ── Inline detail (done steps only) — Part 3a: max-w-[112px] text-[10px] ── */}
         {isDone && (hasCounts || hasTools) && (
-          <div className="mt-1 space-y-0.5 max-w-[132px]" onClick={(e) => e.stopPropagation()}>
+          <div className="mt-1 space-y-0.5 max-w-[112px]" onClick={(e) => e.stopPropagation()}>
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
-                  <span className="text-[12px] font-mono text-brand-400 leading-none">
+                  <span className="text-[10px] font-mono text-brand-400 leading-none">
                     {phase!.item_count} items
                   </span>
                 )}
                 {phase!.ioc_count != null && (
-                  <span className="text-[12px] font-mono text-blue-400 leading-none">
+                  <span className="text-[10px] font-mono text-blue-400 leading-none">
                     {phase!.ioc_count} IOC{phase!.noisy_count ? ` (${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
@@ -189,7 +216,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
                 {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[12px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
+                    className="text-[10px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
                     title={t}
                   >
                     {t.replace(/_/g, ' ')}
@@ -201,8 +228,9 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
         )}
       </div>
 
+      {/* Part 3a: arrow w-3.5 h-3.5 mt-3 */}
       {!isLast && (
-        <ChevronRight className="w-4 h-4 text-gray-500 shrink-0 mt-4" />
+        <ChevronRight className="w-3.5 h-3.5 text-gray-500 shrink-0 mt-3" />
       )}
     </div>
   )
@@ -210,9 +238,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
 
 interface ProcessArrowProps {
   pkg: THuntPackage
+  theme: HuntTheme
 }
 
-function ProcessArrow({ pkg }: ProcessArrowProps) {
+function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
   // fix: keep the LAST entry per step so a re-run ok overrides an earlier error,
   // and parallel steps (threat_context_builder / deep_retrohunt_planner) both appear.
   const phaseByStep: Record<string, THPhaseEntry> = {}
@@ -297,6 +326,7 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
             stepId={stepId}
             currentStep={runningStep}
             isLast={i === STEP_ORDER.length - 1}
+            theme={theme}
           />
         ))}
       </div>
@@ -308,11 +338,24 @@ function ProcessArrow({ pkg }: ProcessArrowProps) {
   )
 }
 
+// ── Confirm dialog state type (Part 4) ────────────────────────────────────────
+interface ConfirmTarget {
+  id: string
+  type: 'archive'
+  label: string
+}
+
 export default function ThreatHunting() {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
   const [showWizard, setShowWizard] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // Part 4: archive confirmation
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null)
+
+  // Part 3b: theme
+  const { theme, setTheme } = useHuntTheme()
 
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
@@ -343,6 +386,10 @@ export default function ThreatHunting() {
     )
   }
 
+  // Modern theme outer card classes
+  const modernCard = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
+  const classicCard = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -352,12 +399,41 @@ export default function ThreatHunting() {
             Agentic Threat Hunting Operations Framework
           </p>
         </div>
-        {isResearcher && (
-          <button className="btn-primary flex items-center gap-2" onClick={() => setShowWizard(true)}>
-            <Plus className="w-4 h-4" />
-            New Hunt Package
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Part 3b: Theme toggle segmented control */}
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-xs">
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                theme === 'classic'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setTheme('classic')}
+              title="Classic theme"
+            >
+              Classic
+            </button>
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                theme === 'modern'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setTheme('modern')}
+              title="Modern theme"
+            >
+              Modern
+            </button>
+          </div>
+          {isResearcher && (
+            <button className="btn-primary flex items-center gap-2" onClick={() => setShowWizard(true)}>
+              <Plus className="w-4 h-4" />
+              New Hunt Package
+            </button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -377,7 +453,7 @@ export default function ThreatHunting() {
           {packages.map((pkg: THuntPackage) => (
             <div
               key={pkg.id}
-              className="card cursor-pointer hover:bg-gray-800/60 transition-colors"
+              className={theme === 'modern' ? modernCard : classicCard}
               onClick={() => setSelectedId(pkg.id)}
             >
               <div className="flex items-start gap-4">
@@ -400,14 +476,17 @@ export default function ThreatHunting() {
                     {pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''} ·{' '}
                     {new Date(pkg.created_at).toLocaleDateString()}
                   </p>
-                  <ProcessArrow pkg={pkg} />
+                  <ProcessArrow pkg={pkg} theme={theme} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {isResearcher && (
                     <button
                       className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
                       title="Archive"
-                      onClick={(e) => { e.stopPropagation(); archiveMut.mutate(pkg.id) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })
+                      }}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -424,6 +503,20 @@ export default function ThreatHunting() {
         <HuntPackageWizard
           onClose={() => setShowWizard(false)}
           onCreated={(id) => { setShowWizard(false); setSelectedId(id) }}
+        />
+      )}
+
+      {/* Part 4: Archive confirmation dialog */}
+      {confirmTarget && (
+        <ConfirmDialog
+          title="Archive Hunt Package?"
+          message={`This will archive the hunt package and all its analysis runs. You can restore it from the archived view.`}
+          confirmLabel="Archive"
+          onConfirm={() => {
+            archiveMut.mutate(confirmTarget.id)
+            setConfirmTarget(null)
+          }}
+          onCancel={() => setConfirmTarget(null)}
         />
       )}
     </div>
