@@ -3,6 +3,7 @@ import { X, FileUp, Globe, MessageSquare, Rss, Loader2, CheckCircle, AlertTriang
 import { api, type THEvidenceItem, type UploadProgress } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
+import FileDropzone from '../../components/FileDropzone'
 
 type AddMode = 'file' | 'url' | 'text' | 'watcher' | null
 
@@ -21,9 +22,8 @@ export default function AddEvidenceModal({
   const [added, setAdded] = useState<THEvidenceItem | null>(null)
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
 
-  // File state
-  const [file, setFile] = useState<File | null>(null)
-  const [fileLabel, setFileLabel] = useState('')
+  // File state (multi-file)
+  const [files, setFiles] = useState<File[]>([])
   const [parserMode, setParserMode] = useState('auto')
   // URL state
   const [url, setUrl] = useState('')
@@ -56,17 +56,23 @@ export default function AddEvidenceModal({
     setError(null)
     setUploadProgress(null)
     try {
-      let item: THEvidenceItem | null = null
-      if (addMode === 'file' && file) {
-        item = await api.threatHunting.addEvidenceFile(pkgId, file, parserMode, setUploadProgress)
+      if (addMode === 'file' && files.length > 0) {
+        let lastItem: THEvidenceItem | null = null
+        for (const f of files) {
+          lastItem = await api.threatHunting.addEvidenceFile(pkgId, f, parserMode, setUploadProgress)
+          setUploadProgress(null)
+        }
+        if (lastItem) { setAdded(lastItem); onAdded() }
       } else if (addMode === 'url' && url) {
-        item = await api.threatHunting.addEvidenceUrl(pkgId, { url, label: urlLabel })
+        const item = await api.threatHunting.addEvidenceUrl(pkgId, { url, label: urlLabel })
+        setAdded(item); onAdded()
       } else if (addMode === 'text' && text) {
-        item = await api.threatHunting.addEvidenceText(pkgId, { text, label: textLabel })
+        const item = await api.threatHunting.addEvidenceText(pkgId, { text, label: textLabel })
+        setAdded(item); onAdded()
       } else if (addMode === 'watcher' && watcherId) {
-        item = await api.threatHunting.addEvidenceWatcher(pkgId, { watcher_id: watcherId, label: watcherLabel })
+        const item = await api.threatHunting.addEvidenceWatcher(pkgId, { watcher_id: watcherId, label: watcherLabel })
+        setAdded(item); onAdded()
       }
-      if (item) { setAdded(item); onAdded() }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -108,14 +114,23 @@ export default function AddEvidenceModal({
 
           {addMode === 'file' && (
             <div className="space-y-3">
-              <input type="file" className="input w-full text-sm" accept=".pdf,.doc,.docx,.txt,.md,.csv,.tsv,.json,.ndjson,.xml,.gz,.zip" onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f && !fileLabel) setFileLabel(f.name) }} />
-              {file && (
-                <p className="text-xs text-gray-500">
-                  {file.name}
-                  <span className="ml-1 text-gray-600">
-                    ({file.size >= 1_048_576 ? `${(file.size / 1_048_576).toFixed(1)} MB` : `${(file.size / 1024).toFixed(0)} KB`})
-                  </span>
-                </p>
+              <FileDropzone
+                accept=".pdf,.doc,.docx,.txt,.md,.csv,.tsv,.json,.ndjson,.xml,.gz,.zip"
+                onFiles={setFiles}
+                disabled={busy}
+              />
+              {/* Selected files list */}
+              {files.length > 0 && (
+                <div className="space-y-1">
+                  {files.map((f, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs text-gray-400">
+                      <span className="truncate flex-1">{f.name}</span>
+                      <span className="text-gray-600 ml-2 shrink-0">
+                        {f.size >= 1_048_576 ? `${(f.size / 1_048_576).toFixed(1)} MB` : `${(f.size / 1024).toFixed(0)} KB`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
               {uploadProgress && (
                 <div className="space-y-1">
@@ -125,7 +140,6 @@ export default function AddEvidenceModal({
                   <p className="text-[10px] text-gray-500">Uploading… {uploadProgress.pct}%</p>
                 </div>
               )}
-              <input className="input w-full text-sm" placeholder="Label" value={fileLabel} onChange={(e) => setFileLabel(e.target.value)} />
               <select
                 className="input w-full text-sm"
                 value={parserMode}
@@ -181,7 +195,7 @@ export default function AddEvidenceModal({
           {addMode && (
             <button
               className="btn-primary text-sm"
-              disabled={busy || (addMode === 'file' && !file) || (addMode === 'url' && !url) || (addMode === 'text' && !text.trim()) || (addMode === 'watcher' && !watcherId)}
+              disabled={busy || (addMode === 'file' && files.length === 0) || (addMode === 'url' && !url) || (addMode === 'text' && !text.trim()) || (addMode === 'watcher' && !watcherId)}
               onClick={submit}
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add Item'}

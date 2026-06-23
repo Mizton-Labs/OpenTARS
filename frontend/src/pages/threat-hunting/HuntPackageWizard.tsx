@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X, FileUp, Globe, MessageSquare, Rss, Loader2, CheckCircle, AlertTriangle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type UploadProgress } from '../../api/client'
+import FileDropzone from '../../components/FileDropzone'
 
 type Step = 'identity' | 'evidence' | 'review'
 
 type PendingItem =
-  | { kind: 'file'; file: File; label: string; parserMode: string }
+  | { kind: 'file'; files: File[]; parserMode: string }
   | { kind: 'url'; url: string; label: string }
   | { kind: 'text'; text: string; label: string }
   | { kind: 'watcher'; watcherId: string; label: string }
@@ -48,21 +49,35 @@ export default function HuntPackageWizard({
     setError(null)
     setUploadProgress(null)
     try {
-      let item: THEvidenceItem | null = null
       if (addMode === 'file') {
         const p = items.find((i) => i.kind === 'file') as Extract<PendingItem, { kind: 'file' }> | undefined
-        if (p) item = await api.threatHunting.addEvidenceFile(pkgId, p.file, p.parserMode, setUploadProgress)
+        if (p) {
+          // Upload each file sequentially
+          for (const file of p.files) {
+            const item = await api.threatHunting.addEvidenceFile(pkgId, file, p.parserMode, setUploadProgress)
+            setAddedItems((prev) => [...prev, item])
+            setUploadProgress(null)
+          }
+        }
       } else if (addMode === 'url') {
         const p = items.find((i) => i.kind === 'url') as Extract<PendingItem, { kind: 'url' }> | undefined
-        if (p) item = await api.threatHunting.addEvidenceUrl(pkgId, { url: p.url, label: p.label })
+        if (p) {
+          const item = await api.threatHunting.addEvidenceUrl(pkgId, { url: p.url, label: p.label })
+          setAddedItems((prev) => [...prev, item])
+        }
       } else if (addMode === 'text') {
         const p = items.find((i) => i.kind === 'text') as Extract<PendingItem, { kind: 'text' }> | undefined
-        if (p) item = await api.threatHunting.addEvidenceText(pkgId, { text: p.text, label: p.label })
+        if (p) {
+          const item = await api.threatHunting.addEvidenceText(pkgId, { text: p.text, label: p.label })
+          setAddedItems((prev) => [...prev, item])
+        }
       } else if (addMode === 'watcher') {
         const p = items.find((i) => i.kind === 'watcher') as Extract<PendingItem, { kind: 'watcher' }> | undefined
-        if (p) item = await api.threatHunting.addEvidenceWatcher(pkgId, { watcher_id: p.watcherId, label: p.label })
+        if (p) {
+          const item = await api.threatHunting.addEvidenceWatcher(pkgId, { watcher_id: p.watcherId, label: p.label })
+          setAddedItems((prev) => [...prev, item])
+        }
       }
-      if (item) setAddedItems((prev) => [...prev, item!])
       setItems([])
       setAddMode(null)
     } catch (e) {
@@ -177,8 +192,8 @@ export default function HuntPackageWizard({
               {/* Add item forms */}
               {addMode === 'file' && (
                 <AddFileForm
-                  onSubmit={(file, label, parserMode) => {
-                    setItems([{ kind: 'file', file, label, parserMode }])
+                  onSubmit={(files, parserMode) => {
+                    setItems([{ kind: 'file', files, parserMode }])
                   }}
                   onCancel={() => setAddMode(null)}
                   onAdd={submitItem}
@@ -268,42 +283,44 @@ export default function HuntPackageWizard({
 function AddFileForm({
   onSubmit, onCancel, onAdd, busy, uploadProgress,
 }: {
-  onSubmit: (file: File, label: string, parserMode: string) => void
+  onSubmit: (files: File[], parserMode: string) => void
   onCancel: () => void
   onAdd: () => void
   busy: boolean
   uploadProgress: UploadProgress | null
 }) {
-  const [file, setFile] = useState<File | null>(null)
-  const [label, setLabel] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [parserMode, setParserMode] = useState('auto')
 
-  const sizeLabel = file
-    ? file.size >= 1_048_576
-      ? `${(file.size / 1_048_576).toFixed(1)} MB`
-      : `${(file.size / 1024).toFixed(0)} KB`
-    : null
+  function formatSize(bytes: number): string {
+    return bytes >= 1_048_576
+      ? `${(bytes / 1_048_576).toFixed(1)} MB`
+      : `${(bytes / 1024).toFixed(0)} KB`
+  }
+
+  function handleFiles(newFiles: File[]) {
+    setFiles(newFiles)
+    onSubmit(newFiles, parserMode)
+  }
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 space-y-3">
-      <p className="text-sm font-medium text-gray-300">Add File</p>
-      <input
-        type="file"
-        className="input text-sm"
+      <p className="text-sm font-medium text-gray-300">Add Files</p>
+      <FileDropzone
         accept=".pdf,.doc,.docx,.txt,.md,.csv,.tsv,.json,.ndjson,.xml,.gz,.zip"
-        onChange={(e) => {
-          const f = e.target.files?.[0] ?? null
-          setFile(f)
-          if (f && !label) setLabel(f.name)
-          if (f) onSubmit(f, label || f.name, parserMode)
-        }}
+        onFiles={handleFiles}
+        disabled={busy}
       />
-      {/* File name + size summary */}
-      {file && (
-        <p className="text-xs text-gray-500">
-          {file.name}
-          {sizeLabel && <span className="ml-1 text-gray-600">({sizeLabel})</span>}
-        </p>
+      {/* Selected files list */}
+      {files.length > 0 && (
+        <div className="space-y-1">
+          {files.map((f, i) => (
+            <div key={i} className="flex items-center justify-between text-xs text-gray-400">
+              <span className="truncate flex-1">{f.name}</span>
+              <span className="text-gray-600 ml-2 shrink-0">{formatSize(f.size)}</span>
+            </div>
+          ))}
+        </div>
       )}
       {/* Upload progress bar */}
       {uploadProgress && (
@@ -324,24 +341,22 @@ function AddFileForm({
           </p>
         </div>
       )}
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <label className="label text-xs">Label</label>
-          <input className="input w-full text-sm" value={label} onChange={(e) => { setLabel(e.target.value); if (file) onSubmit(file, e.target.value, parserMode) }} placeholder="Display name" />
-        </div>
-        <div>
-          <label className="label text-xs">Parser</label>
-          <select className="input text-sm" value={parserMode} onChange={(e) => { setParserMode(e.target.value); if (file) onSubmit(file, label, e.target.value) }}>
-            <option value="auto">Auto</option>
-            <option value="pymupdf">PyMuPDF</option>
-            <option value="docling">Docling (ML)</option>
-          </select>
-        </div>
+      <div>
+        <label className="label text-xs">Parser</label>
+        <select
+          className="input text-sm"
+          value={parserMode}
+          onChange={(e) => { setParserMode(e.target.value); if (files.length > 0) onSubmit(files, e.target.value) }}
+        >
+          <option value="auto">Auto</option>
+          <option value="pymupdf">PyMuPDF</option>
+          <option value="docling">Docling (ML)</option>
+        </select>
       </div>
       <div className="flex gap-2 justify-end">
         <button className="btn-ghost text-xs" onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="btn-primary text-xs" disabled={!file || busy} onClick={onAdd}>
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
+        <button className="btn-primary text-xs" disabled={files.length === 0 || busy} onClick={onAdd}>
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : `Add${files.length > 1 ? ` ${files.length} files` : ''}`}
         </button>
       </div>
     </div>
