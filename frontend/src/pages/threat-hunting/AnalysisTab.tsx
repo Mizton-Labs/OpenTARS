@@ -83,7 +83,7 @@ export default function AnalysisTab({
 
   const startMut = useMutation({
     mutationFn: () => {
-      const effort = selectedEffort || effortData?.th_research_effort || 'medium'
+      const effort = selectedEffort || effortData?.th_research_effort || 'high'
       return api.threatHunting.startGeneration(pkgId, {
         research_effort: effort,
         provider_name: chosenModel?.provider ?? undefined,
@@ -160,7 +160,7 @@ export default function AnalysisTab({
               <div className="flex items-center gap-2 justify-center text-xs">
                 <span className="text-gray-500">Research effort:</span>
                 {(['low', 'medium', 'high'] as const).map((e) => {
-                  const active = (selectedEffort || effortData?.th_research_effort || 'medium') === e
+                  const active = (selectedEffort || effortData?.th_research_effort || 'high') === e
                   return (
                     <button
                       key={e}

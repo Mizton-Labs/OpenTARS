@@ -5,7 +5,8 @@
  *   1. Agentic Workflow Verbosity  (info | verbose | debug)
  *   2. Visualization Style         (timeline | mermaid | reactflow)
  *      — only meaningful / shown when verbosity is verbose or debug
- *   3. Agent Tools & Document Parsers  (per-tool enable/disable, issue-007)
+ *   3. Show Granular Subtasks      (bool) — new Part 1b
+ *   4. Agent Tools & Document Parsers  (per-tool enable/disable, issue-007)
  */
 
 import { useEffect, useState } from 'react'
@@ -79,6 +80,10 @@ export default function AgentsConfigTab() {
     queryKey: ['agent-visualization'],
     queryFn: () => api.getAgentVisualization(),
   })
+  const { data: subtasksData, isLoading: subtasksLoading } = useQuery({
+    queryKey: ['agent-show-subtasks'],
+    queryFn: () => api.getAgentShowSubtasks(),
+  })
   // issue-007: agent tools + document parsers
   const { data: toolsData, isLoading: toolsLoading } = useQuery({
     queryKey: ['agent-tools'],
@@ -89,8 +94,10 @@ export default function AgentsConfigTab() {
     queryFn: () => api.getAgentToolsCatalog(),
   })
 
-  const [verbosity, setVerbosity] = useState<VerbosityLevel>('info')
-  const [visualization, setVisualization] = useState<VisualizationStyle>('timeline')
+  // Part 4: defaults updated to debug / reactflow
+  const [verbosity, setVerbosity] = useState<VerbosityLevel>('debug')
+  const [visualization, setVisualization] = useState<VisualizationStyle>('reactflow')
+  const [showSubtasks, setShowSubtasks] = useState(false)
   const [toolsEnabled, setToolsEnabled] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState(false)
 
@@ -107,6 +114,12 @@ export default function AgentsConfigTab() {
   }, [vizData])
 
   useEffect(() => {
+    if (subtasksData !== undefined) {
+      setShowSubtasks(subtasksData.agent_workflow_show_subtasks ?? false)
+    }
+  }, [subtasksData])
+
+  useEffect(() => {
     if (toolsData?.agent_tools) {
       setToolsEnabled(toolsData.agent_tools)
     }
@@ -116,26 +129,31 @@ export default function AgentsConfigTab() {
     mutationFn: async () => {
       await api.setAgentVerbosity(verbosity)
       await api.setAgentVisualization(visualization)
+      await api.setAgentShowSubtasks(showSubtasks)
       await api.setAgentTools(toolsEnabled)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agent-verbosity'] })
       qc.invalidateQueries({ queryKey: ['agent-visualization'] })
+      qc.invalidateQueries({ queryKey: ['agent-show-subtasks'] })
       qc.invalidateQueries({ queryKey: ['agent-tools'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
-  const isLoading = vLoading || vizLoading || toolsLoading || catalogLoading
+  const isLoading = vLoading || vizLoading || subtasksLoading || toolsLoading || catalogLoading
 
   // Compare local tools map against server value
   const toolsDirty = Object.keys(toolsEnabled).some(
     (k) => toolsEnabled[k] !== (toolsData?.agent_tools?.[k] ?? true),
   )
+  // Part 4: updated fallback defaults to debug / reactflow
+  const showSubtasksDirty = showSubtasks !== (subtasksData?.agent_workflow_show_subtasks ?? false)
   const isDirty =
-    verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'info') ||
-    visualization !== (vizData?.agent_workflow_visualization ?? 'timeline') ||
+    verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'debug') ||
+    visualization !== (vizData?.agent_workflow_visualization ?? 'reactflow') ||
+    showSubtasksDirty ||
     toolsDirty
 
   if (isLoading) {
@@ -268,6 +286,46 @@ export default function AgentsConfigTab() {
               <span className="font-mono text-gray-500">LangGraph Studio</span> which provide
               full trace replay, token accounting, and agent graph inspection.
             </p>
+          </div>
+
+          {/* Part 1b: Show granular subtasks toggle */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+              Subtask Display
+            </p>
+            <button
+              onClick={() => setShowSubtasks(!showSubtasks)}
+              className={clsx(
+                'w-full flex items-center justify-between rounded-lg border px-4 py-3 transition-colors',
+                showSubtasks
+                  ? 'border-brand-500 bg-brand-900/20'
+                  : 'border-gray-700 hover:border-gray-500 bg-gray-800/30',
+              )}
+            >
+              <div className="text-left">
+                <p className={clsx('text-sm font-medium', showSubtasks ? 'text-brand-300' : 'text-gray-300')}>
+                  Show granular subtasks by default
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  When enabled, each agent step expands to show individual tool calls as child
+                  nodes in the Mermaid and React Flow diagrams. Applies to all future hunt runs.
+                </p>
+              </div>
+              {/* Toggle pill */}
+              <div
+                className={clsx(
+                  'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 transition-colors duration-200 ml-4',
+                  showSubtasks ? 'border-green-500 bg-green-600' : 'border-gray-600 bg-gray-700',
+                )}
+              >
+                <span
+                  className={clsx(
+                    'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 mt-[1px]',
+                    showSubtasks ? 'translate-x-3.5' : 'translate-x-0.5',
+                  )}
+                />
+              </div>
+            </button>
           </div>
         </div>
       )}
