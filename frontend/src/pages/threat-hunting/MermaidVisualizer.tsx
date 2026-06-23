@@ -139,9 +139,20 @@ function buildMermaidDiagram(genRecord: THGenerationRecord): string {
   // Approval gate style
   lines.push('  style approval_gate fill:#78350f,stroke:#f59e0b,color:#fef3c7')
 
-  // Style source nodes (amber)
+  // Style source nodes — color varies by sub_status (issue-local-011 Part 7c)
   for (let i = 0; i < intakeSources.length; i++) {
-    lines.push(`  style src_${i} fill:#78350f,stroke:#f59e0b,color:#fef3c7`)
+    const subStatus = intakeSources[i].sub_status
+    let fill: string
+    let stroke: string
+    if (subStatus === 'ok') {
+      fill = '#14532d'; stroke = '#22c55e'
+    } else if (subStatus === 'error') {
+      fill = '#7f1d1d'; stroke = '#ef4444'
+    } else {
+      // partial, pending, or undefined → amber (original style)
+      fill = '#78350f'; stroke = '#f59e0b'
+    }
+    lines.push(`  style src_${i} fill:${fill},stroke:${stroke},color:#fef3c7`)
   }
 
   return lines.join('\n')

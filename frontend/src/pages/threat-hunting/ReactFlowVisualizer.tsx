@@ -107,29 +107,43 @@ export default function ReactFlowVisualizer({ genRecord }: { genRecord: THGenera
       },
     }))
 
-    // Source nodes (amber) — distributed horizontally above intake_classifier
+    // Source nodes — color by sub_status (issue-local-011 Part 7d)
     if (intakeSources.length === 0) return pipelineNodes
     const totalWidth = 500
     const spacing = intakeSources.length > 1 ? totalWidth / (intakeSources.length - 1) : 0
     const startX = intakeSources.length === 1 ? 250 : 0
-    const sourceNodes: Node[] = intakeSources.map((src, i) => ({
-      id: `src_${i}`,
-      position: { x: startX + i * spacing, y: -120 },
-      data: {
-        label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
-      },
-      style: {
-        background: '#78350f',
-        border: '1px solid #f59e0b',
-        color: '#fef3c7',
-        borderRadius: '8px',
-        padding: '4px 10px',
-        fontSize: '10px',
-        fontWeight: 500,
-        minWidth: '120px',
-        textAlign: 'center' as const,
-      },
-    }))
+    const sourceNodes: Node[] = intakeSources.map((src, i) => {
+      const subStatus = src.sub_status
+      let bg: string, border: string, color: string
+      if (subStatus === 'ok') {
+        bg = '#14532d'; border = '1px solid #22c55e'; color = '#d1fae5'
+      } else if (subStatus === 'error') {
+        bg = '#7f1d1d'; border = '1px solid #ef4444'; color = '#fee2e2'
+      } else if (subStatus === 'partial') {
+        bg = '#78350f'; border = '1px solid #f59e0b'; color = '#fef3c7'
+      } else {
+        // pending or undefined → gray
+        bg = '#1f2937'; border = '1px solid #374151'; color = '#6b7280'
+      }
+      return {
+        id: `src_${i}`,
+        position: { x: startX + i * spacing, y: -120 },
+        data: {
+          label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
+        },
+        style: {
+          background: bg,
+          border,
+          color,
+          borderRadius: '8px',
+          padding: '4px 10px',
+          fontSize: '10px',
+          fontWeight: 500,
+          minWidth: '120px',
+          textAlign: 'center' as const,
+        },
+      }
+    })
 
     return [...sourceNodes, ...pipelineNodes]
   }, [completed, active, intakeSources])
