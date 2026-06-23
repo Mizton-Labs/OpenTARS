@@ -45,8 +45,9 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from backend.threat_hunting import db as th_db
-from backend.threat_hunting.extractors.dispatcher import extract_file
 
+# extract_file import removed — file parsing deferred to pipeline (issue-local-011)
+# from backend.threat_hunting.extractors.dispatcher import extract_file
 # issue-008-2B: fetch_url and extract_iocs_from_text are no longer called at
 # upload time. URL fetching and IOC extraction are now performed by the agent
 # pipeline (intake_classifier), keeping them as genuine agent tasks.
@@ -143,8 +144,20 @@ async def add_evidence_file(
 ) -> dict:
     """Upload a file (PDF, DOCX, TXT, CSV, JSON, XML, …) as evidence.
 
-    The file is parsed immediately and IOCs are extracted from the result.
+    issue-local-011: file parsing is now **deferred to the analysis pipeline**
+    (intake_classifier), exactly like URL fetching.  The raw blob is stored
+    immediately; the file is parsed (text extraction, parser selection, IOC
+    extraction) when the user starts an analysis run.
+
+    This makes uploads instant regardless of file size or parser complexity
+    (e.g. Docling's ML-based PDF layout analysis).  The parse_status is set
+    to 'pending' to signal the deferred state to the pipeline and the UI.
+
+    The chosen parser_mode is persisted in fetch_metadata so intake_classifier
+    can use the same mode the user selected.
     """
+    import hashlib as _hashlib
+
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
 
     raw = await file.read(_MAX_UPLOAD_BYTES + 1)
@@ -157,26 +170,27 @@ async def add_evidence_file(
     filename = file.filename or "upload"
     mime_type = file.content_type or ""
 
-    # Dispatch to appropriate extractor in a thread (CPU work)
-    result = await asyncio.to_thread(extract_file, raw, filename, mime_type, parser_mode)
+    # Cheap SHA-256 of raw bytes for content deduplication — no parse needed
+    content_hash = _hashlib.sha256(raw).hexdigest()
 
+    # Persist the blob with parse_status='pending'; intake_classifier will parse
+    # it when the analysis pipeline runs.
     item = await th_db.add_evidence_item(
         pkg_id,
         item_type="file",
         label=filename,
         source_ref=filename,
-        content_hash=result["content_hash"],
-        mime_type=result["mime_type"],
-        extracted_text=result["extracted_text"],
-        parser_used=result["parser_used"],
-        parser_version=result["parser_version"],
-        parse_status=result["parse_status"],
-        parse_warnings=result["parse_warnings"],
+        content_hash=content_hash,
+        mime_type=mime_type,
+        extracted_text="",
+        parser_used="",
+        parser_version="",
+        parse_status="pending",
+        parse_warnings=["File will be parsed during the analysis pipeline run."],
         blob_data=raw,
+        # Carry parser_mode so intake_classifier uses the user's chosen parser
+        fetch_metadata={"parser_mode": parser_mode, "original_size_bytes": len(raw)},
     )
-
-    # issue-008-2B: IOC extraction moved to intake_classifier (agent pipeline).
-    # No add_extracted_iocs call here — IOCs are extracted during analysis.
 
     return item
 
