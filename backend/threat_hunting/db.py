@@ -278,6 +278,97 @@ async def create_hunt_package(
     return await get_hunt_package(pkg_id)
 
 
+async def clone_hunt_package(
+    src_pkg_id: str,
+    new_name: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    """Clone a hunt package's evidence to a new package.
+
+    issue-local-012: creates a new package named *new_name*, copies all
+    evidence_items rows (including file blobs from evidence_blobs) and resets
+    parse_status to 'pending' so the clone will re-parse on its first run.
+    Runs, reports, generation state, and IOCs are NOT copied.
+
+    Returns the newly created package dict.
+    """
+    import json as _json
+
+    new_pkg_id = _new_id()
+    now = _utc_now_iso()
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        # 1. Create the new package
+        await db.execute(
+            "INSERT INTO hunt_packages (id, name, description, status, created_by, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'draft', ?, ?, ?)",
+            (new_pkg_id, new_name, "", created_by, now, now),
+        )
+
+        # 2. Copy all evidence items (reset parse_status to pending, clear extracted_text)
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM evidence_items WHERE hunt_package_id = ? ORDER BY created_at",
+            (src_pkg_id,),
+        )
+        src_items = await cur.fetchall()
+        await cur.close()
+
+        for row in src_items:
+            row_dict = dict(row)
+            new_item_id = _new_id()
+            # Keep: item_type, label, source_ref, mime_type, fetch_url, fetch_metadata,
+            #        watcher_snapshot, provenance_notes
+            # Reset: parse_status='pending', extracted_text='', parser_used='', content_hash='', final_url=''
+            await db.execute(
+                """
+                INSERT INTO evidence_items
+                  (id, hunt_package_id, item_type, label, source_ref, content_hash,
+                   mime_type, fetch_url, final_url, extracted_text, parser_used,
+                   parser_version, parse_status, parse_warnings, fetch_metadata,
+                   watcher_snapshot, created_at, provenance_notes)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    new_item_id,
+                    new_pkg_id,
+                    row_dict.get("item_type", ""),
+                    row_dict.get("label", ""),
+                    row_dict.get("source_ref", ""),
+                    "",  # content_hash reset
+                    row_dict.get("mime_type", ""),
+                    row_dict.get("fetch_url", ""),
+                    "",  # final_url reset
+                    "",  # extracted_text reset
+                    "",  # parser_used reset
+                    "",  # parser_version reset
+                    "pending",  # parse_status reset
+                    _json.dumps(["Cloned evidence — will be parsed during analysis."]),
+                    row_dict.get("fetch_metadata") or "{}",  # keep parser_mode etc.
+                    row_dict.get("watcher_snapshot") or "{}",
+                    now,
+                    row_dict.get("provenance_notes", ""),
+                ),
+            )
+
+            # 3. Copy blob if it exists (keeps the original file)
+            blob_cur = await db.execute(
+                "SELECT data FROM evidence_blobs WHERE evidence_item_id = ?",
+                (row_dict.get("id"),),
+            )
+            blob_row = await blob_cur.fetchone()
+            await blob_cur.close()
+            if blob_row and blob_row[0]:
+                await db.execute(
+                    "INSERT INTO evidence_blobs (evidence_item_id, data) VALUES (?, ?)",
+                    (new_item_id, blob_row[0]),
+                )
+
+        await db.commit()
+
+    return await get_hunt_package(new_pkg_id)  # type: ignore[return-value]
+
+
 async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
