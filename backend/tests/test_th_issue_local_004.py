@@ -26,7 +26,7 @@ class TestLoaderAgentVerbosity:
         from backend.config.loader import load_agent_verbosity
 
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
-            assert load_agent_verbosity() == "info"
+            assert load_agent_verbosity() == "debug"  # issue-local-012: default changed
 
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         from backend.config.loader import load_agent_verbosity, save_agent_verbosity
@@ -50,7 +50,7 @@ class TestLoaderAgentVerbosity:
         p = tmp_path / "app.yaml"
         p.write_text("agent_workflow_verbosity: nonsense\n")
         with patch("backend.config.loader.APP_CONFIG_PATH", p):
-            assert load_agent_verbosity() == "info"
+            assert load_agent_verbosity() == "debug"  # issue-local-012: default changed
 
 
 class TestLoaderAgentVisualization:
@@ -58,7 +58,7 @@ class TestLoaderAgentVisualization:
         from backend.config.loader import load_agent_visualization
 
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
-            assert load_agent_visualization() == "timeline"
+            assert load_agent_visualization() == "reactflow"  # issue-local-012: default changed
 
     def test_save_and_load(self, tmp_path: Path) -> None:
         from backend.config.loader import load_agent_visualization, save_agent_visualization
@@ -82,7 +82,7 @@ class TestLoaderTHResearchEffort:
         from backend.config.loader import load_th_research_effort
 
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
-            assert load_th_research_effort() == "medium"
+            assert load_th_research_effort() == "high"  # issue-local-012: default changed
 
     def test_high_and_low(self, tmp_path: Path) -> None:
         from backend.config.loader import load_th_research_effort, save_th_research_effort
@@ -150,7 +150,7 @@ class TestRoutesAgentVerbosity:
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
             r = client.get("/api/app/agent-verbosity")
         assert r.status_code == 200
-        assert r.json()["agent_workflow_verbosity"] == "info"
+        assert r.json()["agent_workflow_verbosity"] == "debug"  # issue-local-012: default changed
 
     def test_put_valid(self, tmp_path: Path) -> None:
         client = _test_client()
@@ -187,7 +187,7 @@ class TestRoutesAgentVisualization:
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
             r = client.get("/api/app/agent-visualization")
         assert r.status_code == 200
-        assert r.json()["agent_workflow_visualization"] == "timeline"
+        assert r.json()["agent_workflow_visualization"] == "reactflow"  # issue-local-012: default changed
 
     def test_put_mermaid(self, tmp_path: Path) -> None:
         client = _test_client()
@@ -206,7 +206,7 @@ class TestRoutesThResearchEffort:
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
             r = client.get("/api/app/th-research-effort")
         assert r.status_code == 200
-        assert r.json()["th_research_effort"] == "medium"
+        assert r.json()["th_research_effort"] == "high"  # issue-local-012: default changed
 
     def test_put_high(self, tmp_path: Path) -> None:
         client = _test_client()
