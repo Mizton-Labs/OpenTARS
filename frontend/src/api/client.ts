@@ -995,19 +995,22 @@ export const api = {
         method: 'DELETE',
       }),
 
-    // Evidence — file upload (multipart)
-    addEvidenceFile: async (pkgId: string, file: File, parserMode = 'auto'): Promise<THEvidenceItem> => {
+    // Evidence — file upload (multipart, with XHR progress reporting)
+    // issue-local-011: switched to uploadMultipartWithProgress so callers can
+    // render a real upload-byte progress bar instead of just a spinner.
+    addEvidenceFile: (
+      pkgId: string,
+      file: File,
+      parserMode = 'auto',
+      onProgress?: (p: UploadProgress) => void,
+    ): Promise<THEvidenceItem> => {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch(
-        `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/file?parser_mode=${parserMode}`,
-        { method: 'POST', body: form, credentials: 'include' },
+      return uploadMultipartWithProgress<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/file?parser_mode=${parserMode}`,
+        form,
+        onProgress,
       )
-      if (!res.ok) {
-        if (res.status === 401) _notifyUnauthorized()
-        throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
-      }
-      return res.json()
     },
     // Evidence — URL
     addEvidenceUrl: (pkgId: string, body: { url: string; label?: string }) =>
@@ -1678,11 +1681,17 @@ export interface THExtractedIOC {
   created_at: string
 }
 
-/** Per-source intake metadata emitted by intake_classifier (issue-006-C). */
+/** Per-source intake metadata emitted by intake_classifier (issue-006-C / issue-local-011). */
 export interface THIntakeSource {
   label: string
   item_type: string
   text_length: number
+  /** Sub-status of this evidence source after file-parse in Part 1 (issue-local-011). */
+  sub_status?: 'ok' | 'partial' | 'error' | 'pending'
+  /** Which parser was used for this source (issue-local-011). */
+  parser_used?: string
+  /** Number of IOCs extracted from this source. */
+  ioc_count?: number
 }
 
 export interface THStepLog {

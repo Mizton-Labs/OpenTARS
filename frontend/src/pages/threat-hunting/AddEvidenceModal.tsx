@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { X, FileUp, Globe, MessageSquare, Rss, Loader2, CheckCircle, AlertTriangle } from 'lucide-react'
-import { api, type THEvidenceItem } from '../../api/client'
+import { api, type THEvidenceItem, type UploadProgress } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 
@@ -19,6 +19,7 @@ export default function AddEvidenceModal({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [added, setAdded] = useState<THEvidenceItem | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
 
   // File state
   const [file, setFile] = useState<File | null>(null)
@@ -53,10 +54,11 @@ export default function AddEvidenceModal({
   async function submit() {
     setBusy(true)
     setError(null)
+    setUploadProgress(null)
     try {
       let item: THEvidenceItem | null = null
       if (addMode === 'file' && file) {
-        item = await api.threatHunting.addEvidenceFile(pkgId, file, parserMode)
+        item = await api.threatHunting.addEvidenceFile(pkgId, file, parserMode, setUploadProgress)
       } else if (addMode === 'url' && url) {
         item = await api.threatHunting.addEvidenceUrl(pkgId, { url, label: urlLabel })
       } else if (addMode === 'text' && text) {
@@ -69,6 +71,7 @@ export default function AddEvidenceModal({
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+      setUploadProgress(null)
     }
   }
 
@@ -106,6 +109,22 @@ export default function AddEvidenceModal({
           {addMode === 'file' && (
             <div className="space-y-3">
               <input type="file" className="input w-full text-sm" accept=".pdf,.doc,.docx,.txt,.md,.csv,.tsv,.json,.ndjson,.xml,.gz,.zip" onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f && !fileLabel) setFileLabel(f.name) }} />
+              {file && (
+                <p className="text-xs text-gray-500">
+                  {file.name}
+                  <span className="ml-1 text-gray-600">
+                    ({file.size >= 1_048_576 ? `${(file.size / 1_048_576).toFixed(1)} MB` : `${(file.size / 1024).toFixed(0)} KB`})
+                  </span>
+                </p>
+              )}
+              {uploadProgress && (
+                <div className="space-y-1">
+                  <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                    <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${uploadProgress.pct}%` }} />
+                  </div>
+                  <p className="text-[10px] text-gray-500">Uploading… {uploadProgress.pct}%</p>
+                </div>
+              )}
               <input className="input w-full text-sm" placeholder="Label" value={fileLabel} onChange={(e) => setFileLabel(e.target.value)} />
               <select
                 className="input w-full text-sm"

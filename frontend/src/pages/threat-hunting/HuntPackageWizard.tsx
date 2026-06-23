@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X, FileUp, Globe, MessageSquare, Rss, Loader2, CheckCircle, AlertTriangle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THEvidenceItem } from '../../api/client'
+import { api, type THEvidenceItem, type UploadProgress } from '../../api/client'
 
 type Step = 'identity' | 'evidence' | 'review'
 
@@ -29,6 +29,7 @@ export default function HuntPackageWizard({
   const [addedItems, setAddedItems] = useState<THEvidenceItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
 
   // Step 1: create the package
   const createMut = useMutation({
@@ -45,11 +46,12 @@ export default function HuntPackageWizard({
     if (!pkgId) return
     setBusy(true)
     setError(null)
+    setUploadProgress(null)
     try {
       let item: THEvidenceItem | null = null
       if (addMode === 'file') {
         const p = items.find((i) => i.kind === 'file') as Extract<PendingItem, { kind: 'file' }> | undefined
-        if (p) item = await api.threatHunting.addEvidenceFile(pkgId, p.file, p.parserMode)
+        if (p) item = await api.threatHunting.addEvidenceFile(pkgId, p.file, p.parserMode, setUploadProgress)
       } else if (addMode === 'url') {
         const p = items.find((i) => i.kind === 'url') as Extract<PendingItem, { kind: 'url' }> | undefined
         if (p) item = await api.threatHunting.addEvidenceUrl(pkgId, { url: p.url, label: p.label })
@@ -67,6 +69,7 @@ export default function HuntPackageWizard({
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+      setUploadProgress(null)
     }
   }
 
@@ -180,6 +183,7 @@ export default function HuntPackageWizard({
                   onCancel={() => setAddMode(null)}
                   onAdd={submitItem}
                   busy={busy}
+                  uploadProgress={uploadProgress}
                 />
               )}
               {addMode === 'url' && (
@@ -262,16 +266,23 @@ export default function HuntPackageWizard({
 // ── Add item sub-forms ────────────────────────────────────────────────────────
 
 function AddFileForm({
-  onSubmit, onCancel, onAdd, busy,
+  onSubmit, onCancel, onAdd, busy, uploadProgress,
 }: {
   onSubmit: (file: File, label: string, parserMode: string) => void
   onCancel: () => void
   onAdd: () => void
   busy: boolean
+  uploadProgress: UploadProgress | null
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [label, setLabel] = useState('')
   const [parserMode, setParserMode] = useState('auto')
+
+  const sizeLabel = file
+    ? file.size >= 1_048_576
+      ? `${(file.size / 1_048_576).toFixed(1)} MB`
+      : `${(file.size / 1024).toFixed(0)} KB`
+    : null
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 space-y-3">
@@ -287,6 +298,32 @@ function AddFileForm({
           if (f) onSubmit(f, label || f.name, parserMode)
         }}
       />
+      {/* File name + size summary */}
+      {file && (
+        <p className="text-xs text-gray-500">
+          {file.name}
+          {sizeLabel && <span className="ml-1 text-gray-600">({sizeLabel})</span>}
+        </p>
+      )}
+      {/* Upload progress bar */}
+      {uploadProgress && (
+        <div className="space-y-1">
+          <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+            <div
+              className="h-full bg-brand-500 rounded-full transition-all"
+              style={{ width: `${uploadProgress.pct}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-gray-500">
+            Uploading… {uploadProgress.pct}%
+            {uploadProgress.total > 0 && (
+              <span className="ml-1 opacity-60">
+                ({(uploadProgress.loaded / 1024).toFixed(0)} / {(uploadProgress.total / 1024).toFixed(0)} KB)
+              </span>
+            )}
+          </p>
+        </div>
+      )}
       <div className="flex gap-2">
         <div className="flex-1">
           <label className="label text-xs">Label</label>
@@ -295,14 +332,14 @@ function AddFileForm({
         <div>
           <label className="label text-xs">Parser</label>
           <select className="input text-sm" value={parserMode} onChange={(e) => { setParserMode(e.target.value); if (file) onSubmit(file, label, e.target.value) }}>
-            <option value="auto">auto</option>
+            <option value="auto">Auto</option>
             <option value="pymupdf">PyMuPDF</option>
-            <option value="marker">Marker</option>
+            <option value="docling">Docling (ML)</option>
           </select>
         </div>
       </div>
       <div className="flex gap-2 justify-end">
-        <button className="btn-ghost text-xs" onClick={onCancel}>Cancel</button>
+        <button className="btn-ghost text-xs" onClick={onCancel} disabled={busy}>Cancel</button>
         <button className="btn-primary text-xs" disabled={!file || busy} onClick={onAdd}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
         </button>
