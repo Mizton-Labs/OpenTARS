@@ -22,10 +22,13 @@ export default function AnalysisTab({
   pkgId,
   runId,
   onRunCreated,
+  onShowIocs,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
+  /** Called when the user clicks "View IOCs" in the workflow timeline. */
+  onShowIocs?: () => void
 }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -228,7 +231,7 @@ export default function AnalysisTab({
             </p>
           </div>
         </div>
-        {genRecord && <WorkflowVisualizer genRecord={genRecord} />}
+        {genRecord && <WorkflowVisualizer genRecord={genRecord} onShowIocs={onShowIocs} />}
       </div>
     )
   }

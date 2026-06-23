@@ -472,6 +472,21 @@ async def add_evidence_item(
     return await get_evidence_item(item_id)  # type: ignore[return-value]
 
 
+async def get_evidence_blob(item_id: str) -> bytes | None:
+    """Return the raw blob bytes for an evidence item, or None if absent.
+
+    Used by intake_classifier to parse file evidence that was stored with
+    parse_status='pending' (issue-local-011: deferred file parsing).
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT data FROM evidence_blobs WHERE evidence_item_id = ?", (item_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    return bytes(row[0]) if row and row[0] is not None else None
+
+
 async def get_evidence_item(item_id: str) -> dict[str, Any] | None:
     import json
 

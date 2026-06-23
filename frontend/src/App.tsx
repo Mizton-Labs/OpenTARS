@@ -10,6 +10,8 @@ import ThreatHunting from './pages/ThreatHunting'
 import Account from './pages/Account'
 import About from './pages/About'
 import Login from './pages/Login'
+import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
+import ThreatHuntingDetail from './pages/threat-hunting/ThreatHuntingDetail'
 import { api } from './api/client'
 import { useAuth } from './auth/useAuth'
 import { KNOWN_ROUTES } from './utils/basePrefix'
@@ -100,6 +102,11 @@ export default function App() {
           const Component = PAGE_COMPONENTS[slug]
           return <Route key={slug} path={slug} element={guard(slug, <Component />)} />
         })}
+        {/* Nested TH routes (issue-local-011 Part 5) — must come AFTER the
+            generic SHELL_ROUTES map so they take precedence over the flat
+            threat-hunting entry which handles the list view. */}
+        <Route path="threat-hunting/new" element={<ThreatHuntingNew />} />
+        <Route path="threat-hunting/:id" element={<ThreatHuntingDetail />} />
       </Route>
     </Routes>
   )

@@ -8,6 +8,7 @@ import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
 import ExecutionPanel from './ExecutionPanel'
 import ReportPanel from './ReportPanel'
+import ConfirmDialog from '../../components/ConfirmDialog'
 
 type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report'
 
@@ -19,6 +20,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
+
+  // Part 4: evidence delete confirmation
+  const [confirmEvidenceId, setConfirmEvidenceId] = useState<string | null>(null)
 
   // issue-006-G: re-run dialog state
   const [showRerunDialog, setShowRerunDialog] = useState(false)
@@ -120,6 +124,8 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     runs[0].generation_status === 'running' ||
     runs[0].generation_status === 'awaiting_approval'
   )
+  // Part 6: re-run is available whenever evidence exists, not only when finished
+  const canRerun = isResearcher && (pkg?.evidence_count ?? 0) > 0 && !latestRunActive
 
   return (
     <div className="p-6 space-y-6">
@@ -133,8 +139,8 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
         <div className="flex items-center gap-2">
-          {/* Re-run button — visible when package is finished and no run is active (issue-006-G: opens dialog) */}
-          {isResearcher && isFinished && !latestRunActive && (
+          {/* Re-run button — visible whenever evidence exists and no run is active (issue-local-011 Part 6) */}
+          {canRerun && (
             <button
               className="btn-secondary flex items-center gap-2 text-sm"
               disabled={rerunMut.isPending}
@@ -267,15 +273,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                      <p className="text-[10px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
                    )}
                  </div>
-                {isResearcher && (
-                  <button
-                    className="btn-ghost p-1 text-gray-600 hover:text-red-400 shrink-0"
-                    onClick={() => deleteEvidenceMut.mutate(item.id)}
-                    title="Remove"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                 {isResearcher && (
+                   <button
+                     className="btn-ghost p-1 text-gray-600 hover:text-red-400 shrink-0"
+                     onClick={() => setConfirmEvidenceId(item.id)}
+                     title="Remove"
+                   >
+                     <Trash2 className="w-3.5 h-3.5" />
+                   </button>
+                 )}
               </div>
             ))
           )}
@@ -317,6 +323,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             setActiveRunId(id)
             qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
           }}
+          onShowIocs={() => setActiveTab('iocs')}
         />
       )}
 
@@ -343,6 +350,20 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             qc.invalidateQueries({ queryKey: ['th-packages'] })
             setShowAddItem(false)
           }}
+        />
+      )}
+
+      {/* Part 4: Evidence delete confirmation dialog */}
+      {confirmEvidenceId && (
+        <ConfirmDialog
+          title="Delete Evidence Item?"
+          message="This permanently removes this evidence item. If analysis has been run, the results will not be affected."
+          confirmLabel="Delete"
+          onConfirm={() => {
+            deleteEvidenceMut.mutate(confirmEvidenceId)
+            setConfirmEvidenceId(null)
+          }}
+          onCancel={() => setConfirmEvidenceId(null)}
         />
       )}
 

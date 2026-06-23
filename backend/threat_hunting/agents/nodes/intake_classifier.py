@@ -1,20 +1,24 @@
 """LangGraph node: intake_classifier
 
-Performs three distinct tasks (issue-008-2B):
+Performs four distinct tasks:
 
-1. **URL evidence fetch**: Any evidence item with parse_status='pending' (i.e.
-   a URL registered at upload time but not yet fetched) is fetched here via
-   fetch_url(). This enables effort-aware fetching (e.g. Playwright-first on
-   high research effort) and defers the network cost to analysis time.
+1. **File evidence parse** (issue-local-011): Any evidence item with
+   parse_status='pending' and item_type='file' (i.e. a file uploaded without
+   parsing — the new default since issue-011) is parsed here using the dispatcher
+   (PyMuPDF / Docling / plain-text). The chosen parser_mode is read from
+   fetch_metadata['parser_mode']. This defers all CPU-intensive parsing to
+   analysis time, making uploads instant.
 
-2. **IOC extraction** (issue-008-2B): All evidence item texts are scanned by the
+2. **URL evidence fetch** (issue-008-2B): Any evidence item with parse_status='pending'
+   and item_type='url' is fetched here via fetch_url(). Effort-aware (Playwright-first
+   on high research effort).
+
+3. **IOC extraction** (issue-008-2B): All evidence item texts are scanned by the
    deterministic extract_iocs_from_text() extractor. Prior IOC rows are cleared
    first (clear_extracted_iocs) so re-runs always produce a clean, non-duplicated
-   set. Making IOC extraction a pipeline task rather than an upload-time side-effect
-   ensures the IOCs tab only populates after analysis runs, matching the intended
-   workflow.
+   set.
 
-3. **LLM tool-calling enrichment** (issue-006-B): When the LLM provider supports
+4. **LLM tool-calling enrichment** (issue-006-B): When the LLM provider supports
    tools, this node may call:
    - ``extract_iocs`` — re-extract IOCs from additional text snippets
    - ``refetch_url``  — re-fetch a URL for richer content
@@ -28,6 +32,7 @@ all URL evidence on high-effort runs.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -61,11 +66,71 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         effort = state.get("research_effort", "medium")
         prefer_playwright = effort == "high"  # issue-008-2D: high effort → Playwright-first
 
-        # ── 1. Fetch pending URL evidence items ──────────────────────────────
-        # Evidence items created via POST /evidence/url have parse_status='pending'.
-        # Fetch them now with effort-aware settings before building the corpus.
+        # ── 0. Load evidence items ────────────────────────────────────────────
         evidence_items = await th_db.list_evidence_items(pkg_id)
 
+        # ── 1. Parse pending FILE evidence items (issue-local-011) ───────────
+        # Files uploaded after issue-011 are stored with parse_status='pending';
+        # the raw blob is in evidence_blobs. Parse them here so the pipeline
+        # always sees extracted text regardless of when the file was uploaded.
+        pending_files = [
+            i
+            for i in evidence_items
+            if i.get("parse_status") == "pending" and i.get("item_type") == "file"
+        ]
+
+        if pending_files:
+            from backend.threat_hunting.extractors.dispatcher import extract_file
+
+            for item in pending_files:
+                item_id = item["id"]
+                label = item.get("label") or item.get("source_ref") or "upload"
+                mime_type_hint = item.get("mime_type") or ""
+                # parser_mode stored in fetch_metadata by the upload route
+                fetch_meta = item.get("fetch_metadata") or {}
+                parser_mode = fetch_meta.get("parser_mode", "auto") if isinstance(fetch_meta, dict) else "auto"
+                debug_lines.append(f"FILE_PARSE_START: {label} mode={parser_mode}")
+                try:
+                    raw = await th_db.get_evidence_blob(item_id)
+                    if raw is None:
+                        # Blob missing — mark error so the user can re-upload
+                        await th_db.update_evidence_item(
+                            item_id,
+                            parse_status="error",
+                            parse_warnings=["Blob missing — file may need to be re-uploaded."],
+                        )
+                        debug_lines.append(f"FILE_PARSE_ERR: {label} — blob missing")
+                        continue
+                    result = await asyncio.to_thread(extract_file, raw, label, mime_type_hint, parser_mode)
+                    await th_db.update_evidence_item(
+                        item_id,
+                        extracted_text=result["extracted_text"],
+                        parser_used=result["parser_used"],
+                        parser_version=result["parser_version"],
+                        parse_status=result["parse_status"],
+                        parse_warnings=result["parse_warnings"],
+                        content_hash=result["content_hash"],
+                        mime_type=result["mime_type"],
+                    )
+                    debug_lines.append(
+                        f"FILE_PARSE_OK: {label} → {len(result['extracted_text'])} chars "
+                        f"({result['parser_used']})"
+                    )
+                except Exception as parse_exc:  # noqa: BLE001
+                    await th_db.update_evidence_item(
+                        item_id,
+                        parse_status="error",
+                        parse_warnings=[f"Pipeline parse failed: {parse_exc}"],
+                    )
+                    debug_lines.append(f"FILE_PARSE_ERR: {label} → {parse_exc}")
+                    logger.warning("intake_classifier: file parse failed for %s: %s", label, parse_exc)
+
+            # Reload after parsing
+            evidence_items = await th_db.list_evidence_items(pkg_id)
+
+        # ── 2. Fetch pending URL evidence items ──────────────────────────────
+        # Evidence items created via POST /evidence/url have parse_status='pending'.
+        # Fetch them now with effort-aware settings before building the corpus.
         pending_urls = [
             i
             for i in evidence_items
@@ -111,7 +176,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             # Reload evidence items after fetching
             evidence_items = await th_db.list_evidence_items(pkg_id)
 
-        # ── 2. Build text corpus ──────────────────────────────────────────────
+        # ── 3. Build text corpus ──────────────────────────────────────────────
         texts: list[str] = []
         intake_sources: list[dict[str, Any]] = []
         for item in evidence_items:
@@ -125,11 +190,14 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                     "item_type": item.get("item_type", ""),
                     "text_length": len(text),
                     "parse_status": item.get("parse_status", "ok"),
+                    # sub_status mirrors parse_status for live diagram coloring
+                    "sub_status": item.get("parse_status", "ok"),
+                    "parser_used": item.get("parser_used") or "",
                 }
             )
         evidence_text_corpus = "\n\n".join(texts) if texts else ""
 
-        # ── 3. Deterministic IOC extraction (issue-008-2B) ───────────────────
+        # ── 4. Deterministic IOC extraction (issue-008-2B) ───────────────────
         # Clear prior IOCs first to ensure a clean slate on re-runs.
         cleared = await th_db.clear_extracted_iocs(pkg_id)
         if cleared:
@@ -152,7 +220,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             f"IOC_EXTRACT: extracted {ioc_count_extracted} raw → {len(all_iocs)} unique stored"
         )
 
-        # ── 4. LLM tool-calling enrichment (issue-006-B / 008-2D) ────────────
+        # ── 5. LLM tool-calling enrichment (issue-006-B / 008-2D) ────────────
         # On high effort, always run tool enrichment.
         # On medium/low, only when URL items have thin content.
         from backend.config.loader import load_agent_tools
@@ -221,7 +289,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                 except Exception as llm_exc:  # noqa: BLE001
                     debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
 
-        # ── 5. Build IOC summary ──────────────────────────────────────────────
+        # ── 6. Build IOC summary ──────────────────────────────────────────────
         by_type: dict[str, int] = {}
         for ioc in all_iocs:
             t = ioc.get("ioc_type", "other")
@@ -258,12 +326,14 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                 "status": "ok",
                 "elapsed_s": round(elapsed, 2),
                 "ioc_count": len(all_iocs),
+                "noisy_count": noisy,
                 "item_count": len(evidence_items),
                 "tools_used": tools_used,
                 "decision": decision,
                 "debug_lines": debug_lines,
                 "intake_sources": intake_sources,
                 "fetched_url_count": fetched_count,
+                "parsed_file_count": len(pending_files),
             }
         )
         completed.append(step)

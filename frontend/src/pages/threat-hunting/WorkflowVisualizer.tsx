@@ -28,10 +28,11 @@ import {
   Clock,
   SkipForward,
   AlertCircle,
+  ArrowRight,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useQuery } from '@tanstack/react-query'
-import { api, type THGenerationRecord, type THStepLog } from '../../api/client'
+import { api, type THGenerationRecord, type THStepLog, type THIntakeSource } from '../../api/client'
 
 // ── Lazy-loaded visualizers ───────────────────────────────────────────────────
 
@@ -74,14 +75,60 @@ function StepIcon({ log, active }: { log?: THStepLog; active: boolean }) {
   return <Clock className="w-4 h-4 text-gray-500 shrink-0" />
 }
 
+// ── Per-evidence sub-status dot ───────────────────────────────────────────────
+
+function IntakeSourceSubStatus({ src }: { src: THIntakeSource }) {
+  const s = src.sub_status
+  const dotClass =
+    s === 'ok'
+      ? 'bg-green-500'
+      : s === 'error'
+        ? 'bg-red-500'
+        : s === 'partial'
+          ? 'bg-amber-400'
+          : s === 'pending'
+            ? 'bg-blue-500 animate-pulse'
+            : 'bg-gray-600'
+  return (
+    <div className="flex items-center gap-2 py-0.5">
+      <div className="w-1.5 flex justify-center shrink-0">
+        <div className={clsx('w-1.5 h-1.5 rounded-full shrink-0', dotClass)} />
+      </div>
+      <span className="text-[10px] text-gray-400 truncate flex-1 min-w-0">
+        {src.label || src.item_type || 'source'}
+      </span>
+      <span className="text-[9px] text-gray-600 font-mono shrink-0 ml-1">
+        {src.item_type}
+      </span>
+      {src.text_length > 0 && (
+        <span className="text-[9px] text-gray-700 font-mono shrink-0">
+          {src.text_length.toLocaleString()} chars
+        </span>
+      )}
+      {src.ioc_count != null && src.ioc_count > 0 && (
+        <span className="text-[9px] text-blue-500 font-mono shrink-0">
+          {src.ioc_count} IOC{src.ioc_count !== 1 ? 's' : ''}
+        </span>
+      )}
+      {src.parser_used && (
+        <span className="text-[9px] font-mono bg-gray-800 text-gray-500 border border-gray-700/50 rounded px-1 shrink-0">
+          {src.parser_used}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ── Timeline view ─────────────────────────────────────────────────────────────
 
 function TimelineVisualizer({
   genRecord,
   debug,
+  onShowIocs,
 }: {
   genRecord: THGenerationRecord
   debug: boolean
+  onShowIocs?: () => void
 }) {
   const stepLogs: Record<string, THStepLog> = {}
   for (const log of genRecord.step_logs ?? []) {
@@ -113,6 +160,9 @@ function TimelineVisualizer({
           const log = stepLogs[step.id]
           const isActive = currentStep === step.id
           const isDone = completed.includes(step.id)
+
+          // Part 7a: intake sub-list
+          const intakeSources = step.id === 'intake_classifier' ? (log?.intake_sources ?? []) : []
 
           return (
             <div
@@ -156,6 +206,17 @@ function TimelineVisualizer({
                         {log.noisy_count ? ` (${log.noisy_count} noisy)` : ''}
                       </span>
                     )}
+                    {/* Part 7a: "View N IOCs" link when IOCs are present */}
+                    {log?.ioc_count != null && log.ioc_count > 0 && onShowIocs && (
+                      <button
+                        className="flex items-center gap-0.5 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                        onClick={onShowIocs}
+                        title="Switch to IOCs tab"
+                      >
+                        View {log.ioc_count} IOC{log.ioc_count !== 1 ? 's' : ''}
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
                     {log?.effort && (
                       <span className="text-[10px] text-gray-700 font-mono">
                         effort={log.effort}
@@ -180,6 +241,14 @@ function TimelineVisualizer({
                   )}
                   {log?.error && (
                     <p className="text-[10px] text-red-400 mt-0.5">Error: {log.error}</p>
+                  )}
+                  {/* Part 7a: per-evidence sub-list below intake_classifier */}
+                  {intakeSources.length > 0 && (
+                    <div className="mt-1.5 pl-3 border-l border-gray-700/60 space-y-0">
+                      {intakeSources.map((src, i) => (
+                        <IntakeSourceSubStatus key={i} src={src} />
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -214,9 +283,11 @@ interface WorkflowVisualizerProps {
   genRecord: THGenerationRecord
   /** Compact mode: show minimal info (used in Info verbosity). */
   compact?: boolean
+  /** Called when the user clicks the "View N IOCs" link in the intake step row. */
+  onShowIocs?: () => void
 }
 
-export default function WorkflowVisualizer({ genRecord, compact = false }: WorkflowVisualizerProps) {
+export default function WorkflowVisualizer({ genRecord, compact = false, onShowIocs }: WorkflowVisualizerProps) {
   // Load verbosity + visualization settings (cached — low frequency)
   const { data: verbosityData } = useQuery({
     queryKey: ['agent-verbosity'],
@@ -273,7 +344,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false }: Workf
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} debug={debug} />
+          <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
         </div>
         {/* Right: Mermaid diagram */}
         <div className="min-w-0">
@@ -297,7 +368,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false }: Workf
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} debug={debug} />
+          <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
         </div>
         {/* Right: ReactFlow graph */}
         <div className="min-w-0">
@@ -317,5 +388,5 @@ export default function WorkflowVisualizer({ genRecord, compact = false }: Workf
   }
 
   // Default: timeline (full width, includes debug panel)
-  return <TimelineVisualizer genRecord={genRecord} debug={debug} />
+  return <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
 }
