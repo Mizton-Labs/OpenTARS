@@ -10,6 +10,7 @@ import ThreatHunting from './pages/ThreatHunting'
 import Account from './pages/Account'
 import About from './pages/About'
 import Login from './pages/Login'
+import Home from './pages/Home'
 import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
 import ThreatHuntingDetail from './pages/threat-hunting/ThreatHuntingDetail'
 import { api } from './api/client'
@@ -33,6 +34,7 @@ type ShellRoute = Exclude<(typeof KNOWN_ROUTES)[number], 'login'>
 const SHELL_ROUTES = KNOWN_ROUTES.filter((r): r is ShellRoute => r !== 'login')
 
 const PAGE_COMPONENTS: Record<ShellRoute, React.ComponentType> = {
+  home: Home,
   viewer: Viewer,
   configuration: Configuration,
   normalizer: Normalizer,
@@ -97,7 +99,7 @@ export default function App() {
 
       {/* Everything else lives inside the authenticated shell. */}
       <Route element={<ProtectedLayout />}>
-        <Route index element={<Navigate to="viewer" replace />} />
+        <Route index element={<Navigate to="home" replace />} />
         {SHELL_ROUTES.map((slug) => {
           const Component = PAGE_COMPONENTS[slug]
           return <Route key={slug} path={slug} element={guard(slug, <Component />)} />

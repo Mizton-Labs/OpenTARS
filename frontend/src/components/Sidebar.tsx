@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   Radar,
   Crosshair,
+  Home as HomeIcon,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -47,6 +48,13 @@ type NavSection = {
 }
 
 const navSections: NavSection[] = [
+  {
+    label: 'Home',
+    icon: HomeIcon,
+    items: [
+      { to: 'home', label: 'Home', icon: HomeIcon, adminOnly: false, authOnly: false },
+    ],
+  },
   {
     label: 'Threat Intel',
     icon: Radar,
