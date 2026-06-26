@@ -9,6 +9,42 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — SSO users bypass forced password reset (issue-local-013)
+
+**Bug:** Any user with `must_change_password=True` who authenticated via SSO was blocked by the
+password-change gate — the middleware returned 403 on every API call and `ProtectedLayout` showed
+a full-screen forced-reset screen. This affected: (a) existing local accounts (e.g. a bootstrap
+admin after `--reset-admin-password`) that were later linked/authenticated via SSO, and (b) any
+SSO-provisioned account where the flag was set after provisioning.
+
+Three-layer fix:
+
+- **Layer 1 — Clear flag at SSO login (`backend/auth/oidc.py`):** `_upsert_sso_user` now clears
+  `must_change_password` in the matched-user branch — the `UPDATE users SET ... must_change_password = 0`
+  SQL and the returned dict are both updated. Covers both existing local accounts logging in via SSO
+  for the first time and returning SSO users. New SSO users were already created with the flag `False`
+  (`oidc.py:398`) — that path is unchanged but now tested.
+
+- **Layer 2 — Defense-in-depth middleware skip (`backend/main.py`):** The `must_change_password`
+  gate at `main.py:329` now also checks `not user.get("idp")`. An SSO-linked account (`idp` set)
+  is never blocked by the gate even if the flag somehow persists (e.g. set by an admin after
+  the account was already linked). `resolve_session` already returns `idp` — no schema change needed.
+
+- **Layer 3 — Frontend guard (`ProtectedLayout.tsx` + `client.ts`):** `_public_user` in
+  `routes_auth.py` now exposes `idp`. `AuthUser` in `client.ts` has new optional field
+  `idp?: string | null`. `ProtectedLayout.tsx` guards the forced-reset screen with
+  `user.must_change_password && !user.idp` — SSO users (idp set) are never shown the screen,
+  even before a `/me` refresh.
+
+**Not changed:** Local login of a flagged non-SSO account still correctly forces the password
+reset (existing behavior preserved). The `--reset-admin-password` workflow on pure-local accounts
+continues to work as before.
+
+**Tests:** 11 new backend tests (`test_auth_issue_local_013.py`) + 3 new frontend tests
+(`auth.test.tsx`) covering all three layers and all scenarios (new SSO user, existing-user SSO
+login, DB persistence, middleware pass/block, `_public_user` idp field, `/me` idp response,
+frontend SSO bypass, frontend local-user still blocked).
+
 ### Added — Workflow viz, hunt creation, design, defaults, ownership, home page (issue-local-012)
 
 - **Part 1a — Evidence nodes visually distinct**: Evidence source nodes now use a distinct **stadium shape** (`([...])`) in Mermaid and a **dashed capsule border** (`borderRadius: 20px, borderStyle: dashed`) in ReactFlow, differentiated from agent/task rectangular nodes. Teal/cyan base color (`#0e4f4f`/`#14b8a6`) for pending evidence — never used by agent nodes. Agent and evidence categories are now visually unambiguous.
