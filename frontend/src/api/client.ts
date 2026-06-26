@@ -357,6 +357,13 @@ export interface AuthUser {
    * (prompts-047).
    */
   must_change_password?: boolean
+  /**
+   * IdP identifier for SSO-authenticated accounts (e.g. 'entra', 'google').
+   * Null/undefined for purely local accounts.
+   * issue-local-013: used by ProtectedLayout to exempt SSO users from the
+   * forced-password-reset screen.
+   */
+  idp?: string | null
 }
 
 export interface CreateUserPayload {

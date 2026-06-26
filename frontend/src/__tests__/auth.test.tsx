@@ -182,4 +182,51 @@ describe('Forced password change (prompts-047)', () => {
     expect(await screen.findByText('VIEWER PAGE')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /set a new password/i })).not.toBeInTheDocument()
   })
+
+  // issue-local-013: SSO users must never see the forced-reset screen
+  it('does NOT show forced-reset screen when must_change_password is true but idp is set (SSO user)', async () => {
+    const ssoFlaggedUser: AuthUser = {
+      ...adminUser,
+      must_change_password: true,
+      idp: 'entra',
+    }
+    vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
+    vi.mocked(api.auth.me).mockResolvedValue({ user: ssoFlaggedUser })
+
+    renderApp('/viewer')
+
+    // Should land on the viewer page — NOT the forced-reset screen
+    expect(await screen.findByText('VIEWER PAGE')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /set a new password/i })).not.toBeInTheDocument()
+  })
+
+  it('DOES show forced-reset screen when must_change_password is true and idp is null (local user)', async () => {
+    const localFlaggedUser: AuthUser = {
+      ...adminUser,
+      must_change_password: true,
+      idp: null,
+    }
+    vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
+    vi.mocked(api.auth.me).mockResolvedValue({ user: localFlaggedUser })
+
+    renderApp('/viewer')
+
+    expect(await screen.findByRole('heading', { name: /set a new password/i })).toBeInTheDocument()
+    expect(screen.queryByText('VIEWER PAGE')).not.toBeInTheDocument()
+  })
+
+  it('DOES show forced-reset screen when must_change_password is true and idp is undefined (local user)', async () => {
+    const localFlaggedUser: AuthUser = {
+      ...adminUser,
+      must_change_password: true,
+      // idp intentionally absent (undefined)
+    }
+    vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
+    vi.mocked(api.auth.me).mockResolvedValue({ user: localFlaggedUser })
+
+    renderApp('/viewer')
+
+    expect(await screen.findByRole('heading', { name: /set a new password/i })).toBeInTheDocument()
+    expect(screen.queryByText('VIEWER PAGE')).not.toBeInTheDocument()
+  })
 })

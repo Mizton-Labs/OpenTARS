@@ -34,7 +34,13 @@ export default function ProtectedLayout() {
     return <Navigate to="login" replace state={{ from: location }} />
   }
 
-  if (authEnabled && user?.must_change_password) {
+  // issue-local-013: SSO-authenticated users (idp is set) are exempt from the
+  // forced-password-reset screen.  Their local password may be an unusable random
+  // hash; requiring them to "change" it makes no sense.  The backend also clears
+  // the flag at SSO login time and skips the 403 gate for idp-linked accounts,
+  // but this guard ensures the SPA never shows the screen to SSO users even
+  // before the /me response is refreshed.
+  if (authEnabled && user?.must_change_password && !user?.idp) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950 p-4">
         <div className="w-full max-w-sm space-y-4 rounded-lg border border-gray-800 bg-gray-900 p-6">

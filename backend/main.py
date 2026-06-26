@@ -326,7 +326,13 @@ async def auth_enforcement(request, call_next):
     # default (first-run bootstrap or --reset-admin-password) must change it
     # before doing anything else. Allow only the self-service paths needed to
     # complete that flow — read identity (/me), change the password, and log out.
-    if user.get("must_change_password") and path not in _SELF_PATHS:
+    #
+    # issue-local-013: SSO-authenticated accounts (idp is set) are exempt from
+    # this gate.  The _upsert_sso_user function already clears the flag at SSO
+    # login time (Layer 1), but this is a defense-in-depth guard that ensures
+    # an SSO-linked user can never be trapped by the gate even if the flag
+    # somehow persists (e.g. set by an admin after the account was linked).
+    if user.get("must_change_password") and not user.get("idp") and path not in _SELF_PATHS:
         return JSONResponse(status_code=403, content={"detail": "Password change required"})
 
     # Role gate: admins may reach everything; non-admin roles are constrained
