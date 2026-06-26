@@ -162,6 +162,9 @@ def _public_user(user: dict) -> dict:
         "enabled": user["enabled"],
         "created_at": user.get("created_at"),
         "must_change_password": bool(user.get("must_change_password")),
+        # issue-local-013: expose idp so the SPA can exempt SSO users from the
+        # forced-password-reset screen without an extra round trip.
+        "idp": user.get("idp") or None,
     }
 
 

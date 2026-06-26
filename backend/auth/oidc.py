@@ -366,22 +366,31 @@ async def _upsert_sso_user(
         user = await auth_db.get_user_by_username(username)
 
     if user is not None:
-        # Update role if IdP mapping changed, and stamp idp/external_id if missing
+        # Update role if IdP mapping changed, stamp idp/external_id if missing,
+        # and clear must_change_password for SSO logins (issue-local-013).
+        # Rationale: an SSO authentication proves identity via the IdP; forcing
+        # an SSO-authenticated user to "change" a local password they cannot
+        # access (possibly an unusable random hash) makes no sense.  Clearing
+        # the flag here covers both newly-linked accounts and existing local
+        # accounts (e.g. a bootstrap admin) that later authenticate via SSO.
         updates_needed = (
             user.get("role") != role
             or user.get("idp") != idp
             or user.get("external_id") != sub
+            or user.get("must_change_password")  # always clear on SSO login
         )
         if updates_needed:
             async with __import__("aiosqlite").connect(auth_db._USERS_DB_PATH) as _db:
                 await _db.execute(
-                    "UPDATE users SET role = ?, idp = ?, external_id = ? WHERE id = ?",
+                    "UPDATE users SET role = ?, idp = ?, external_id = ?, "
+                    "must_change_password = 0 WHERE id = ?",
                     (role, idp, sub, user["id"]),
                 )
                 await _db.commit()
             user["role"] = role
             user["idp"] = idp
             user["external_id"] = sub
+            user["must_change_password"] = False
         return user
 
     # 3. Auto-provision
