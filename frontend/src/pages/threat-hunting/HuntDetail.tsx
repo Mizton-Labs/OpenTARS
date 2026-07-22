@@ -119,13 +119,11 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
 
   const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
-  // A run is active when the latest run (index 0) is in running/awaiting_approval state
-  const latestRunActive = runs.length > 0 && (
-    runs[0].generation_status === 'running' ||
-    runs[0].generation_status === 'awaiting_approval'
-  )
-  // Part 6: re-run is available whenever evidence exists, not only when finished
-  const canRerun = isResearcher && (pkg?.evidence_count ?? 0) > 0 && !latestRunActive
+  // issue-local-014: re-run is available regardless of any run's status —
+  // including while a run is still active — so parallel runs (e.g. a
+  // different model/effort) can be started at any time. The run selector
+  // above already lists and marks every concurrently active run.
+  const canRerun = isResearcher && (pkg?.evidence_count ?? 0) > 0
 
   return (
     <div className="p-6 space-y-6">
@@ -139,7 +137,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
         <div className="flex items-center gap-2">
-          {/* Re-run button — visible whenever evidence exists and no run is active (issue-local-011 Part 6) */}
+          {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
           {canRerun && (
             <button
               className="btn-secondary flex items-center gap-2 text-sm"
