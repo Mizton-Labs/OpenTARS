@@ -36,7 +36,16 @@ from typing import Any
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 from backend.threat_hunting.agents.state import DeepRetrohuntLead, HuntPipelineState, SanitizedIOC
-from backend.threat_hunting.iocs import _defang, _noise_score, _normalize_ioc  # noqa: PLC2701
+from backend.threat_hunting.iocs import _NOISY_DOMAINS as _NOISY_DOMAINS_SET  # noqa: PLC2701
+from backend.threat_hunting.iocs import _NOISY_HASHES as _EMPTY_HASHES  # noqa: PLC2701
+from backend.threat_hunting.iocs import _NOISY_PROCESSES as _NOISY_PROCESSES_SET  # noqa: PLC2701
+from backend.threat_hunting.iocs import (  # noqa: PLC2701
+    HIGH_NOISE_THRESHOLD,
+    NOISE_THRESHOLD,
+    _defang,
+    _noise_score,
+    _normalize_ioc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,57 +77,6 @@ _PRIVATE_RANGES = (
     "192.168.",
     "127.",
     "169.254.",
-)
-
-_NOISY_DOMAINS_SET = frozenset(
-    {
-        "google.com",
-        "microsoft.com",
-        "windows.com",
-        "cloudflare.com",
-        "amazonaws.com",
-        "akamai.net",
-        "fastly.net",
-        "azure.com",
-        "office.com",
-        "live.com",
-        "outlook.com",
-        "apple.com",
-        "icloud.com",
-        "github.com",
-        "githubusercontent.com",
-        "gstatic.com",
-        "googleapis.com",
-    }
-)
-
-_NOISY_PROCESSES_SET = frozenset(
-    {
-        "cmd.exe",
-        "powershell.exe",
-        "wscript.exe",
-        "cscript.exe",
-        "mshta.exe",
-        "regsvr32.exe",
-        "rundll32.exe",
-        "svchost.exe",
-        "explorer.exe",
-        "services.exe",
-        "lsass.exe",
-        "winlogon.exe",
-        "notepad.exe",
-        "calc.exe",
-        "regedit.exe",
-        "taskmgr.exe",
-    }
-)
-
-_EMPTY_HASHES = frozenset(
-    {
-        "d41d8cd98f00b204e9800998ecf8427e",
-        "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    }
 )
 
 _STRIP_PROTO = re.compile(r"^https?://", re.IGNORECASE)
@@ -281,13 +239,13 @@ async def _enrich_with_llm(
     Returns a dict with keys: spl_draft, spl_macro_name, search_hint, analyst_notes.
     Raises on LLM error — caller handles.
     """
-    noisy = [s for s in sanitized if s["noise_score"] >= 0.5]
-    clean = [s for s in sanitized if s["noise_score"] < 0.5]
+    noisy = [s for s in sanitized if s["noise_score"] >= NOISE_THRESHOLD]
+    clean = [s for s in sanitized if s["noise_score"] < NOISE_THRESHOLD]
     hunt_id_short = hunt_package_id[:8]
 
     ioc_summary_lines = []
     for s in sanitized[:retrohunt_ioc_cap]:  # cap prompt size
-        flag = " [NOISY]" if s["noise_score"] >= 0.5 else ""
+        flag = " [NOISY]" if s["noise_score"] >= NOISE_THRESHOLD else ""
         ioc_summary_lines.append(
             f"  {s['ioc_type']}: {s['ioc']} (noise={s['noise_score']:.2f}{flag})"
         )
@@ -306,7 +264,8 @@ async def _enrich_with_llm(
             ("Hunt Package ID", hunt_package_id),
             (
                 "IOC Statistics",
-                f"Total: {len(sanitized)} | Clean (<0.5 noise): {len(clean)} | Noisy (≥0.5 noise): {len(noisy)}",
+                f"Total: {len(sanitized)} | Clean (<{NOISE_THRESHOLD} noise): {len(clean)} | "
+                f"Noisy (>={NOISE_THRESHOLD} noise): {len(noisy)}",
             ),
             (f"IOC Summary (first {retrohunt_ioc_cap})", ioc_summary_text),
             ("IOC CSV (canonical)", ioc_csv[:retrohunt_csv_cap]),  # cap to avoid token overflow
@@ -318,7 +277,7 @@ async def _enrich_with_llm(
             "  - Include a comment block at the top listing the IOC types covered.\n"
             "  - Build a `| where` clause using `cidrmatch` for IPs, `like` for domains/URLs, "
             "and `=` for hashes, CVEs.\n"
-            "  - Do NOT include IOCs with noise_score >= 0.8 in the SPL query.\n"
+            f"  - Do NOT include IOCs with noise_score >= {HIGH_NOISE_THRESHOLD} in the SPL query.\n"
             "  - Wrap the query in a macro definition: `[threathunt_ioc_<hunt_id_short>]`.\n"
             f"  - Use hunt ID short: {hunt_id_short}\n"
             "For analyst_notes:\n"
@@ -400,8 +359,8 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     try:
         sanitized = _sanitize_ioc_list(atomic_iocs)
         ioc_csv = _build_ioc_csv(sanitized)
-        noisy_count = sum(1 for s in sanitized if s["noise_score"] >= 0.5)
-        high_noise_count = sum(1 for s in sanitized if s["noise_score"] >= 0.8)
+        noisy_count = sum(1 for s in sanitized if s["noise_score"] >= NOISE_THRESHOLD)
+        high_noise_count = sum(1 for s in sanitized if s["noise_score"] >= HIGH_NOISE_THRESHOLD)
         logger.info(
             "deep_retrohunt_planner: sanitized %d IOCs (%d noisy, %d high-noise)",
             len(sanitized),
