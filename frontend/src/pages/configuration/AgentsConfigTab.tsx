@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Activity, BarChart2, GitFork, Layers, Save, Loader2, Wrench, AlertTriangle } from 'lucide-react'
+import { Activity, BarChart2, GitFork, Layers, Save, Loader2, Wrench, AlertTriangle, RefreshCw } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type ToolCatalogEntry } from '../../api/client'
 
@@ -93,12 +93,23 @@ export default function AgentsConfigTab() {
     queryKey: ['agent-tools-catalog'],
     queryFn: () => api.getAgentToolsCatalog(),
   })
+  // issue-local-014: LLM call retry/backoff resilience
+  const { data: maxRetriesData, isLoading: maxRetriesLoading } = useQuery({
+    queryKey: ['th-llm-max-retries'],
+    queryFn: () => api.getThLlmMaxRetries(),
+  })
+  const { data: backoffData, isLoading: backoffLoading } = useQuery({
+    queryKey: ['th-llm-retry-backoff-seconds'],
+    queryFn: () => api.getThLlmRetryBackoffSeconds(),
+  })
 
   // Part 4: defaults updated to debug / reactflow
   const [verbosity, setVerbosity] = useState<VerbosityLevel>('debug')
   const [visualization, setVisualization] = useState<VisualizationStyle>('reactflow')
   const [showSubtasks, setShowSubtasks] = useState(false)
   const [toolsEnabled, setToolsEnabled] = useState<Record<string, boolean>>({})
+  const [maxRetries, setMaxRetries] = useState(3)
+  const [backoffSeconds, setBackoffSeconds] = useState(2)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -125,24 +136,47 @@ export default function AgentsConfigTab() {
     }
   }, [toolsData])
 
+  useEffect(() => {
+    if (maxRetriesData?.th_llm_max_retries !== undefined) {
+      setMaxRetries(maxRetriesData.th_llm_max_retries)
+    }
+  }, [maxRetriesData])
+
+  useEffect(() => {
+    if (backoffData?.th_llm_retry_backoff_seconds !== undefined) {
+      setBackoffSeconds(backoffData.th_llm_retry_backoff_seconds)
+    }
+  }, [backoffData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setAgentVerbosity(verbosity)
       await api.setAgentVisualization(visualization)
       await api.setAgentShowSubtasks(showSubtasks)
       await api.setAgentTools(toolsEnabled)
+      await api.setThLlmMaxRetries(maxRetries)
+      await api.setThLlmRetryBackoffSeconds(backoffSeconds)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agent-verbosity'] })
       qc.invalidateQueries({ queryKey: ['agent-visualization'] })
       qc.invalidateQueries({ queryKey: ['agent-show-subtasks'] })
       qc.invalidateQueries({ queryKey: ['agent-tools'] })
+      qc.invalidateQueries({ queryKey: ['th-llm-max-retries'] })
+      qc.invalidateQueries({ queryKey: ['th-llm-retry-backoff-seconds'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
-  const isLoading = vLoading || vizLoading || subtasksLoading || toolsLoading || catalogLoading
+  const isLoading =
+    vLoading ||
+    vizLoading ||
+    subtasksLoading ||
+    toolsLoading ||
+    catalogLoading ||
+    maxRetriesLoading ||
+    backoffLoading
 
   // Compare local tools map against server value
   const toolsDirty = Object.keys(toolsEnabled).some(
@@ -154,7 +188,9 @@ export default function AgentsConfigTab() {
     verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'debug') ||
     visualization !== (vizData?.agent_workflow_visualization ?? 'reactflow') ||
     showSubtasksDirty ||
-    toolsDirty
+    toolsDirty ||
+    maxRetries !== (maxRetriesData?.th_llm_max_retries ?? 3) ||
+    backoffSeconds !== (backoffData?.th_llm_retry_backoff_seconds ?? 2)
 
   if (isLoading) {
     return (
@@ -450,6 +486,47 @@ export default function AgentsConfigTab() {
             })}
           </div>
         )}
+      </div>
+
+      {/* ── LLM Call Resilience (issue-local-014) ─────────────────────────── */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="w-4 h-4 text-brand-400" />
+          <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            LLM Call Resilience
+          </p>
+        </div>
+        <p className="text-xs text-gray-500">
+          When an LLM call times out, hits a transient provider error, or comes back with an
+          empty response (output-token budget exhausted), agents retry with exponential backoff
+          before giving up on that step and recording the error. Applies to every step of the
+          hunt pipeline.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-gray-400">Max retries per call</span>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={maxRetries}
+              onChange={(e) => setMaxRetries(Number(e.target.value))}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800/30 px-3 py-2 text-sm text-gray-200 focus:border-brand-500 focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-400">Backoff base (seconds)</span>
+            <input
+              type="number"
+              min={0.1}
+              max={60}
+              step={0.5}
+              value={backoffSeconds}
+              onChange={(e) => setBackoffSeconds(Number(e.target.value))}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800/30 px-3 py-2 text-sm text-gray-200 focus:border-brand-500 focus:outline-none"
+            />
+          </label>
+        </div>
       </div>
 
       {/* Save button */}

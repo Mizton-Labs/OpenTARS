@@ -160,6 +160,87 @@ def test_put_watcher_max_events_rejects_missing_key(client):
     assert resp.status_code == 400
 
 
+# ── th_llm_max_retries / th_llm_retry_backoff_seconds (issue-local-014) ──────
+
+
+def test_get_th_llm_max_retries_default(client):
+    resp = client.get("/api/app/th-llm-max-retries")
+    assert resp.status_code == 200
+    assert resp.json() == {"th_llm_max_retries": 3}
+
+
+def test_put_th_llm_max_retries_round_trip(client):
+    resp = client.put("/api/app/th-llm-max-retries", json={"th_llm_max_retries": 5})
+    assert resp.status_code == 200
+    assert resp.json() == {"th_llm_max_retries": 5}
+    resp2 = client.get("/api/app/th-llm-max-retries")
+    assert resp2.json() == {"th_llm_max_retries": 5}
+
+
+@pytest.mark.parametrize("bad", [-1, 11, 100])
+def test_put_th_llm_max_retries_rejects_out_of_range(client, bad):
+    resp = client.put("/api/app/th-llm-max-retries", json={"th_llm_max_retries": bad})
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_max_retries_rejects_non_int(client):
+    resp = client.put("/api/app/th-llm-max-retries", json={"th_llm_max_retries": "3"})
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_max_retries_rejects_bool(client):
+    resp = client.put("/api/app/th-llm-max-retries", json={"th_llm_max_retries": True})
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_max_retries_rejects_missing_key(client):
+    resp = client.put("/api/app/th-llm-max-retries", json={})
+    assert resp.status_code == 400
+
+
+def test_get_th_llm_retry_backoff_seconds_default(client):
+    resp = client.get("/api/app/th-llm-retry-backoff-seconds")
+    assert resp.status_code == 200
+    assert resp.json() == {"th_llm_retry_backoff_seconds": 2.0}
+
+
+def test_put_th_llm_retry_backoff_seconds_round_trip(client):
+    resp = client.put(
+        "/api/app/th-llm-retry-backoff-seconds", json={"th_llm_retry_backoff_seconds": 5.5}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"th_llm_retry_backoff_seconds": 5.5}
+    resp2 = client.get("/api/app/th-llm-retry-backoff-seconds")
+    assert resp2.json() == {"th_llm_retry_backoff_seconds": 5.5}
+
+
+@pytest.mark.parametrize("bad", [0.0, 0.05, 60.1, 999])
+def test_put_th_llm_retry_backoff_seconds_rejects_out_of_range(client, bad):
+    resp = client.put(
+        "/api/app/th-llm-retry-backoff-seconds", json={"th_llm_retry_backoff_seconds": bad}
+    )
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_retry_backoff_seconds_rejects_non_number(client):
+    resp = client.put(
+        "/api/app/th-llm-retry-backoff-seconds", json={"th_llm_retry_backoff_seconds": "2"}
+    )
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_retry_backoff_seconds_rejects_bool(client):
+    resp = client.put(
+        "/api/app/th-llm-retry-backoff-seconds", json={"th_llm_retry_backoff_seconds": True}
+    )
+    assert resp.status_code == 400
+
+
+def test_put_th_llm_retry_backoff_seconds_rejects_missing_key(client):
+    resp = client.put("/api/app/th-llm-retry-backoff-seconds", json={})
+    assert resp.status_code == 400
+
+
 # ── branding logo (prompts-045) ──────────────────────────────────────────────
 # 1x1 transparent PNG.
 _PNG_BYTES = bytes.fromhex(

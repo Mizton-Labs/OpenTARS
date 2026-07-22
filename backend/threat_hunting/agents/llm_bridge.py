@@ -33,6 +33,8 @@ import asyncio
 import logging
 from typing import Any
 
+from backend.llm.errors import LLMEmptyContentError, LLMProviderError, LLMTransportError
+
 logger = logging.getLogger(__name__)
 
 # Registry import at module level so tests can patch it via
@@ -42,6 +44,78 @@ try:
     from backend.llm.registry import get_client  # noqa: F401 (imported for test patching)
 except ImportError:  # pragma: no cover
     get_client = None  # type: ignore[assignment]
+
+# issue-local-014: a single LLM call, retried with backoff on transient
+# failures before the caller (a pipeline node) records a permanent error.
+# Covers three distinct failure shapes seen in production runs:
+#   - LLMTransportError            — network/timeout, always worth retrying.
+#   - LLMProviderError (status>=500 or unknown) — upstream hiccup, retry.
+#   - LLMProviderError (status<500)             — permanent (bad request),
+#     never retried — retrying an HTTP 400 wastes attempts and quota.
+#   - LLMEmptyContentError          — HTTP 200 but the output-token budget
+#     was exhausted (finish_reason=length); the *same* max_tokens tends to
+#     fail again, so each retry raises the ceiling instead of repeating
+#     verbatim. This is why a plain "retry the same call" decorator isn't
+#     enough here and the loop is hand-rolled rather than using tenacity.
+_EMPTY_CONTENT_TOKEN_MULTIPLIER = 2.0
+_EMPTY_CONTENT_MAX_TOKENS_CEILING = 16384
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, LLMEmptyContentError):
+        return True
+    if isinstance(exc, LLMProviderError):
+        # LLMEmptyContentError subclasses LLMProviderError — already handled
+        # above. A plain LLMProviderError with a 4xx status is permanent.
+        return exc.status is None or exc.status >= 500
+    if isinstance(exc, LLMTransportError):
+        return True
+    return False
+
+
+async def _call_with_retry(attempt_fn, *, max_tokens: int, retry_label: str):
+    """Call ``await attempt_fn(max_tokens)`` with retry/backoff on transient errors.
+
+    Shared by ``call_llm`` and ``call_llm_with_tools`` — ``attempt_fn`` wraps
+    whichever ``LLMClient`` method the caller needs (already bound to the
+    fixed args; only ``max_tokens`` varies across attempts).
+    """
+    from backend.config.loader import (
+        load_th_llm_max_retries,
+        load_th_llm_retry_backoff_seconds,
+    )
+
+    max_retries = load_th_llm_max_retries()
+    backoff_base = load_th_llm_retry_backoff_seconds()
+    current_max_tokens = max_tokens
+
+    attempt = 0
+    while True:
+        try:
+            return await attempt_fn(current_max_tokens)
+        except (LLMEmptyContentError, LLMProviderError, LLMTransportError) as exc:
+            if not _is_retryable(exc) or attempt >= max_retries:
+                raise
+            if isinstance(exc, LLMEmptyContentError):
+                current_max_tokens = min(
+                    int(current_max_tokens * _EMPTY_CONTENT_TOKEN_MULTIPLIER),
+                    _EMPTY_CONTENT_MAX_TOKENS_CEILING,
+                )
+            attempt += 1
+            delay = backoff_base * (2 ** (attempt - 1))
+            logger.warning(
+                "%s: retrying after %s (attempt %d/%d, backoff %.1fs%s)",
+                retry_label,
+                exc,
+                attempt,
+                max_retries,
+                delay,
+                f", max_tokens→{current_max_tokens}"
+                if isinstance(exc, LLMEmptyContentError)
+                else "",
+            )
+            await asyncio.sleep(delay)
+
 
 # LangChain message helpers (used for prompt assembly only)
 try:
@@ -83,26 +157,36 @@ async def call_llm_with_tools(
 
     if not client.supports_tools:
         # Fallback: prompt-only path — no tools available
-        text = await asyncio.to_thread(
-            client.complete,
+        async def _attempt(mt: int) -> str:
+            return await asyncio.to_thread(
+                client.complete,
+                prompt,
+                system=system,
+                max_tokens=mt,
+                temperature=temperature,
+                timeout=timeout,
+                model=model,
+            )
+
+        text = await _call_with_retry(
+            _attempt, max_tokens=max_tokens, retry_label="call_llm_with_tools(no-tools fallback)"
+        )
+        return text, []
+
+    async def _attempt_with_tools(mt: int) -> tuple[str, list[dict]]:
+        return await asyncio.to_thread(
+            client.complete_with_tools,
             prompt,
+            tools,
             system=system,
-            max_tokens=max_tokens,
+            max_tokens=mt,
             temperature=temperature,
             timeout=timeout,
             model=model,
         )
-        return text, []
 
-    text, tool_calls = await asyncio.to_thread(
-        client.complete_with_tools,
-        prompt,
-        tools,
-        system=system,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        timeout=timeout,
-        model=model,
+    text, tool_calls = await _call_with_retry(
+        _attempt_with_tools, max_tokens=max_tokens, retry_label="call_llm_with_tools"
     )
     return text, tool_calls
 
@@ -130,17 +214,18 @@ async def call_llm(
     """
     client = get_client(provider_name)
 
-    # Run the synchronous complete() in a thread pool
-    response: str = await asyncio.to_thread(
-        client.complete,
-        prompt,
-        system=system,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        timeout=timeout,
-        model=model,
-    )
-    return response
+    async def _attempt(mt: int) -> str:
+        return await asyncio.to_thread(
+            client.complete,
+            prompt,
+            system=system,
+            max_tokens=mt,
+            temperature=temperature,
+            timeout=timeout,
+            model=model,
+        )
+
+    return await _call_with_retry(_attempt, max_tokens=max_tokens, retry_label="call_llm")
 
 
 def build_prompt(
@@ -150,6 +235,7 @@ def build_prompt(
     output_format: str,
     additional_instructions: str = "",
     json_output: bool = True,
+    system: str | None = None,
 ) -> tuple[str, str]:
     """Build a (system_prompt, user_prompt) pair for a hunting agent node.
 
@@ -162,11 +248,19 @@ def build_prompt(
             to return valid JSON only.  Set to False for prose outputs such as
             executive summaries and findings sections where JSON framing causes
             the LLM to wrap its answer in a JSON object.
+        system: Optional override for the system prompt / agent persona.
+            When omitted (the default for every existing node), falls back to
+            the generic Threat Intelligence analyst persona below. Pass a
+            node-specific persona (issue-local-014) when a step needs a
+            narrower, more reliable "skill" than the generic one — e.g. an
+            IOC triage specialist rather than a general analyst.
 
     Returns:
         (system_prompt, user_prompt) strings.
     """
-    if json_output:
+    if system is not None:
+        pass
+    elif json_output:
         system = (
             "You are an expert Threat Intelligence and Threat Hunting analyst. "
             "You produce structured, actionable analysis in JSON format. "

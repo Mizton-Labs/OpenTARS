@@ -715,6 +715,19 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ agent_workflow_show_subtasks: value }),
     }),
+  getThLlmMaxRetries: () => request<{ th_llm_max_retries: number }>('/app/th-llm-max-retries'),
+  setThLlmMaxRetries: (value: number) =>
+    request<{ th_llm_max_retries: number }>('/app/th-llm-max-retries', {
+      method: 'PUT',
+      body: JSON.stringify({ th_llm_max_retries: value }),
+    }),
+  getThLlmRetryBackoffSeconds: () =>
+    request<{ th_llm_retry_backoff_seconds: number }>('/app/th-llm-retry-backoff-seconds'),
+  setThLlmRetryBackoffSeconds: (value: number) =>
+    request<{ th_llm_retry_backoff_seconds: number }>('/app/th-llm-retry-backoff-seconds', {
+      method: 'PUT',
+      body: JSON.stringify({ th_llm_retry_backoff_seconds: value }),
+    }),
   getThResearchEffort: () => request<{ th_research_effort: string }>('/app/th-research-effort'),
   setThResearchEffort: (value: string) =>
     request<{ th_research_effort: string }>('/app/th-research-effort', {
