@@ -46,6 +46,68 @@ require_uv() {
     fi
 }
 
+# User-local, no-root install of uv (used as a last-resort fallback — see
+# setup_venv()'s pip branch below). Sets UV on success. Never fatal on its
+# own: callers decide what to do when this returns non-zero (e.g. no network).
+bootstrap_uv() {
+    if command -v uv &>/dev/null; then
+        UV="$(command -v uv)"
+        return 0
+    fi
+    log "Bootstrapping 'uv' locally (user-space, no root) via astral.sh installer..."
+    if curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh -s -- -q 2>/dev/null; then
+        local candidate
+        for candidate in "${HOME}/.local/bin/uv" "${HOME}/.cargo/bin/uv"; do
+            if [ -x "${candidate}" ]; then
+                UV="${candidate}"
+                export PATH="${PATH}:$(dirname "${candidate}")"
+                log "uv installed at ${UV}."
+                return 0
+            fi
+        done
+    fi
+    UV=""
+    return 1
+}
+
+# Auto-heal a relocated/copied venv: Python venvs are NOT relocatable —
+# every installed console-script (uvicorn, fastapi, docling, ...) has its
+# interpreter path hardcoded into its shebang line at install time. If this
+# .venv directory was built somewhere else and later copied/moved to
+# ${VENV_DIR} (e.g. a deployment image built at one path, then bind-mounted
+# into a container at another path), every one of those shebangs still
+# points at the old, now-nonexistent path. The scripts themselves still
+# exist, but the kernel can't resolve their interpreter, and the resulting
+# error ("No such file or directory") misleadingly names the script, not the
+# real, missing interpreter — easy to misdiagnose as a missing file.
+#
+# This scans ${VENV_DIR}/bin for text scripts whose shebang references a
+# "*/bin/python*" interpreter that no longer exists, and repoints it at this
+# venv's real, current python. Symlinks (python, python3, python3.X) are
+# skipped — rewriting through a symlink would corrupt whatever it points at.
+heal_relocated_venv_scripts() {
+    [ -x "${VENV_DIR}/bin/python" ] || return 0
+    local f shebang interp healed=0
+    for f in "${VENV_DIR}"/bin/*; do
+        [ -L "${f}" ] && continue
+        [ -f "${f}" ] || continue
+        shebang="$(head -c 256 "${f}" 2>/dev/null | head -n 1)"
+        case "${shebang}" in
+            '#!'*/bin/python*)
+                interp="${shebang#\#!}"
+                interp="${interp%% *}"
+                if [ ! -x "${interp}" ]; then
+                    sed -i "1s|.*|#!${VENV_DIR}/bin/python|" "${f}"
+                    healed=$((healed + 1))
+                fi
+                ;;
+        esac
+    done
+    if [ "${healed}" -gt 0 ]; then
+        log "Auto-healed ${healed} venv script(s) with a stale/relocated interpreter shebang."
+    fi
+}
+
 require_python() {
     if [ -x "${VENV_DIR}/bin/python" ]; then
         PYTHON="${VENV_DIR}/bin/python"
@@ -62,6 +124,11 @@ require_node() {
 }
 
 setup_venv() {
+    # Fix any stale interpreter shebangs left by a relocated/copied venv
+    # BEFORE anything below tries to exec a script out of ${VENV_DIR}/bin.
+    # No-op when the venv is freshly created or already healthy.
+    heal_relocated_venv_scripts
+
     if [ -n "${UV}" ]; then
         # ── uv path (preferred) ────────────────────────────────────────────
         log "Creating/verifying virtual environment with uv..."
@@ -77,6 +144,27 @@ setup_venv() {
         if [ ! -d "${VENV_DIR}" ]; then
             log "Creating Python virtual environment..."
             python3 -m venv "${VENV_DIR}"
+        fi
+        if [ ! -x "${VENV_DIR}/bin/pip" ]; then
+            # A venv can exist with no pip if it was originally created by
+            # uv elsewhere (uv doesn't seed pip) and then copied/mounted
+            # into an environment where uv itself isn't installed — the
+            # same "relocated venv" scenario heal_relocated_venv_scripts
+            # fixes shebangs for, just for the dependency-install step
+            # instead of an already-installed script. python3's own
+            # ensurepip module can be missing too (e.g. minimal container
+            # base images), so recover by bootstrapping uv locally instead.
+            log "WARNING: venv has no pip (likely created by 'uv' elsewhere) — bootstrapping 'uv' to recover..."
+            if bootstrap_uv; then
+                log "Installing all dependencies from requirements.txt with uv..."
+                "${UV}" pip install \
+                    --quiet \
+                    --python "${VENV_DIR}/bin/python" \
+                    -r "${BACKEND_DIR}/requirements.txt"
+                PYTHON="${VENV_DIR}/bin/python"
+                return 0
+            fi
+            die "venv has no pip and 'uv' bootstrap failed (no network?). Install uv manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
         fi
         log "Installing/updating dependencies with pip..."
         # Use the venv pip directly — $PIP may not be set yet at this point
