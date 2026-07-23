@@ -240,6 +240,47 @@ def test_empty_content_raises_typed_empty_content_error_with_finish_reason():
     assert exc.value.finish_reason == "length"
 
 
+def test_nonempty_truncated_content_raises_empty_content_error():
+    """issue-local-015 feedback: a model can emit SOME text before running out
+    of output-token budget — e.g. a JSON object cut off mid-string. Before
+    this fix, any non-empty ``content`` was returned verbatim regardless of
+    ``finish_reason``, so callers (and downstream JSON parsers) silently
+    received a truncated fragment instead of triggering the existing
+    retry-with-higher-max-tokens path used for the empty-content case."""
+    from backend.llm.errors import LLMEmptyContentError
+
+    body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": '{"threat_actor": "Team'},
+                    "finish_reason": "length",
+                }
+            ],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    with pytest.raises(LLMEmptyContentError) as exc:
+        _compat_client(tx).complete("hi")
+    assert exc.value.finish_reason == "length"
+    assert "finish_reason=length" in str(exc.value)
+
+
+def test_nonempty_content_with_stop_finish_reason_returned_verbatim():
+    """Sanity check for the fix above: a complete, non-truncated response
+    (finish_reason=stop) must still be returned verbatim, unaffected."""
+    body = json.dumps(
+        {
+            "choices": [
+                {"message": {"content": '{"threat_actor": "TeamPCP"}'}, "finish_reason": "stop"}
+            ],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    result = _compat_client(tx).complete("hi")
+    assert result == '{"threat_actor": "TeamPCP"}'
+
+
 def test_empty_content_with_reasoning_field_raises_reasoning_diagnostic():
     """prompts-035 (#2.5): empty content but a populated reasoning_content field
     → the model reasoned without producing a final answer."""
