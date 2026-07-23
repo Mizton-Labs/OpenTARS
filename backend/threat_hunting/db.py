@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 4
+_TH_SCHEMA_VERSION = 5
 
 
 def _utc_now_iso() -> str:
@@ -79,11 +79,13 @@ CREATE TABLE IF NOT EXISTS extracted_iocs (
     id               TEXT PRIMARY KEY,
     evidence_item_id TEXT NOT NULL REFERENCES evidence_items(id),
     hunt_package_id  TEXT NOT NULL REFERENCES hunt_packages(id),
+    run_id           TEXT,
     ioc              TEXT NOT NULL,
     ioc_type         TEXT NOT NULL,
     ioc_description  TEXT,
     noise_score      REAL DEFAULT 0.0,
     flagged_noisy    INTEGER DEFAULT 0,
+    action           TEXT DEFAULT 'keep',
     created_at       TEXT NOT NULL
 );
 """
@@ -106,7 +108,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     current_step        TEXT,
     completed_steps     TEXT,
     step_logs           TEXT,
-    research_effort     TEXT
+    research_effort     TEXT,
+    run_config          TEXT DEFAULT '{}'
 );
 """
 
@@ -227,6 +230,38 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v4 "
             "(added run_id to hunt_reports and task_results)"
+        )
+    if current_version < 5:
+        # v5: run_id + action columns added to extracted_iocs so each run's
+        # IOC set is independent (issue-local-015), and run_config added to
+        # hunting_packages for per-run IOC-handling settings.
+        for table, col_def in (
+            ("extracted_iocs", "ADD COLUMN run_id TEXT"),
+            ("extracted_iocs", "ADD COLUMN action TEXT DEFAULT 'keep'"),
+            ("hunting_packages", "ADD COLUMN run_config TEXT DEFAULT '{}'"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        # Backfill: pre-v5 IOC rows predate real run scoping — best-effort
+        # link to the latest run for their package, matching the v4 backfill
+        # approach for hunt_reports/task_results.
+        try:
+            await db.execute(
+                """UPDATE extracted_iocs
+                   SET run_id = (
+                       SELECT hp.id FROM hunting_packages hp
+                       WHERE hp.hunt_package_id = extracted_iocs.hunt_package_id
+                       ORDER BY hp.created_at DESC LIMIT 1
+                   )
+                   WHERE run_id IS NULL"""
+            )
+        except Exception as exc:
+            logger.warning("Schema v5 backfill skipped (non-fatal): %s", exc)
+        logger.info(
+            "Migrated threat_hunting.db to schema v5 "
+            "(added run_id/action to extracted_iocs, run_config to hunting_packages)"
         )
 
 
@@ -636,6 +671,8 @@ async def add_extracted_iocs(
     hunt_package_id: str,
     evidence_item_id: str,
     iocs: list[dict[str, Any]],
+    *,
+    run_id: str | None = None,
 ) -> None:
     now = _utc_now_iso()
     async with aiosqlite.connect(_TH_DB_PATH) as db:
@@ -643,38 +680,53 @@ async def add_extracted_iocs(
             await db.execute(
                 """
                 INSERT OR IGNORE INTO extracted_iocs
-                  (id, evidence_item_id, hunt_package_id, ioc, ioc_type,
-                   ioc_description, noise_score, flagged_noisy, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                  (id, evidence_item_id, hunt_package_id, run_id, ioc, ioc_type,
+                   ioc_description, noise_score, flagged_noisy, action, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     _new_id(),
                     evidence_item_id,
                     hunt_package_id,
+                    run_id,
                     ioc.get("ioc", ""),
                     ioc.get("ioc_type", "other"),
                     ioc.get("ioc_description", ""),
                     float(ioc.get("noise_score", 0.0)),
                     1 if ioc.get("flagged_noisy") else 0,
+                    ioc.get("action", "keep"),
                     now,
                 ),
             )
         await db.commit()
 
 
-async def clear_extracted_iocs(hunt_package_id: str) -> int:
-    """Delete all extracted IOCs for *hunt_package_id*.
+async def clear_extracted_iocs(hunt_package_id: str, run_id: str | None = None) -> int:
+    """Delete extracted IOCs for *hunt_package_id*, scoped to *run_id* when given.
 
     issue-008-2B: called by intake_classifier at the start of each pipeline
     run to ensure re-runs produce a fresh, non-duplicated IOC set.
 
+    issue-local-015: scoped to (hunt_package_id, run_id) rather than the
+    whole package — run_id is a fresh UUID per run, so this now guards
+    against double-processing within the SAME run instead of wiping every
+    prior run's IOCs, which is what made each run's IOC set independent.
+    When run_id is omitted, falls back to the pre-015 whole-package delete
+    (used only by legacy/back-compat callers).
+
     Returns the number of rows deleted.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
-        cur = await db.execute(
-            "DELETE FROM extracted_iocs WHERE hunt_package_id = ?",
-            (hunt_package_id,),
-        )
+        if run_id is not None:
+            cur = await db.execute(
+                "DELETE FROM extracted_iocs WHERE hunt_package_id = ? AND run_id = ?",
+                (hunt_package_id, run_id),
+            )
+        else:
+            cur = await db.execute(
+                "DELETE FROM extracted_iocs WHERE hunt_package_id = ?",
+                (hunt_package_id,),
+            )
         deleted = cur.rowcount
         await db.commit()
     return deleted
@@ -743,13 +795,47 @@ async def update_evidence_item(
         await db.commit()
 
 
-async def list_extracted_iocs(hunt_package_id: str) -> list[dict[str, Any]]:
+async def update_ioc_actions(run_id: str, updates: list[tuple[str, str, str]]) -> None:
+    """Bulk-update the ``action`` column for extracted IOC rows in one run.
+
+    issue-local-015: called once after intake_classifier finishes noise
+    scoring/triage, to persist each IOC's final keep/remove decision so the
+    IOC table can show it. *updates* is a list of (ioc, ioc_type, action)
+    tuples, matched against the existing (run_id, ioc, ioc_type) row.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        for ioc, ioc_type, action in updates:
+            await db.execute(
+                "UPDATE extracted_iocs SET action = ? "
+                "WHERE run_id = ? AND ioc = ? AND ioc_type = ?",
+                (action, run_id, ioc, ioc_type),
+            )
+        await db.commit()
+
+
+async def list_extracted_iocs(
+    hunt_package_id: str, run_id: str | None = None
+) -> list[dict[str, Any]]:
+    """List extracted IOCs for a package, optionally scoped to one run.
+
+    issue-local-015: pass *run_id* to see exactly that run's IOC set (the
+    normal, run-independent path). Omitting it returns every row across all
+    runs for the package — kept for back-compat call sites, not used by the
+    per-run API route.
+    """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM extracted_iocs WHERE hunt_package_id = ? ORDER BY ioc_type, ioc",
-            (hunt_package_id,),
-        )
+        if run_id is not None:
+            cur = await db.execute(
+                "SELECT * FROM extracted_iocs WHERE hunt_package_id = ? AND run_id = ? "
+                "ORDER BY ioc_type, ioc",
+                (hunt_package_id, run_id),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT * FROM extracted_iocs WHERE hunt_package_id = ? ORDER BY ioc_type, ioc",
+                (hunt_package_id,),
+            )
         rows = await cur.fetchall()
         await cur.close()
     return [dict(r) for r in rows]
@@ -1291,9 +1377,7 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT step_logs FROM hunting_packages WHERE id = ?", (run_id,)
-        )
+        cur = await db.execute("SELECT step_logs FROM hunting_packages WHERE id = ?", (run_id,))
         row = await cur.fetchone()
         await cur.close()
         if not row:
@@ -1318,6 +1402,86 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
             (_json.dumps(logs, ensure_ascii=False, default=str), run_id),
         )
         await db.commit()
+
+
+async def set_hypothesis_discarded(
+    run_id: str, hypothesis_id: str, discarded: bool
+) -> dict[str, Any] | None:
+    """Flip the ``discarded`` flag of one hypothesis within a run's hypotheses list.
+
+    issue-local-015: hypotheses are stored as a JSON blob (the ``hypotheses``
+    column), not a table — same load/find/write-back pattern as
+    ``append_run_step_log``. Returns the updated hypothesis dict, or None if
+    the run or hypothesis id was not found.
+    """
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT hypotheses FROM hunting_packages WHERE id = ?", (run_id,))
+        row = await cur.fetchone()
+        await cur.close()
+        if not row:
+            return None
+
+        try:
+            hypotheses: list[dict[str, Any]] = _json.loads(row[0] or "[]")
+            if not isinstance(hypotheses, list):
+                return None
+        except Exception:
+            return None
+
+        idx = next((i for i, h in enumerate(hypotheses) if h.get("id") == hypothesis_id), None)
+        if idx is None:
+            return None
+        hypotheses[idx]["discarded"] = discarded
+
+        await db.execute(
+            "UPDATE hunting_packages SET hypotheses = ? WHERE id = ?",
+            (_json.dumps(hypotheses, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+        return hypotheses[idx]
+
+
+async def set_hunting_lead_discarded(
+    run_id: str, lead_id: str, discarded: bool
+) -> dict[str, Any] | None:
+    """Flip the ``discarded`` flag of one hunting lead within a run's leads list.
+
+    issue-local-015: same load/find/write-back pattern as
+    ``set_hypothesis_discarded``, against the ``hunting_leads`` column.
+    Returns the updated lead dict, or None if the run or lead id was not
+    found.
+    """
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT hunting_leads FROM hunting_packages WHERE id = ?", (run_id,))
+        row = await cur.fetchone()
+        await cur.close()
+        if not row:
+            return None
+
+        try:
+            leads: list[dict[str, Any]] = _json.loads(row[0] or "[]")
+            if not isinstance(leads, list):
+                return None
+        except Exception:
+            return None
+
+        idx = next((i for i, lead in enumerate(leads) if lead.get("id") == lead_id), None)
+        if idx is None:
+            return None
+        leads[idx]["discarded"] = discarded
+
+        await db.execute(
+            "UPDATE hunting_packages SET hunting_leads = ? WHERE id = ?",
+            (_json.dumps(leads, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+        return leads[idx]
 
 
 async def set_run_generation_status(run_id: str, status: str) -> None:

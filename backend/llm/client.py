@@ -203,7 +203,12 @@ def _extract_openai_content(
         budget thinking and never emitted a final answer.
       * ``finish_reason == "content_filter"`` → blocked upstream.
 
-    A non-empty ``content`` is returned verbatim (contract unchanged).
+    A non-empty ``content`` is returned verbatim — UNLESS ``finish_reason ==
+    "length"``, in which case the content is a truncated fragment (e.g. JSON
+    cut off mid-object) rather than a usable answer, and is treated the same
+    as empty content so the caller's retry-with-higher-max-tokens logic
+    (``llm_bridge._call_with_retry``) kicks in instead of silently handing a
+    broken partial payload downstream.
     """
     try:
         choice = data["choices"][0]
@@ -215,11 +220,10 @@ def _extract_openai_content(
             body=body_str,
         ) from exc
 
-    content = message.get("content") if isinstance(message, dict) else None
-    if content:
-        return content
-
     finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if content and finish_reason != "length":
+        return content
     reasoning = None
     if isinstance(message, dict):
         reasoning = message.get("reasoning_content") or message.get("reasoning")

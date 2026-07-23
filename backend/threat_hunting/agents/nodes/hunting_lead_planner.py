@@ -97,6 +97,13 @@ async def hunting_lead_planner(state: HuntPipelineState) -> dict:
             errors.append(f"{step}: unexpected LLM response type, using empty list")
             hunting_leads = []
 
+        # issue-local-015: discarded is always app-set, never trusted from
+        # the LLM even if it happens to echo the field back — same pattern
+        # as Hypothesis.discarded in hypothesis_generator.py.
+        for lead in hunting_leads:
+            if isinstance(lead, dict):
+                lead["discarded"] = False
+
         elapsed = time.monotonic() - start
         logs.append(
             {

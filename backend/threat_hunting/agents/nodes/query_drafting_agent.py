@@ -105,7 +105,10 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
                 "Assign sequential IDs: Q1, Q2, Q3, etc. "
                 "Set lead_id to the matching hunting lead ID (e.g. 'L1') or null if the "
                 "query is TTP-driven rather than lead-specific. "
-                "Queries should use realistic field names and operators for the stated language."
+                "Queries should use realistic field names and operators for the stated language. "
+                "'query' MUST always be a plain string, even for language='es_dsl' — if the "
+                "query is naturally a JSON object (Elasticsearch Query DSL), serialize it to a "
+                "JSON string rather than emitting a nested object."
             ),
         )
 
@@ -131,6 +134,23 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             )
             errors.append(f"{step}: unexpected LLM response type, using empty list")
             query_drafts = []
+
+        # Defensive normalization: models occasionally return the ES DSL
+        # 'query' as a nested JSON object instead of the string the schema
+        # asks for (e.g. {"bool": {"must": [...]}}), or omit it (None).
+        # Every consumer (the tool-validation join just below, DB/JSON
+        # storage, and the frontend render) expects a plain string — a
+        # None here breaks str.join() and crashes this whole step (losing
+        # every draft, not just the bad one); an object survives to the
+        # frontend and crashes the page (React refuses to render a raw
+        # object as a child). Normalize both to a string up front.
+        query_drafts = [d for d in query_drafts if isinstance(d, dict)]
+        for draft in query_drafts:
+            q = draft.get("query")
+            if q is None:
+                draft["query"] = ""
+            elif not isinstance(q, str):
+                draft["query"] = json.dumps(q, indent=2, ensure_ascii=False)
 
         # ── Post-draft tool validation (issue-007: gated by enabled toggles) ──
         if query_drafts:

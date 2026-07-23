@@ -26,15 +26,20 @@ import {
   ShieldAlert,
   CheckCircle,
   Info,
+  Ban,
 } from 'lucide-react'
 import type { THDeepRetrohuntLead, THSanitizedIOC } from '../../api/client'
+
+// Must match NOISE_THRESHOLD / HIGH_NOISE_THRESHOLD in backend/threat_hunting/iocs.py.
+const NOISE_THRESHOLD = 0.7
+const HIGH_NOISE_THRESHOLD = 0.85
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function NoiseBar({ score }: { score: number }) {
   const pct = Math.round(score * 100)
   const color =
-    score >= 0.8 ? 'bg-red-500' : score >= 0.5 ? 'bg-amber-500' : 'bg-green-500'
+    score >= HIGH_NOISE_THRESHOLD ? 'bg-red-500' : score >= NOISE_THRESHOLD ? 'bg-amber-500' : 'bg-green-500'
   return (
     <div className="flex items-center gap-1.5 min-w-[60px]">
       <div className="w-12 h-1.5 rounded-full bg-gray-700 overflow-hidden">
@@ -43,7 +48,7 @@ function NoiseBar({ score }: { score: number }) {
       <span
         className={clsx(
           'text-[10px] tabular-nums',
-          score >= 0.8 ? 'text-red-400' : score >= 0.5 ? 'text-amber-400' : 'text-green-400',
+          score >= HIGH_NOISE_THRESHOLD ? 'text-red-400' : score >= NOISE_THRESHOLD ? 'text-amber-400' : 'text-green-400',
         )}
       >
         {pct}
@@ -53,13 +58,13 @@ function NoiseBar({ score }: { score: number }) {
 }
 
 function NoiseBadge({ score }: { score: number }) {
-  if (score >= 0.8)
+  if (score >= HIGH_NOISE_THRESHOLD)
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 border border-red-800/40">
         <ShieldAlert className="w-3 h-3" /> High Noise
       </span>
     )
-  if (score >= 0.5)
+  if (score >= NOISE_THRESHOLD)
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/40">
         <AlertTriangle className="w-3 h-3" /> Noisy
@@ -98,7 +103,10 @@ function IOCTypeChip({ type }: { type: string }) {
 }
 
 function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
-  const [expanded, setExpanded] = useState(false)
+  const removed = ioc.action === 'remove'
+  // Removed IOCs default to expanded — the rationale for removal must be
+  // fully visible, not hidden behind a click (issue-local-015 feedback).
+  const [expanded, setExpanded] = useState(removed)
   const hasReasons = ioc.noise_reasons.length > 0
 
   return (
@@ -106,8 +114,9 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
       <tr
         className={clsx(
           'border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors',
-          ioc.noise_score >= 0.8 && 'bg-red-950/10',
-          ioc.noise_score >= 0.5 && ioc.noise_score < 0.8 && 'bg-amber-950/10',
+          removed && 'opacity-50',
+          !removed && ioc.noise_score >= HIGH_NOISE_THRESHOLD && 'bg-red-950/10',
+          !removed && ioc.noise_score >= NOISE_THRESHOLD && ioc.noise_score < HIGH_NOISE_THRESHOLD && 'bg-amber-950/10',
         )}
       >
         {/* Expand toggle (only shown when there are noise reasons) */}
@@ -130,7 +139,9 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
         </td>
         {/* IOC value */}
         <td className="py-1.5 pr-2">
-          <span className="font-mono text-[11px] text-gray-200 break-all">{ioc.ioc}</span>
+          <span className={clsx('font-mono text-[11px] break-all', removed ? 'text-gray-500 line-through' : 'text-gray-200')}>
+            {ioc.ioc}
+          </span>
         </td>
         {/* Type */}
         <td className="py-1.5 pr-2 whitespace-nowrap">
@@ -144,22 +155,41 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
         <td className="py-1.5 pr-2">
           <span className="font-mono text-[10px] text-brand-400 break-all">{ioc.search_token}</span>
         </td>
-        {/* Noise */}
+        {/* Noise / Action */}
         <td className="py-1.5 pr-2 whitespace-nowrap">
           <div className="flex items-center gap-2">
-            <NoiseBar score={ioc.noise_score} />
-            <NoiseBadge score={ioc.noise_score} />
+            {removed ? (
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 border border-red-800/40">
+                <Ban className="w-3 h-3" /> Removed
+              </span>
+            ) : (
+              <>
+                <NoiseBar score={ioc.noise_score} />
+                <NoiseBadge score={ioc.noise_score} />
+              </>
+            )}
           </div>
         </td>
       </tr>
-      {/* Expanded noise reasons */}
+      {/* Expanded reasons — for removed IOCs, this IS the removal rationale
+          (leads the list, see deep_retrohunt_planner._sanitize_ioc_list) */}
       {expanded && hasReasons && (
         <tr className="border-b border-gray-800/40">
           <td colSpan={6} className="pb-2 pt-0 pl-8 pr-2">
             <ul className="space-y-0.5">
               {ioc.noise_reasons.map((r, i) => (
-                <li key={i} className="text-[10px] text-amber-400 flex gap-1.5">
-                  <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                <li
+                  key={i}
+                  className={clsx(
+                    'text-[10px] flex gap-1.5',
+                    removed ? 'text-red-300' : 'text-amber-400',
+                  )}
+                >
+                  {removed ? (
+                    <Ban className="w-3 h-3 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                  )}
                   {r}
                 </li>
               ))}
@@ -235,13 +265,17 @@ export default function RetrohuntPanel({
   retrohunt: THDeepRetrohuntLead
   pkgId: string
 }) {
-  const [iocFilter, setIocFilter] = useState<'all' | 'clean' | 'noisy'>('all')
+  // issue-local-015: default view is the actionable set (what actually
+  // feeds the SPL query) — 'removed' (action=='remove', excluded by this
+  // run's IOC active-cleaning config) is opt-in via the selector, not mixed
+  // into "all" by default. Noise level is already visible per-row via the
+  // NoiseBar/NoiseBadge, so a separate 'noisy' filter tab is redundant.
+  const [iocFilter, setIocFilter] = useState<'all' | 'removed'>('all')
 
-  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) => {
-    if (iocFilter === 'clean') return ioc.noise_score < 0.5
-    if (iocFilter === 'noisy') return ioc.noise_score >= 0.5
-    return true
-  })
+  const removedIocs = retrohunt.sanitized_iocs.filter((ioc) => ioc.action === 'remove')
+  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) =>
+    iocFilter === 'removed' ? ioc.action === 'remove' : ioc.action !== 'remove',
+  )
 
   return (
     <div className="space-y-5">
@@ -267,16 +301,21 @@ export default function RetrohuntPanel({
         {/* Stats chips */}
         <div className="flex flex-wrap gap-2">
           <span className="text-[11px] px-2 py-1 rounded bg-gray-800 text-gray-300">
-            Total IOCs: <span className="font-semibold text-gray-100">{retrohunt.total_ioc_count}</span>
+            Sanitized IOCs: <span className="font-semibold text-gray-100">{retrohunt.total_ioc_count}</span>
           </span>
           {retrohunt.noisy_ioc_count > 0 && (
             <span className="text-[11px] px-2 py-1 rounded bg-amber-900/30 text-amber-400">
-              Noisy (≥50%): <span className="font-semibold">{retrohunt.noisy_ioc_count}</span>
+              Noisy (≥{Math.round(NOISE_THRESHOLD * 100)}%): <span className="font-semibold">{retrohunt.noisy_ioc_count}</span>
             </span>
           )}
           {retrohunt.high_noise_ioc_count > 0 && (
             <span className="text-[11px] px-2 py-1 rounded bg-red-900/30 text-red-400">
-              High Noise (≥80%): <span className="font-semibold">{retrohunt.high_noise_ioc_count}</span>
+              High Noise (≥{Math.round(HIGH_NOISE_THRESHOLD * 100)}%): <span className="font-semibold">{retrohunt.high_noise_ioc_count}</span>
+            </span>
+          )}
+          {removedIocs.length > 0 && (
+            <span className="text-[11px] px-2 py-1 rounded bg-gray-800 text-gray-500">
+              Removed (active cleaning): <span className="font-semibold">{removedIocs.length}</span>
             </span>
           )}
           {retrohunt.llm_parse_error && (
@@ -300,22 +339,28 @@ export default function RetrohuntPanel({
         <div className="card space-y-3">
           <div className="flex items-center justify-between gap-4">
             <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
-              Sanitized IOCs ({retrohunt.sanitized_iocs.length})
+              Sanitized IOCs ({filteredIocs.length}/{retrohunt.sanitized_iocs.length})
             </h4>
-            {/* Filter buttons */}
+            {/* Filter buttons — default 'all' (actionable set); 'removed'
+                is opt-in, not folded into a misleading 'all' bucket. */}
             <div className="flex gap-1">
-              {(['all', 'clean', 'noisy'] as const).map((f) => (
+              {(
+                [
+                  ['all', 'All'],
+                  ['removed', `Removed${removedIocs.length ? ` (${removedIocs.length})` : ''}`],
+                ] as const
+              ).map(([f, label]) => (
                 <button
                   key={f}
                   onClick={() => setIocFilter(f)}
                   className={clsx(
-                    'text-[10px] px-2 py-0.5 rounded transition-colors capitalize',
+                    'text-[10px] px-2 py-0.5 rounded transition-colors',
                     iocFilter === f
                       ? 'bg-brand-600/30 text-brand-300 border border-brand-700/40'
                       : 'text-gray-500 hover:text-gray-300',
                   )}
                 >
-                  {f}
+                  {label}
                 </button>
               ))}
             </div>
@@ -330,7 +375,7 @@ export default function RetrohuntPanel({
                   <th className="text-left py-2 pr-2">Type</th>
                   <th className="text-left py-2 pr-2">Description</th>
                   <th className="text-left py-2 pr-2">Search Token</th>
-                  <th className="text-left py-2 pr-2">Noise</th>
+                  <th className="text-left py-2 pr-2">Noise / Action</th>
                 </tr>
               </thead>
               <tbody>

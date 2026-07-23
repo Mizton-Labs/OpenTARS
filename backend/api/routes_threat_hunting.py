@@ -40,7 +40,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -389,10 +389,14 @@ async def delete_evidence(pkg_id: str, item_id: str) -> None:
 
 
 @router.get("/packages/{pkg_id}/iocs", response_model=list[ExtractedIOCOut])
-async def list_iocs(pkg_id: str) -> list[dict]:
-    """List all IOCs extracted across all evidence items for a hunt package."""
+async def list_iocs(pkg_id: str, run_id: str | None = Query(default=None)) -> list[dict]:
+    """List IOCs extracted for a hunt package, optionally scoped to one run.
+
+    issue-local-015: pass run_id to see exactly that run's independent IOC
+    set. Omitting it returns every row across all runs (back-compat).
+    """
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
-    return await th_db.list_extracted_iocs(pkg_id)
+    return await th_db.list_extracted_iocs(pkg_id, run_id)
 
 
 # ── Generation (Phase 3) ──────────────────────────────────────────────────────
@@ -402,6 +406,11 @@ class GenerateBody(BaseModel):
     provider_name: str | None = None
     model_name: str | None = None
     research_effort: str | None = None  # 'high'|'medium'|'low'; None = use global default
+    # issue-local-015: per-run IOC handling — {"ioc_mode": "tagging_only"|
+    # "active_cleaning", "ioc_cleaning_options": {"remove_noisy": bool, ...}}.
+    # None/omitted = tagging_only (today's behavior), same as every field
+    # here already defaults to "use current behavior" when absent.
+    run_config: dict | None = None
 
 
 class ApproveBody(BaseModel):
@@ -410,6 +419,14 @@ class ApproveBody(BaseModel):
 
 class RejectBody(BaseModel):
     notes: str = ""
+
+
+class HypothesisDiscardBody(BaseModel):
+    discarded: bool
+
+
+class HuntingLeadDiscardBody(BaseModel):
+    discarded: bool
 
 
 @router.post("/packages/{pkg_id}/generate", status_code=202)
@@ -435,11 +452,20 @@ async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
     # Resolve research effort: per-request override → global default
     effort = body.research_effort or load_th_research_effort()
 
+    run_config = body.run_config or {}
+    ioc_mode = run_config.get("ioc_mode", "tagging_only")
+    if ioc_mode not in ("tagging_only", "active_cleaning"):
+        raise HTTPException(
+            status_code=400,
+            detail="run_config.ioc_mode must be 'tagging_only' or 'active_cleaning'",
+        )
+
     record = await _start(
         pkg_id,
         provider_name=body.provider_name,
         model_name=body.model_name,
         research_effort=effort,
+        run_config=run_config,
     )
     return record
 
@@ -550,6 +576,38 @@ async def reject_run(pkg_id: str, run_id: str, body: RejectBody) -> dict:
         return await _reject(run_id, notes=body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/packages/{pkg_id}/runs/{run_id}/hypotheses/{hypothesis_id}")
+async def discard_hypothesis(
+    pkg_id: str, run_id: str, hypothesis_id: str, body: HypothesisDiscardBody
+) -> dict:
+    """Set whether a hypothesis is excluded from further consideration/execution.
+
+    issue-local-015: analyst-set only — never overwritten by a re-run of the
+    same run_id (hypotheses aren't regenerated in place; a fresh 'discarded:
+    False' only comes from a brand-new run per hypothesis_generator).
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    updated = await th_db.set_hypothesis_discarded(run_id, hypothesis_id, body.discarded)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Run or hypothesis not found.")
+    return updated
+
+
+@router.patch("/packages/{pkg_id}/runs/{run_id}/hunting-leads/{lead_id}")
+async def discard_hunting_lead(
+    pkg_id: str, run_id: str, lead_id: str, body: HuntingLeadDiscardBody
+) -> dict:
+    """Set whether a hunting lead is excluded from further consideration/execution.
+
+    issue-local-015: same analyst-set-only semantics as discard_hypothesis.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    updated = await th_db.set_hunting_lead_discarded(run_id, lead_id, body.discarded)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Run or hunting lead not found.")
+    return updated
 
 
 # ── SIEM Connector endpoints (Phase 5) ────────────────────────────────────────

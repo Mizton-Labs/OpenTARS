@@ -17,7 +17,7 @@ The result is a list of ExtractedIOC dicts ready for DB insertion.
 from __future__ import annotations
 
 import re
-from typing import TypedDict
+from typing import Any, TypedDict
 
 # ---------------------------------------------------------------------------
 # Regex patterns
@@ -86,27 +86,41 @@ _NOISY_PROCESSES = frozenset(
     }
 )
 
-_NOISY_DOMAINS = frozenset(
+# issue-local-015: split into two disjoint sets so "remove known legit
+# domains" and "remove known CDN ranges" (Configuration Parameters, IOC
+# active cleaning) can be toggled independently. There is no real CDN
+# IP-range data source in this codebase (that would need an external feed);
+# "CDN ranges" coverage here is domain-based only — documented, not a silent
+# gap. _NOISY_DOMAINS stays the union of both for the general noise-scoring
+# check below, unchanged.
+_LEGIT_BRAND_DOMAINS = frozenset(
     {
         "google.com",
         "microsoft.com",
         "windows.com",
-        "cloudflare.com",
-        "amazonaws.com",
-        "akamai.net",
-        "fastly.net",
-        "azure.com",
         "office.com",
         "live.com",
         "outlook.com",
         "apple.com",
         "icloud.com",
         "github.com",
+    }
+)
+
+_CDN_INFRA_DOMAINS = frozenset(
+    {
+        "cloudflare.com",
+        "amazonaws.com",
+        "akamai.net",
+        "fastly.net",
+        "azure.com",
         "githubusercontent.com",
         "gstatic.com",
         "googleapis.com",
     }
 )
+
+_NOISY_DOMAINS = _LEGIT_BRAND_DOMAINS | _CDN_INFRA_DOMAINS
 
 # Known benign MD5/SHA hashes (empty file, etc.)
 _NOISY_HASHES = frozenset(
@@ -326,3 +340,60 @@ def normalize_ioc_csv(rows: list[dict]) -> list[ExtractedIOC]:
         )
 
     return results
+
+
+def compute_ioc_action(
+    ioc_item: dict[str, Any],
+    *,
+    ioc_mode: str,
+    cleaning_options: dict[str, Any] | None,
+) -> tuple[str, str | None]:
+    """Return ``(action, reason)`` for one already noise-scored IOC.
+
+    ``action`` is 'keep' or 'remove'. ``reason`` is a short human-readable
+    explanation of *why* — non-None only when the IOC was removed, so the UI
+    can show the analyst exactly which active-cleaning rule fired (issue-
+    local-015 feedback: the "Removed" section previously gave no rationale
+    at all for non-noise removals).
+
+    issue-local-015 "IOC active cleaning" config. Always ('keep', None) in
+    the default 'tagging_only' mode — noise scoring/flagging still happens
+    (issue-014), it just never excludes anything, matching "if [tagging
+    only] selected, active cleaning is disabled." In 'active_cleaning'
+    mode, 'remove' when any *enabled* toggle matches:
+      - remove_noisy: already flagged_noisy (covers deterministic scoring
+        AND the issue-014 LLM triage pass — both set this same flag).
+      - remove_legit_domains / remove_cdn_ranges: domain-type IOC in the
+        corresponding allowlist (see the split of _NOISY_DOMAINS above).
+      - remove_legit_services: filepath/process-type IOC matching
+        _NOISY_PROCESSES.
+    Removed IOCs are marked, not deleted — still visible/auditable in the
+    IOC table, just excluded from what feeds the LLM pipeline downstream.
+    """
+    if ioc_mode != "active_cleaning":
+        return "keep", None
+
+    options = cleaning_options or {}
+    ioc_type = ioc_item.get("ioc_type", "")
+    value = str(ioc_item.get("ioc", "")).lower()
+
+    if options.get("remove_noisy") and ioc_item.get("flagged_noisy"):
+        return "remove", "Flagged as noisy — excluded by active cleaning (remove_noisy)"
+    if ioc_type == "domain":
+        if options.get("remove_legit_domains") and value in _LEGIT_BRAND_DOMAINS:
+            return (
+                "remove",
+                "Known legitimate/brand domain — excluded by active cleaning (remove_legit_domains)",
+            )
+        if options.get("remove_cdn_ranges") and value in _CDN_INFRA_DOMAINS:
+            return (
+                "remove",
+                "CDN/infrastructure domain — excluded by active cleaning (remove_cdn_ranges)",
+            )
+    if ioc_type in ("filepath", "other") and options.get("remove_legit_services"):
+        if any(p in value for p in _NOISY_PROCESSES):
+            return (
+                "remove",
+                "Matches known legitimate process/service — excluded by active cleaning (remove_legit_services)",
+            )
+    return "keep", None
