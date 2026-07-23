@@ -2,7 +2,9 @@
 Tests for issue-local-005:
   - DB schema v4 (run_id columns on hunt_reports + task_results)
   - Migration from v3 → v4 (ALTER + backfill)
-  - Runner: new run per start_generation; no overwrite; sequential guard
+  - Runner: new run per start_generation; no overwrite; concurrent runs of
+    the same package are allowed (issue-local-014 removed the old
+    sequential/one-active-run-per-package guard)
   - Runner: _save_generation_state writes by run_id not hunt_package_id
   - Per-hunt model selection threads through start_generation
   - report_writer scopes results to run_id
@@ -281,8 +283,10 @@ async def test_start_generation_creates_new_row_each_time(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_start_generation_sequential_guard(tmp_path: Path) -> None:
-    """Starting a new run while one is active returns the active run, not a new one."""
+async def test_start_generation_allows_concurrent_runs(tmp_path: Path) -> None:
+    """issue-local-014: starting a new run while one is active creates an
+    independent second run rather than returning the already-active one —
+    the re-run button must work at any time, including mid-run."""
     import uuid
 
     import aiosqlite
@@ -318,10 +322,27 @@ async def test_start_generation_sequential_guard(tmp_path: Path) -> None:
 
         result1 = await runner.start_generation(pkg_id)
         run_id_1 = result1["run_id"]
+        # create_task is mocked (pipeline never actually runs) — persist the
+        # row manually, as _run_pipeline would have done on its first step.
+        await runner._save_generation_state(run_id_1, pkg_id, {}, status="running")
 
-        # Active job still registered — second call must return the same run
+        # First run still registered as active — the second call must NOT
+        # short-circuit to it; it must create a brand-new, distinct run.
+        assert pkg_id in runner._ACTIVE_RUN_PKG.values()
         result2 = await runner.start_generation(pkg_id)
-        assert result2.get("run_id") == run_id_1 or result2.get("id") == run_id_1
+        run_id_2 = result2["run_id"]
+        await runner._save_generation_state(run_id_2, pkg_id, {}, status="running")
+
+        assert run_id_2 != run_id_1
+        assert pkg_id in runner._ACTIVE_RUN_PKG.values()
+        assert list(runner._ACTIVE_RUN_PKG.values()).count(pkg_id) == 2
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute(
+        "SELECT id FROM hunting_packages WHERE hunt_package_id=?", (pkg_id,)
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 2, f"Expected 2 rows but got {len(rows)}: {[r[0] for r in rows]}"
 
 
 @pytest.mark.asyncio

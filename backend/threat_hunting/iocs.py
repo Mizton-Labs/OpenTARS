@@ -117,6 +117,14 @@ _NOISY_HASHES = frozenset(
     }
 )
 
+# issue-local-014: single source of truth for "how noisy is too noisy".
+# Previously duplicated with different values (0.5/0.7/0.8) between this
+# module and deep_retrohunt_planner.py — inconsistent behavior on the exact
+# same IOC list depending on which code path scored it. Both now import
+# these two constants instead of hardcoding their own.
+NOISE_THRESHOLD = 0.7  # flagged_noisy — excluded from default SIEM queries
+HIGH_NOISE_THRESHOLD = 0.85  # excluded even from analyst_notes / SPL drafts
+
 
 # ---------------------------------------------------------------------------
 # TypedDict for extracted IOC
@@ -135,14 +143,22 @@ class ExtractedIOC(TypedDict):
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
-_DEFANG_DOT = re.compile(r"\[\.\]|\(\.\)")
-_DEFANG_PROTO = re.compile(r"hxxp(s?)://", re.IGNORECASE)
+_DEFANG_DOT = re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)", re.IGNORECASE)
+_DEFANG_AT = re.compile(r"\[at\]|\(at\)", re.IGNORECASE)
+_DEFANG_PROTO = re.compile(r"hxxp(s?)(://|\[://\]|\(://\))?", re.IGNORECASE)
 _STRIP_PROTO = re.compile(r"^https?://", re.IGNORECASE)
 
 
 def _defang(text: str) -> str:
-    """Remove common defanging patterns."""
+    """Reverse common threat-intel defanging/redaction conventions.
+
+    Covers bracket/brace/word forms of the "dot" and "at" separators
+    (``[.]``, ``(.)``, ``{.}``, ``[dot]``, ``[at]``, ...) and ``hxxp(s)``
+    protocol obfuscation, including the ``hxxp[://]`` variant some feeds use.
+    Idempotent — safe to call on text that isn't defanged at all.
+    """
     text = _DEFANG_DOT.sub(".", text)
+    text = _DEFANG_AT.sub("@", text)
     text = _DEFANG_PROTO.sub(r"http\1://", text)
     return text
 
@@ -202,6 +218,15 @@ def extract_iocs_from_text(text: str) -> list[ExtractedIOC]:
 
     Returns a list of ExtractedIOC dicts ordered by type then ioc value.
     """
+    # issue-local-014: defang the whole corpus BEFORE candidate matching, not
+    # just the already-matched substring afterward. A domain written as
+    # "evil[.]com" doesn't match _RE_DOMAIN at all until the bracket is gone
+    # — normalizing post-match (the old behavior, still done in
+    # _normalize_ioc as a defensive no-op) never even gets a chance to run
+    # on redacted domains/IPs, since the regex fails to find them in the
+    # first place. Defanging up front makes every existing pattern work
+    # unchanged against redacted text.
+    text = _defang(text)
     seen: set[tuple[str, str]] = set()
     results: list[ExtractedIOC] = []
 
@@ -218,7 +243,7 @@ def extract_iocs_from_text(text: str) -> list[ExtractedIOC]:
                 ioc_type=ioc_type,
                 ioc_description=description,
                 noise_score=score,
-                flagged_noisy=score >= 0.7,
+                flagged_noisy=score >= NOISE_THRESHOLD,
             )
         )
 
@@ -296,7 +321,7 @@ def normalize_ioc_csv(rows: list[dict]) -> list[ExtractedIOC]:
                 ioc_type=ioc_type,
                 ioc_description=description,
                 noise_score=score,
-                flagged_noisy=score >= 0.7,
+                flagged_noisy=score >= NOISE_THRESHOLD,
             )
         )
 

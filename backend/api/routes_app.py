@@ -23,6 +23,8 @@ from backend.config.loader import (
     load_app_pagination_max,
     load_app_title,
     load_logo_path,
+    load_th_llm_max_retries,
+    load_th_llm_retry_backoff_seconds,
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
@@ -34,6 +36,8 @@ from backend.config.loader import (
     save_app_pagination_max,
     save_app_title,
     save_logo_path,
+    save_th_llm_max_retries,
+    save_th_llm_retry_backoff_seconds,
     save_th_report_formats,
     save_th_research_effort,
     save_watcher_max_events,
@@ -208,6 +212,65 @@ async def set_watcher_max_events(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"watcher_max_events": value}
+
+
+# ── Threat Hunting LLM call retry/backoff (issue-local-014) ──────────────────
+
+
+@router.get("/th-llm-max-retries")
+async def get_th_llm_max_retries() -> dict[str, int]:
+    """Return the max retry count for a single TH agent LLM call (default 3)."""
+    return {"th_llm_max_retries": load_th_llm_max_retries()}
+
+
+@router.put("/th-llm-max-retries")
+async def set_th_llm_max_retries(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the max retry count for a single TH agent LLM call.
+
+    Body: {"th_llm_max_retries": <int in [0, 10]>}.
+    """
+    value = body.get("th_llm_max_retries")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_llm_max_retries' as an integer",
+        )
+    try:
+        save_th_llm_max_retries(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_llm_max_retries": value}
+
+
+@router.get("/th-llm-retry-backoff-seconds")
+async def get_th_llm_retry_backoff_seconds() -> dict[str, float]:
+    """Return the base backoff (seconds) between TH agent LLM-call retries (default 2.0)."""
+    return {"th_llm_retry_backoff_seconds": load_th_llm_retry_backoff_seconds()}
+
+
+@router.put("/th-llm-retry-backoff-seconds")
+async def set_th_llm_retry_backoff_seconds(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the base backoff (seconds) between TH agent LLM-call retries.
+
+    Body: {"th_llm_retry_backoff_seconds": <number in [0.1, 60.0]>}.
+    """
+    value = body.get("th_llm_retry_backoff_seconds")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_llm_retry_backoff_seconds' as a number",
+        )
+    try:
+        save_th_llm_retry_backoff_seconds(float(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_llm_retry_backoff_seconds": float(value)}
 
 
 # ── Agent workflow verbosity (issue-local-004) ───────────────────────────────

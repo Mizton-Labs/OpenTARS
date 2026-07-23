@@ -9,6 +9,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Threat Hunting reliability improvements (issue-local-014)
+
+**1. Re-run available at any time.** The hunt-package re-run button and its backend endpoint no
+longer block while a previous run is still active — `start_generation()` always creates a new,
+independently-tracked run (`backend/threat_hunting/agents/runner.py`), and the frontend gate
+(`HuntDetail.tsx`) no longer hides the button while a run is in progress. Lets an operator kick
+off a second run (different model/effort) without waiting for the first to finish. The run
+selector already listed/marked every run independently, so no further UI change was needed.
+Known limitation: `hunt_packages.status` (one coarse value per package) can still race between
+concurrent runs finishing at different times — per-run status (`hunting_packages.generation_status`)
+is authoritative and unaffected.
+
+**2. IOC parsing/verification consistency.** `backend/threat_hunting/iocs.py`:
+- Defanging (`[.]`, `(.)`, `{.}`, `[dot]`/`(dot)`, `[at]`/`(at)`, `hxxp[://]`) now runs on the
+  whole evidence text *before* IOC candidate matching, not only on an already-matched substring
+  afterward — a redacted domain like `evil[.]com` previously never matched the extraction regex
+  at all, so it was silently missed rather than merely mis-normalized.
+- Consolidated three inconsistent noise-score thresholds (0.5 / 0.7 / 0.8, duplicated across
+  `iocs.py` and `deep_retrohunt_planner.py`) into two shared constants, `NOISE_THRESHOLD` (0.7)
+  and `HIGH_NOISE_THRESHOLD` (0.85); `deep_retrohunt_planner.py` now imports its noisy-domain/
+  process/hash allowlists from `iocs.py` instead of maintaining copy-pasted duplicates.
+- New LLM IOC-triage pass (`intake_classifier.py`) with a dedicated persona
+  (`_IOC_TRIAGE_SYSTEM_PROMPT`) reviews IOCs the deterministic scorer didn't flag and catches
+  what regex/allowlists can't — documentation/example domains, RFC 5737 test ranges, version-number
+  false positives. Adjusts the in-memory IOC list feeding every downstream node (hypothesis,
+  hunting-lead, deep-retrohunt); does not persist back to the `extracted_iocs` DB table.
+  `llm_bridge.build_prompt()` gained an optional `system` override to support it (backward
+  compatible — every other node keeps its existing default persona).
+
+**3. LLM call retry/backoff resilience.** `backend/threat_hunting/agents/llm_bridge.py` gained a
+retry loop around every agent LLM call, covering the failure mode that previously bypassed the
+existing low-level HTTP retry entirely: a successful response whose content came back empty
+because the output-token budget was exhausted (`finish_reason=length`). That case now retries
+with `max_tokens` doubled each attempt (capped), while genuinely transient failures (timeouts,
+5xx) retry unchanged and permanent ones (4xx) fail fast without wasting attempts. New configurable
+settings `th_llm_max_retries` (default 3) and `th_llm_retry_backoff_seconds` (default 2.0),
+exposed via `/api/app/th-llm-max-retries` / `/api/app/th-llm-retry-backoff-seconds` and a new
+"LLM Call Resilience" section on the Agents Config tab.
+
+**Tests:** 39 new backend tests across `test_th_llm_bridge_retry.py`, `test_th_iocs_014.py`,
+`test_th_ioc_triage_014.py`, plus new coverage in `test_routes_app.py` and an updated
+`test_th_issue_local_005.py` (the old "sequential guard returns the same run" test now asserts
+the opposite — concurrent runs are allowed).
+
 ### Fixed — SSO users bypass forced password reset (issue-local-013)
 
 **Bug:** Any user with `must_change_password=True` who authenticated via SSO was blocked by the

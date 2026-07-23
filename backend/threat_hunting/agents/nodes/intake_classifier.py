@@ -25,6 +25,15 @@ Performs four distinct tasks:
    Tool calls and decisions are recorded in the step_log entry.
    When research_effort == 'high', all tools are always invoked (issue-008-2D).
 
+5. **LLM IOC triage** (issue-local-014): a second, narrowly-scoped LLM call
+   (dedicated persona, see ``_IOC_TRIAGE_SYSTEM_PROMPT``) reviews IOCs the
+   deterministic noise scorer did NOT already flag and catches what
+   regex/allowlists can't — generic/placeholder values, documentation
+   ranges, off-topic indicators. Only adjusts ``flagged_noisy``/
+   ``noise_score``/``ioc_description`` on the in-memory list that feeds
+   ``ioc_summary``/``raw_ioc_list`` (and therefore every downstream node);
+   never deletes an IOC. Gated behind the same condition as step 4.
+
 issue-008-2D: URL fetching via fetch_url() uses prefer_playwright=True when
 research_effort == 'high', ensuring Playwright headless-Chromium is used for
 all URL evidence on high-effort runs.
@@ -43,6 +52,78 @@ from backend.threat_hunting.agents.state import HuntPipelineState
 logger = logging.getLogger(__name__)
 
 _TOOL_NAMES = ["extract_iocs", "refetch_url"]
+
+# issue-local-014: dedicated persona for the LLM IOC-triage pass below —
+# narrower than the generic analyst persona in llm_bridge.build_prompt() so
+# the model stays focused on one job (spotting noise the deterministic
+# regex/allowlist scorer can't catch) instead of drifting into general
+# threat analysis.
+_IOC_TRIAGE_SYSTEM_PROMPT = (
+    "You are an IOC Triage Analyst. Your ONLY job is to review a list of "
+    "already-extracted, already-defanged indicators of compromise and flag "
+    "any that are generic, placeholder, clearly unrelated to the described "
+    "incident, or otherwise not worth hunting on. You do not invent new "
+    "IOCs, rewrite values, or comment on anything outside the given list. "
+    "Deterministic filters have already removed known-benign CDN domains, "
+    "private IP ranges, and empty-file hashes — only flag additional items "
+    "those filters would miss: version-number-shaped false positives "
+    "(e.g. an IP-looking string that is really a software version), "
+    "documentation/example values (example.com, RFC 5737 test ranges "
+    "192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and IOCs that read as "
+    "generic infrastructure with no connection to the incident narrative. "
+    "When genuinely unsure, do not flag it — false negatives are cheaper "
+    "than losing a real indicator. Always output valid JSON only."
+)
+
+
+async def _llm_triage_iocs(
+    all_iocs: list[dict[str, Any]],
+    *,
+    provider_name: str | None,
+    model_name: str | None,
+) -> list[dict[str, str]]:
+    """Ask the LLM to flag additional noisy/irrelevant IOCs the deterministic
+    scorer missed. Returns a list of {ioc, ioc_type, reason} dicts for items
+    to flag — never raises; callers treat this as best-effort enrichment.
+    """
+    from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
+
+    # Only worth asking about IOCs the deterministic scorer hasn't already
+    # flagged — no point re-asking about things already excluded.
+    candidates = [i for i in all_iocs if not i.get("flagged_noisy")]
+    if not candidates:
+        return []
+
+    ioc_lines = "\n".join(
+        f"- type={i.get('ioc_type')} value={i.get('ioc')}" for i in candidates[:200]
+    )
+    system, user = build_prompt(
+        system=_IOC_TRIAGE_SYSTEM_PROMPT,
+        task_description=(
+            "Review this list of extracted IOCs and identify any that are generic, "
+            "placeholder, or unrelated to a real threat and should be flagged as noisy."
+        ),
+        context_sections=[("Extracted IOCs (not yet flagged noisy)", ioc_lines)],
+        output_format=(
+            '[{"ioc": "<exact value from the list>", "ioc_type": "<exact type from the list>", '
+            '"reason": "<short reason>"}, ...] — return [] if none should be flagged.'
+        ),
+    )
+    response = await call_llm(
+        user,
+        system=system,
+        provider_name=provider_name,
+        model=model_name,
+        max_tokens=1024,
+    )
+    parsed = parse_json_response(response, context="intake_classifier.ioc_triage")
+    if not isinstance(parsed, list):
+        return []
+    return [
+        item
+        for item in parsed
+        if isinstance(item, dict) and item.get("ioc") and item.get("ioc_type")
+    ]
 
 
 async def intake_classifier(state: HuntPipelineState) -> dict:
@@ -88,7 +169,11 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                 mime_type_hint = item.get("mime_type") or ""
                 # parser_mode stored in fetch_metadata by the upload route
                 fetch_meta = item.get("fetch_metadata") or {}
-                parser_mode = fetch_meta.get("parser_mode", "auto") if isinstance(fetch_meta, dict) else "auto"
+                parser_mode = (
+                    fetch_meta.get("parser_mode", "auto")
+                    if isinstance(fetch_meta, dict)
+                    else "auto"
+                )
                 debug_lines.append(f"FILE_PARSE_START: {label} mode={parser_mode}")
                 try:
                     raw = await th_db.get_evidence_blob(item_id)
@@ -101,7 +186,9 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         )
                         debug_lines.append(f"FILE_PARSE_ERR: {label} — blob missing")
                         continue
-                    result = await asyncio.to_thread(extract_file, raw, label, mime_type_hint, parser_mode)
+                    result = await asyncio.to_thread(
+                        extract_file, raw, label, mime_type_hint, parser_mode
+                    )
                     await th_db.update_evidence_item(
                         item_id,
                         extracted_text=result["extracted_text"],
@@ -123,7 +210,9 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         parse_warnings=[f"Pipeline parse failed: {parse_exc}"],
                     )
                     debug_lines.append(f"FILE_PARSE_ERR: {label} → {parse_exc}")
-                    logger.warning("intake_classifier: file parse failed for %s: %s", label, parse_exc)
+                    logger.warning(
+                        "intake_classifier: file parse failed for %s: %s", label, parse_exc
+                    )
 
             # Reload after parsing
             evidence_items = await th_db.list_evidence_items(pkg_id)
@@ -288,6 +377,46 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                             debug_lines.append(f"TOOL_ERROR: {tool_exc}")
                 except Exception as llm_exc:  # noqa: BLE001
                     debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
+
+            # ── 5b. LLM IOC triage (issue-local-014) ──────────────────────
+            # Semantic cleanup pass on top of the deterministic noise
+            # scorer: catches generic/placeholder/off-topic IOCs a regex +
+            # allowlist can't (e.g. doc-example domains, RFC 5737 ranges,
+            # version numbers that happen to look like an IP). Gated behind
+            # the same run_tool_enrichment condition as the tool-calling
+            # pass above — same cost/effort tradeoff, one extra call.
+            try:
+                flags = await _llm_triage_iocs(
+                    all_iocs,
+                    provider_name=state.get("provider_name"),
+                    model_name=state.get("model_name"),
+                )
+                triaged = 0
+                for flag in flags:
+                    for ioc_item in all_iocs:
+                        if (
+                            ioc_item.get("ioc") == flag["ioc"]
+                            and ioc_item.get("ioc_type") == flag["ioc_type"]
+                            and not ioc_item.get("flagged_noisy")
+                        ):
+                            ioc_item["flagged_noisy"] = True
+                            ioc_item["noise_score"] = max(
+                                float(ioc_item.get("noise_score") or 0.0), 0.75
+                            )
+                            reason = flag.get("reason", "").strip()
+                            if reason:
+                                existing_desc = ioc_item.get("ioc_description") or ""
+                                ioc_item["ioc_description"] = (
+                                    f"{existing_desc} [LLM triage: {reason}]".strip()
+                                )
+                            triaged += 1
+                            break
+                if triaged:
+                    debug_lines.append(
+                        f"IOC_LLM_TRIAGE: flagged {triaged} additional IOC(s) as noisy"
+                    )
+            except Exception as triage_exc:  # noqa: BLE001
+                debug_lines.append(f"IOC_LLM_TRIAGE_ERROR: {triage_exc}")
 
         # ── 6. Build IOC summary ──────────────────────────────────────────────
         by_type: dict[str, int] = {}

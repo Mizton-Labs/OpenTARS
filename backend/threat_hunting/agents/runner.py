@@ -9,9 +9,13 @@ Run model (issue-local-005):
   re-running the same hunt package produces fully independent records —
   the prior run is never overwritten.
 
-  ``_ACTIVE_JOBS`` is keyed by ``run_id`` so concurrent runs of different
-  packages are tracked independently.  A sequential guard prevents starting
-  a new run while any run for the same *hunt package* is still active.
+  ``_ACTIVE_JOBS`` is keyed by ``run_id`` so concurrent runs are tracked
+  independently — including multiple concurrent runs of the *same* hunt
+  package (issue-local-014: re-run is available at any time, so a user can
+  kick off a second run with a different model/effort while an earlier one
+  is still executing). ``_ACTIVE_RUN_PKG`` maps run_id -> pkg_id purely for
+  bookkeeping (``is_running`` lookups); it no longer gates whether a new run
+  is allowed to start.
 
 Lifecycle:
   1. ``start_generation(pkg_id, ...)``
@@ -249,15 +253,9 @@ async def _load_pipeline_state(run_id: str) -> dict[str, Any] | None:
     }
 
 
-def _is_pkg_active(pkg_id: str) -> bool:
-    """Return True when any run for this hunt package is currently executing."""
-    # We must look up all active run_ids and check their pkg_id
-    # The state dict kept alive in asyncio tasks is not inspectable, so we rely
-    # on _ACTIVE_RUN_PKG to map run_id → pkg_id.
-    return any(v == pkg_id for v in _ACTIVE_RUN_PKG.values())
-
-
-# Maps run_id → hunt_package_id for active jobs (mirrors _ACTIVE_JOBS)
+# Maps run_id → hunt_package_id for active jobs (mirrors _ACTIVE_JOBS).
+# Bookkeeping only — issue-local-014 removed the "one active run per
+# package" gate that used to be built on top of this map.
 _ACTIVE_RUN_PKG: dict[str, str] = {}
 
 
@@ -363,20 +361,12 @@ async def start_generation(
 ) -> dict[str, Any]:
     """Start a new generation run for a hunt package.
 
-    Always creates a NEW run (new hunting_packages row).  The prior run —
-    if any — is left untouched.  Returns a dict containing the new run_id
-    and initial status.  Raises ValueError if another run for this package
-    is currently active (sequential guard).
+    Always creates a NEW run (new hunting_packages row), even if another run
+    for the same package is still active — issue-local-014: re-run is
+    available at any time, so multiple runs (e.g. different models/effort)
+    can execute concurrently. The prior run(s) are left untouched. Returns a
+    dict containing the new run_id and initial status.
     """
-    if _is_pkg_active(pkg_id):
-        # Return the active run record so the caller can poll it
-        active_run_id = next(k for k, v in _ACTIVE_RUN_PKG.items() if v == pkg_id)
-        record = await _get_run_record(active_run_id)
-        if record:
-            record["is_running"] = True
-            return record
-        return {"generation_status": "running", "hunt_package_id": pkg_id, "run_id": active_run_id}
-
     from backend.threat_hunting.agents.pipeline import build_initial_state
 
     run_id = str(uuid.uuid4())

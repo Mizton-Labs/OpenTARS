@@ -416,6 +416,106 @@ def save_watcher_max_events(value: int) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Threat Hunting LLM call retry/backoff (issue-local-014) ─────────────────
+
+# How many times a threat-hunting agent node retries a single LLM call before
+# giving up and recording the error (in addition to the first attempt), and
+# the base delay for the exponential backoff between attempts. Covers
+# transient transport/5xx failures AND "empty content" responses caused by
+# the output-token budget being exhausted (finish_reason=length) — neither
+# of which the low-level HTTP client's own retry (backend/llm/client.py)
+# fully absorbs on its own, since the latter is a successful-response
+# condition, not a transport failure.
+_TH_LLM_MAX_RETRIES_DEFAULT = 3
+_TH_LLM_MAX_RETRIES_MIN = 0
+_TH_LLM_MAX_RETRIES_MAX = 10
+
+_TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT = 2.0
+_TH_LLM_RETRY_BACKOFF_SECONDS_MIN = 0.1
+_TH_LLM_RETRY_BACKOFF_SECONDS_MAX = 60.0
+
+
+def load_th_llm_max_retries() -> int:
+    """Return the configured max retry count for a single TH agent LLM call."""
+    raw = load_app_config().get("th_llm_max_retries", _TH_LLM_MAX_RETRIES_DEFAULT)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "th_llm_max_retries in %s is not an integer (%r); using default %d",
+            APP_CONFIG_PATH,
+            raw,
+            _TH_LLM_MAX_RETRIES_DEFAULT,
+        )
+        return _TH_LLM_MAX_RETRIES_DEFAULT
+    if n < _TH_LLM_MAX_RETRIES_MIN or n > _TH_LLM_MAX_RETRIES_MAX:
+        logger.warning(
+            "th_llm_max_retries=%d is out of range [%d, %d]; using default %d",
+            n,
+            _TH_LLM_MAX_RETRIES_MIN,
+            _TH_LLM_MAX_RETRIES_MAX,
+            _TH_LLM_MAX_RETRIES_DEFAULT,
+        )
+        return _TH_LLM_MAX_RETRIES_DEFAULT
+    return n
+
+
+def save_th_llm_max_retries(value: int) -> None:
+    """Persist the TH agent LLM-call max-retry count to application.yaml."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("th_llm_max_retries must be an integer")
+    if value < _TH_LLM_MAX_RETRIES_MIN or value > _TH_LLM_MAX_RETRIES_MAX:
+        raise ValueError(
+            f"th_llm_max_retries must be between {_TH_LLM_MAX_RETRIES_MIN} "
+            f"and {_TH_LLM_MAX_RETRIES_MAX}"
+        )
+    data = load_app_config()
+    data["th_llm_max_retries"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+def load_th_llm_retry_backoff_seconds() -> float:
+    """Return the configured base backoff (seconds) between TH LLM-call retries."""
+    raw = load_app_config().get(
+        "th_llm_retry_backoff_seconds", _TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT
+    )
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "th_llm_retry_backoff_seconds in %s is not a number (%r); using default %s",
+            APP_CONFIG_PATH,
+            raw,
+            _TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT,
+        )
+        return _TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT
+    if n < _TH_LLM_RETRY_BACKOFF_SECONDS_MIN or n > _TH_LLM_RETRY_BACKOFF_SECONDS_MAX:
+        logger.warning(
+            "th_llm_retry_backoff_seconds=%s is out of range [%s, %s]; using default %s",
+            n,
+            _TH_LLM_RETRY_BACKOFF_SECONDS_MIN,
+            _TH_LLM_RETRY_BACKOFF_SECONDS_MAX,
+            _TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT,
+        )
+        return _TH_LLM_RETRY_BACKOFF_SECONDS_DEFAULT
+    return n
+
+
+def save_th_llm_retry_backoff_seconds(value: float) -> None:
+    """Persist the TH agent LLM-call retry backoff base (seconds) to application.yaml."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("th_llm_retry_backoff_seconds must be a number")
+    n = float(value)
+    if n < _TH_LLM_RETRY_BACKOFF_SECONDS_MIN or n > _TH_LLM_RETRY_BACKOFF_SECONDS_MAX:
+        raise ValueError(
+            "th_llm_retry_backoff_seconds must be between "
+            f"{_TH_LLM_RETRY_BACKOFF_SECONDS_MIN} and {_TH_LLM_RETRY_BACKOFF_SECONDS_MAX}"
+        )
+    data = load_app_config()
+    data["th_llm_retry_backoff_seconds"] = n
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Agent workflow verbosity (issue-local-004) ───────────────────────────────
 # Controls how much live pipeline telemetry is surfaced in the UI.
 #   info    — clean summary; show current step only
