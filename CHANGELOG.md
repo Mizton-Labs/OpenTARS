@@ -9,6 +9,82 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Threat Hunting analysis/IOC data-integrity improvements (issue-local-015 Part 1)
+
+issue-local-015 spans five feature areas (progress stepper/run-scoping, per-run configuration
+including Threat Intel enrichment, a creation-wizard redesign, hypothesis/IOC analysis UX, and
+deeper verbose logging). This pass covers the analysis/IOC/data-integrity subset; the creation
+wizard, Threat Intel enrichment toggle, "Recommendations" (behavioral IoA / detection-use-case
+suggestions), and deeper verbose-logging work are deferred to a follow-up.
+
+**Bug fixed: IOC data was not actually independent per run.** The run-selector dropdown already
+correctly re-scoped hypotheses/hunting-leads/deep-retrohunt/report/execution-results per run, but
+`extracted_iocs` had no `run_id` column at all, and `clear_extracted_iocs` wiped the package's
+entire IOC set at the start of every run — so switching to an older run never showed that run's
+actual IOCs, and re-running destroyed the previous run's IOC data outright. Fixed via DB schema
+v5 (`run_id`/`action` columns on `extracted_iocs`, backfilled for existing data) and scoping every
+read/write/clear to `(hunt_package_id, run_id)`.
+
+**IOC active-cleaning config.** Each run can now choose `tagging_only` (default — flags noise but
+never excludes anything, matching pre-015 behavior exactly) or `active_cleaning` with four
+independent toggles: remove noisy IOCs, remove known legit domains, remove known CDN
+ranges, remove known legit services. Removed IOCs are marked, not deleted — still visible/
+auditable in the IOC table (now showing Result and Action columns), just excluded from what
+feeds the LLM pipeline downstream. CDN-range coverage is domain-based (no real IP-range data
+source exists in this codebase) — documented, not a silent gap.
+
+**Hypothesis confidence + Discard.** Hypotheses now carry an LLM-assessed `confidence` score
+(0-100, distinct from the existing coarse `relevance` bucket) and a `discarded` flag an analyst
+can toggle to exclude a hypothesis from further consideration — persisted per run, never
+overwritten by the LLM.
+
+**Hypothesis ↔ Hunting Lead linking, now visible.** `HuntingLead.hypothesis_id` already flowed
+end-to-end through the backend but was never rendered anywhere — hunting-lead cards now show
+which hypothesis they were derived from.
+
+**Evidence-source chips on hypothesis cards** — derived entirely client-side (no new backend
+field): each hypothesis's `ioc_basis` values are looked up in the run's IOC list for their
+`evidence_item_id`, then in the evidence list for a label.
+
+**Progress-block header stepper** — horizontal, arrow-connected stepper in the hunt-package
+header, visible regardless of active tab, tracking the five analyst-facing phases (Evidence,
+Analysis, IOC, Execution, Report) rather than internal pipeline node names.
+
+**Discard is a first-class action.** The Discard control on hypothesis cards is now a full-width,
+clearly-labeled button card instead of a small inline link. Hunting leads gained the same discard
+capability (previously only hypotheses could be discarded, with no way to exclude a lead).
+
+**Fixed: a bad SIEM query draft could blank the whole Analysis page.** Some models occasionally
+returned a structured object (e.g. a raw Elasticsearch DSL query, or `null`) in a query draft's
+`query` field instead of a string. This crashed the query-viewer component (React error #31,
+"objects are not valid as a React child") and, separately, crashed SPL tool-validation's
+`str.join()` call, which silently discarded every draft for that step. Fixed at the source
+(`query_drafting_agent` now normalizes non-string/`null` query values before returning) and
+defensively in the viewer for already-stored data predating this fix.
+
+**Fixed: the Sanitized IOCs table couldn't show what active cleaning removed.** `deep_retrohunt_
+planner` read the already-filtered IOC list, so IOCs excluded by active cleaning were invisible to
+it — no selector could ever surface them. Fixed by threading the full, unfiltered IOC list through
+a new `all_extracted_iocs` state field; the deep-retrohunt SPL/CSV/LLM context still uses the kept
+set only. The table's filter is now `All` / `Removed` (dropped the redundant `Noisy` tab, since
+noise level is already shown per row), and a removed IOC's rationale — which active-cleaning rule
+excluded it — is now surfaced and shown expanded by default instead of requiring a click.
+
+**Fixed: truncated (but non-empty) LLM responses bypassed the retry-with-more-tokens logic.**
+When a model ran out of output-token budget partway through a JSON response (`finish_reason=
+length`), any already-emitted text was returned verbatim rather than treated as a failure — only
+a genuinely *empty* response triggered the existing retry/backoff-with-higher-max-tokens path.
+The result was intermittent parse failures in Analysis sections (raw JSON or unparsed text shown
+instead of the rendered summary/technique list/query drafts) that a retry would usually have
+avoided. Truncated non-empty content is now treated the same as empty content.
+
+**Tests:** 23 new backend tests (`test_th_issue_local_015.py`) covering the schema v5 migration
+(fresh DB and v4→v5 backfill), `compute_ioc_action` across all mode/toggle combinations, run-
+scoped IOC independence, hypothesis discard round-trip, confidence normalization (clamping/
+defaults for out-of-range or missing LLM values), and `/generate` `run_config` validation, plus
+additional coverage for the query-draft normalization, kept/removed IOC visibility, and truncated-
+content retry fixes above.
+
 ### Added — Threat Hunting reliability improvements (issue-local-014)
 
 **1. Re-run available at any time.** The hunt-package re-run button and its backend endpoint no
