@@ -9,6 +9,39 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Run cancellation, traceable logging, report identifiers/IOC table (issue-local-019)
+
+**Operators can now cancel a currently-running hunt generation run** — a new Cancel button on
+HuntDetail (shown only while the active run is `running`) calls a new
+`POST /packages/{id}/runs/{run_id}/cancel` route. Since every await point in a run (an LLM call, a
+tool call, a URL/Playwright fetch) lives inside one tracked asyncio task, cancelling that task
+interrupts whatever is currently in flight — no separate subtask bookkeeping needed. If the app
+restarted since the run started (the in-process task registry doesn't survive that), there's
+nothing left to actually stop; the stale "running" status is corrected directly instead.
+
+**Stalled runs now time out instead of hanging forever.** A single LangGraph node could previously
+block indefinitely — an unresponsive LLM backend, a stuck fetch — with zero step_logs or errors
+ever recorded, since nothing bounded how long any one node was allowed to run. Every node now has a
+10-minute wall-clock ceiling; on timeout the run is marked `error` with a clear reason instead of
+staying `running` forever.
+
+**Pipeline logging is now traceable to a specific hunt package/run.** Every log line emitted while
+processing a hunt package previously had inconsistent (or no) identifying context. A new
+`get_run_logger()` helper prefixes every message with `[hunt=<id> run=<id>]`, applied across the
+pipeline runner and all 9 node files — `grep 'run=1a2b3c4d' logs/app.log` now finds every log line
+for one specific run in one shot.
+
+**Reports show the human-readable HuntID/RunID** (e.g. `TH55` / `TH55-X02`) alongside the internal
+UUID (kept for reference), and now include the full IOC table (the same All/Sanitized/Removed data
+the app's own review table shows — LLM description and noise/removal rationale in full, not just
+aggregate counts) in both the Markdown and PDF report.
+
+**Fixed IOC review table text getting cut off**: the Description column (the LLM's per-IOC
+assessment) was truncated with an ellipsis and no way to see the rest — it now wraps in full.
+Report download links (MD/PDF/JSON) gained small colored format badges so they're distinguishable
+without relying on a hover tooltip. Light theme's surfaces are a bit darker (previously read as
+washed-out white).
+
 ### Added — Track workflow, full evidence in reports, professional branded PDF (issue-local-018 follow-up)
 
 **New "Track workflow" checkbox** next to "Show subtasks" in the workflow graph toolbar — when
