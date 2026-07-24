@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { Rss, GitCommit, GitBranch, Tag, Activity, Users, Github, Scale } from 'lucide-react'
+import { Rss, GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale } from 'lucide-react'
 
 declare const __APP_VERSION__: string
 declare const __GIT_COMMIT__: string
 declare const __GIT_BRANCH__: string
+declare const __GIT_COMMIT_DATE__: string
 
 export default function About() {
   const { data: health } = useQuery({
@@ -46,6 +47,16 @@ export default function About() {
             <dt className="text-sm text-gray-400 w-32">Git Commit</dt>
             <dd className="text-sm font-mono text-gray-200 truncate" title={__GIT_COMMIT__}>
               {__GIT_COMMIT__ === 'dev' ? 'dev (not built from git)' : __GIT_COMMIT__.slice(0, 12)}
+            </dd>
+          </div>
+
+          {/* Commit date alongside the commit itself, so it's obvious how
+              stale a running deployment is without cross-referencing git log. */}
+          <div className="flex items-center gap-3">
+            <Calendar className="w-4 h-4 text-brand-400 shrink-0" />
+            <dt className="text-sm text-gray-400 w-32">Commit Date</dt>
+            <dd className="text-sm font-mono text-gray-200 truncate" title={__GIT_COMMIT_DATE__}>
+              {__GIT_COMMIT_DATE__ === 'unknown' ? 'unknown' : new Date(__GIT_COMMIT_DATE__).toLocaleString()}
             </dd>
           </div>
 
