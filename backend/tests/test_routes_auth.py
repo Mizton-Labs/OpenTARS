@@ -362,19 +362,45 @@ def test_must_change_cleared_after_change_restores_access(auth_env_must_change):
     assert c.get("/api/auth/users").status_code == 200
 
 
-def test_normal_user_default_has_no_must_change(auth_env):
-    """An admin-created user is NOT forced to change (prompt scope: admin only)."""
+def test_admin_created_user_must_change_password(auth_env):
+    """An admin-created user is forced to change their password on first login.
+
+    Mirrors the admin-reset behavior (issue-local-016) — an admin-supplied
+    password is, from the new user's perspective, the same trust situation
+    as a reset, so the same forced-change protection applies.
+    """
     admin = _login("admin", "Adminpass1")
     created = admin.post(
         "/api/auth/users",
         json={"username": "bob", "password": "Bobpass12", "role": "threat-viewer"},
     )
     assert created.status_code == 200
-    assert created.json()["must_change_password"] is False
+    assert created.json()["must_change_password"] is True
     bob = _login("bob", "Bobpass12")
-    assert bob.get("/api/auth/me").json()["user"]["must_change_password"] is False
-    # Not gated by the forced-change 403: a normal-user read endpoint is reachable.
-    assert bob.get("/api/viewer/sources").status_code != 403
+    assert bob.get("/api/auth/me").json()["user"]["must_change_password"] is True
+    # Gated by the forced-change 403 until the password is changed.
+    assert bob.get("/api/viewer/sources").status_code == 403
+
+
+def test_admin_created_user_can_change_password_and_regain_access(auth_env):
+    """The create -> forced-change -> cleared-access path works end to end,
+    mirroring test_must_change_cleared_after_change_restores_access but
+    starting from a freshly-created (not admin-reset) user."""
+    admin = _login("admin", "Adminpass1")
+    admin.post(
+        "/api/auth/users",
+        json={"username": "carol", "password": "Carolpass1", "role": "threat-viewer"},
+    )
+    carol = _login("carol", "Carolpass1")
+    assert carol.get("/api/viewer/sources").status_code == 403
+
+    r = carol.put(
+        "/api/auth/password",
+        json={"current_password": "Carolpass1", "new_password": "Newcarolpass2"},
+    )
+    assert r.status_code == 200
+    assert carol.get("/api/auth/me").json()["user"]["must_change_password"] is False
+    assert carol.get("/api/viewer/sources").status_code != 403
 
 
 def test_create_user_rejects_insufficient_classes(auth_env):
@@ -505,6 +531,12 @@ def test_cannot_demote_last_admin_via_other(auth_env):
     )
     admin1_id = c.get("/api/auth/me").json()["user"]["id"]
     c2 = _login("admin2", "Admin2pass1")
+    # issue-local-016: admin-created accounts are must_change_password by
+    # default — clear it so admin2 can exercise non-self endpoints below.
+    c2.put(
+        "/api/auth/password",
+        json={"current_password": "Admin2pass1", "new_password": "Admin2pass2"},
+    )
     admin2_id = c2.get("/api/auth/me").json()["user"]["id"]
     # admin2 demotes admin1 → allowed (admin2 remains an admin).
     assert (
@@ -531,6 +563,13 @@ def test_normal_role_blocked_from_admin_endpoints(auth_env):
     nc = _login("viewer1", "Viewerpass1")
     # Self endpoints allowed.
     assert nc.get("/api/auth/me").status_code == 200
+    # issue-local-016: clear the forced-password-change gate first so the
+    # assertions below actually exercise the ROLE gate, not the must-change
+    # gate (both return 403, which would otherwise mask which one fired).
+    nc.put(
+        "/api/auth/password",
+        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+    )
     # Admin user list blocked.
     assert nc.get("/api/auth/users").status_code == 403
     # Mutating endpoint blocked.
@@ -544,6 +583,12 @@ def test_normal_role_allowed_viewer_reads(auth_env):
         json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
     )
     nc = _login("viewer1", "Viewerpass1")
+    # issue-local-016: clear the forced-password-change gate so this test
+    # exercises the ROLE allowlist, not the must-change gate.
+    nc.put(
+        "/api/auth/password",
+        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+    )
     # A whitelisted Viewer read must pass the gate (not 401/403).
     r = nc.get("/api/viewer/summary")
     assert r.status_code not in (401, 403)

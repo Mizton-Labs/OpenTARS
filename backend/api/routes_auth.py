@@ -412,7 +412,15 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
         )
     if await db.get_user_by_username(body.username) is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
-    uid = await db.create_user(body.username, hash_password(body.password), role=body.role)
+    # An admin-supplied password is, from the new user's perspective, the
+    # same trust situation as an admin reset (issue-local-016) — force it to
+    # be changed on first login rather than trusting it stays private.
+    uid = await db.create_user(
+        body.username,
+        hash_password(body.password),
+        role=body.role,
+        must_change_password=True,
+    )
     created = await db.get_user_by_id(uid)
     return _public_user(created)
 
