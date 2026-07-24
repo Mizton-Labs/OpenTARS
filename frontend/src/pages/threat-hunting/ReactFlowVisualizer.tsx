@@ -12,7 +12,7 @@
  *   - Part 1c: active node gets .node-active class for CSS pulse animation
  */
 
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   ReactFlow,
   Background,
@@ -88,9 +88,14 @@ function nodeBorderColor(id: string, completed: Set<string>, active: string): st
 export default function ReactFlowVisualizer({
   genRecord,
   showSubtasks = false,
+  trackWorkflow = false,
 }: {
   genRecord: THGenerationRecord
   showSubtasks?: boolean
+  /** issue-local-018 follow-up: when true, the view re-centers on whichever
+   *  node is currently active every time it changes, instead of staying at
+   *  its initial fit. */
+  trackWorkflow?: boolean
 }) {
   const completed = useMemo(() => new Set(genRecord.completed_steps ?? []), [genRecord.completed_steps])
   const active = genRecord.current_step ?? ''
@@ -249,13 +254,26 @@ export default function ReactFlowVisualizer({
   // is barely visible. `fitView`'s boolean prop only runs once at mount and
   // always targets every current node, so it can't express "just these
   // nodes" — `onInit` gives us the instance to call a scoped `fitView` on.
+  const instanceRef = useRef<ReactFlowInstance | null>(null)
+
   const handleInit = useCallback(
     (instance: ReactFlowInstance) => {
+      instanceRef.current = instance
       const focusIds = ['intake_classifier', ...intakeSources.map((_, i) => `src_${i}`)]
       instance.fitView({ nodes: focusIds.map((id) => ({ id })), padding: 0.4, duration: 0 })
     },
     [intakeSources],
   )
+
+  // issue-local-018 follow-up: "Track workflow" — while enabled, re-center
+  // on whichever node is currently active every time it changes, so the
+  // chart follows the run instead of staying at its initial fit. `padding`
+  // (rather than a fixed zoom level) keeps a consistent, readable margin
+  // around the single focused node regardless of its size on screen.
+  useEffect(() => {
+    if (!trackWorkflow || !active) return
+    instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 0.6, duration: 400 })
+  }, [trackWorkflow, active])
 
   return (
     <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: graphHeight }}>

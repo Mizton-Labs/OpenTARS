@@ -317,6 +317,12 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
     setShowSubtasks(showSubtasksDefault)
   }, [showSubtasksDefault])
 
+  // issue-local-018 follow-up: "Track workflow" — keeps the React Flow chart
+  // centered on the currently active agent/task node as the run progresses,
+  // instead of a static initial fit. Local-only (no server persistence, unlike
+  // showSubtasks) since it's a viewing preference for the current session.
+  const [trackWorkflow, setTrackWorkflow] = useState(false)
+
   const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as 'info' | 'verbose' | 'debug'
   const visualization = (vizData?.agent_workflow_visualization ?? 'timeline') as 'timeline' | 'mermaid' | 'reactflow'
 
@@ -378,6 +384,21 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         />
         Show subtasks
       </button>
+      <button
+        className="text-sm text-gray-400 flex items-center gap-1.5 cursor-pointer select-none hover:text-gray-200 transition-colors"
+        onClick={() => setTrackWorkflow(!trackWorkflow)}
+        title="Keep the chart focused on the currently active step"
+      >
+        <span
+          className={clsx(
+            'inline-block w-3 h-3 border rounded-sm flex-shrink-0 transition-colors',
+            trackWorkflow
+              ? 'bg-brand-500 border-brand-400'
+              : 'bg-transparent border-gray-600',
+          )}
+        />
+        Track workflow
+      </button>
     </div>
   )
 
@@ -426,7 +447,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
               </div>
             }
           >
-            <ReactFlowVisualizer genRecord={genRecord} showSubtasks={showSubtasks} />
+            <ReactFlowVisualizer genRecord={genRecord} showSubtasks={showSubtasks} trackWorkflow={trackWorkflow} />
           </Suspense>
         </div>
       </div>
