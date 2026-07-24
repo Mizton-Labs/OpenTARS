@@ -274,9 +274,12 @@ def test_map_claims_empty_mapping_returns_default() -> None:
 
 
 def test_users_schema_version_is_4() -> None:
+    """SSO (v4) schema is present — schema has since advanced further
+    (issue-local-016 added v5), so this asserts >= 4 rather than pinning the
+    exact current version, which is covered by test_auth_db.py instead."""
     from backend.auth.db import _USERS_SCHEMA_VERSION
 
-    assert _USERS_SCHEMA_VERSION == 4
+    assert _USERS_SCHEMA_VERSION >= 4
 
 
 def test_users_table_ddl_has_idp_and_external_id() -> None:

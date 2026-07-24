@@ -23,6 +23,7 @@ from backend.auth.db import (
     set_enabled,
     set_password,
     set_role,
+    set_theme,
 )
 
 
@@ -117,6 +118,41 @@ async def test_set_role_rejects_invalid():
     uid = await create_user("u", "h")
     with pytest.raises(ValueError):
         await set_role(uid, "root")
+
+
+# ── theme (issue-local-016) ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_new_user_theme_defaults_to_none():
+    await init_users_db()
+    uid = await create_user("u", "h")
+    assert (await get_user_by_id(uid))["theme"] is None
+
+
+@pytest.mark.asyncio
+async def test_set_theme_round_trip():
+    await init_users_db()
+    uid = await create_user("u", "h")
+    assert await set_theme(uid, "energy") is True
+    assert (await get_user_by_id(uid))["theme"] == "energy"
+
+
+@pytest.mark.asyncio
+async def test_set_theme_none_clears_override():
+    await init_users_db()
+    uid = await create_user("u", "h")
+    await set_theme(uid, "energy")
+    assert await set_theme(uid, None) is True
+    assert (await get_user_by_id(uid))["theme"] is None
+
+
+@pytest.mark.asyncio
+async def test_set_theme_rejects_invalid():
+    await init_users_db()
+    uid = await create_user("u", "h")
+    with pytest.raises(ValueError):
+        await set_theme(uid, "not-a-real-theme")
 
 
 @pytest.mark.asyncio
@@ -275,13 +311,19 @@ async def test_migration_adds_must_change_password_to_legacy_db(tmp_path, monkey
         await conn.commit()
 
     await init_users_db()
+    # Idempotency: re-running the full migration chain against an
+    # already-migrated (now v5) DB must be a safe no-op.
+    await init_users_db()
 
     user = await get_user_by_username("legacy")
     assert user is not None
     assert user["password_hash"] == "oldhash"  # data preserved
     assert user["must_change_password"] is False  # new column defaults 0
+    assert user["theme"] is None  # issue-local-016: v5 column, defaults NULL
 
     async with aiosqlite.connect(db_path) as conn:
         cur = await conn.execute("SELECT version FROM schema_version LIMIT 1")
-        assert (await cur.fetchone())[0] == 4  # version bumped through v2, v3, and v4 (SSO)
+        from backend.auth.db import _USERS_SCHEMA_VERSION
+
+        assert (await cur.fetchone())[0] == _USERS_SCHEMA_VERSION
         await cur.close()

@@ -56,4 +56,15 @@ describe('About page (prompts-051)', () => {
     expect(screen.getByText('LICENSE')).toBeInTheDocument()
     expect(screen.getByText('THIRD-PARTY-NOTICES.md')).toBeInTheDocument()
   })
+
+  it('shows the git branch alongside the git commit (issue-local-016)', () => {
+    renderAbout()
+    expect(screen.getByText('Git Commit')).toBeInTheDocument()
+    expect(screen.getByText('Git Branch')).toBeInTheDocument()
+    // vitest runs with the same vite.config.ts `define` as a real build, so
+    // __GIT_BRANCH__ falls back to its 'unknown' default (no GIT_BRANCH env
+    // var set for the test runner) — assert the fallback renders, not a
+    // blank/undefined value.
+    expect(screen.getByText('unknown')).toBeInTheDocument()
+  })
 })

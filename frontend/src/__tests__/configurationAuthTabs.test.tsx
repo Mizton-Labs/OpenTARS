@@ -192,4 +192,130 @@ describe('UserManagementTab (prompts-045)', () => {
     fireEvent.click(await screen.findByTestId('delete-confirm-yes-2'))
     expect(await screen.findByRole('alert')).toHaveTextContent(/last admin/i)
   })
+
+  it('generates a random password on explicit confirm and shows it read-only (issue-local-016)', async () => {
+    vi.mocked(api.auth.listUsers).mockResolvedValue(users)
+    vi.mocked(api.auth.resetUserPassword).mockResolvedValue({
+      status: 'password_reset',
+      username: 'analyst',
+      generated_password: 'r4nd0m-gener4ted-p4ssw0rd',
+    })
+    renderWithClient(<UserManagementTab />)
+    await screen.findByText('analyst')
+
+    fireEvent.click(screen.getAllByTitle('Reset password')[1])
+    // First click into the modal must NOT call the API yet — requires an
+    // explicit "Generate new password" click inside it.
+    expect(await screen.findByRole('button', { name: /generate new password/i })).toBeInTheDocument()
+    expect(api.auth.resetUserPassword).not.toHaveBeenCalled()
+    // No editable password fields — nothing left for the admin to type.
+    expect(screen.queryByLabelText(/new password/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /generate new password/i }))
+    await waitFor(() => expect(api.auth.resetUserPassword).toHaveBeenCalledWith(2))
+
+    const field = await screen.findByLabelText('Generated password')
+    expect(field).toHaveValue('r4nd0m-gener4ted-p4ssw0rd')
+    expect(field).toHaveAttribute('readonly')
+    expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument()
+  })
+})
+
+// ── Configuration.tsx — User Management moved to General group ──────────────
+
+describe('Configuration tab groups (issue-local-016)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('shows User Management under General, not Threat Intel', async () => {
+    const userEventModule = await import('@testing-library/user-event')
+    const user = userEventModule.default.setup()
+
+    vi.doMock('../auth/useAuth', () => ({
+      useAuth: () => ({
+        authEnabled: true,
+        isAdmin: true,
+        isResearcher: true,
+        isViewer: true,
+        isAuthenticated: true,
+        loading: false,
+        user: selfAdmin,
+      }),
+    }))
+
+    vi.doMock('../api/client', async () => {
+      const original = await vi.importActual<typeof import('../api/client')>('../api/client')
+      return {
+        ...original,
+        api: {
+          ...original.api,
+          getAppTitle: vi.fn().mockResolvedValue({ app_title: '' }),
+          getAppBasePrefix: vi.fn().mockResolvedValue({ app_base_prefix: '' }),
+          getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
+          getDefaultTheme: vi.fn().mockResolvedValue({ theme: 'classic' }),
+          setDefaultTheme: vi.fn().mockResolvedValue({ theme: 'energy' }),
+          auth: { ...original.api.auth, listUsers: vi.fn().mockResolvedValue([selfAdmin]) },
+        },
+      }
+    })
+
+    const { default: Configuration } = await import('../pages/Configuration')
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+
+    // Default landing group is Threat Intel — User Management must not be there.
+    expect(screen.queryByRole('button', { name: /user management/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^general$/i }))
+    expect(await screen.findByRole('button', { name: /user management/i })).toBeInTheDocument()
+  })
+
+  it('renders the Default Theme picker under General > Application and saves a selection', async () => {
+    const userEventModule = await import('@testing-library/user-event')
+    const user = userEventModule.default.setup()
+
+    vi.doMock('../auth/useAuth', () => ({
+      useAuth: () => ({
+        authEnabled: true,
+        isAdmin: true,
+        isResearcher: true,
+        isViewer: true,
+        isAuthenticated: true,
+        loading: false,
+        user: selfAdmin,
+      }),
+    }))
+
+    const setDefaultTheme = vi.fn().mockResolvedValue({ theme: 'energy' })
+    vi.doMock('../api/client', async () => {
+      const original = await vi.importActual<typeof import('../api/client')>('../api/client')
+      return {
+        ...original,
+        api: {
+          ...original.api,
+          getAppTitle: vi.fn().mockResolvedValue({ app_title: '' }),
+          getAppBasePrefix: vi.fn().mockResolvedValue({ app_base_prefix: '' }),
+          getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
+          getDefaultTheme: vi.fn().mockResolvedValue({ theme: 'classic' }),
+          setDefaultTheme,
+          auth: { ...original.api.auth, listUsers: vi.fn().mockResolvedValue([selfAdmin]) },
+        },
+      }
+    })
+
+    const { default: Configuration } = await import('../pages/Configuration')
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+
+    await user.click(screen.getByRole('button', { name: /^general$/i }))
+    expect(await screen.findByText('Default Theme')).toBeInTheDocument()
+    expect(screen.getByText('Classic')).toBeInTheDocument()
+    expect(screen.getByText('Energy')).toBeInTheDocument()
+
+    await user.click(screen.getByText('Energy'))
+    await waitFor(() => expect(setDefaultTheme).toHaveBeenCalledWith('energy'))
+  })
 })

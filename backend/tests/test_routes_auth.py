@@ -169,11 +169,54 @@ def test_admin_reset_password_evicts_target_sessions(auth_env):
     bob = _login("bob", "Bobpass12")
     assert bob.get("/api/auth/me").status_code == 200
 
-    r = admin.put(f"/api/auth/users/{uid}/password", json={"new_password": "Newbobpass1"})
+    # issue-local-016: bodyless — the backend generates the new password.
+    r = admin.put(f"/api/auth/users/{uid}/password")
     assert r.status_code == 200
     # Bob's old session is dead; the admin is unaffected.
     assert bob.get("/api/auth/me").status_code == 401
     assert admin.get("/api/auth/me").status_code == 200
+
+
+def test_admin_reset_password_generates_random_password(auth_env):
+    """issue-local-016: the response carries a freshly generated password (not
+    admin-supplied), the target must change it on next login, and it works."""
+    admin = _login("admin", "Adminpass1")
+    uid = admin.post(
+        "/api/auth/users",
+        json={"username": "dave", "password": "Davepass12", "role": "threat-viewer"},
+    ).json()["id"]
+
+    r = admin.put(f"/api/auth/users/{uid}/password")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "password_reset"
+    assert body["username"] == "dave"
+    generated = body["generated_password"]
+    assert isinstance(generated, str) and len(generated) >= 20  # token_urlsafe(18)
+
+    # must_change_password is set on the target (visible via the admin's own
+    # list_users view — GET /api/auth/users returns the raw DB projection).
+    users = {u["username"]: u for u in admin.get("/api/auth/users").json()}
+    assert users["dave"]["must_change_password"] is True
+
+    # The generated password actually works, and a second reset differs.
+    login = _client().post("/api/auth/login", json={"username": "dave", "password": generated})
+    assert login.status_code == 200
+
+    r2 = admin.put(f"/api/auth/users/{uid}/password")
+    assert r2.status_code == 200
+    assert r2.json()["generated_password"] != generated
+
+
+def test_admin_reset_password_requires_admin(auth_env):
+    admin = _login("admin", "Adminpass1")
+    uid = admin.post(
+        "/api/auth/users",
+        json={"username": "eve", "password": "Evepass123", "role": "threat-viewer"},
+    ).json()["id"]
+    viewer = _login("eve", "Evepass123")
+    r = viewer.put(f"/api/auth/users/{uid}/password")
+    assert r.status_code == 403
 
 
 def test_change_own_password_wrong_current(auth_env):
@@ -214,6 +257,49 @@ def test_change_own_password_rejects_reuse_of_current(auth_env):
     )
     assert r.status_code == 400
     assert "differ" in r.json()["detail"].lower()
+
+
+# ── self theme override (issue-local-016) ─────────────────────────────────────
+
+
+def test_set_own_theme_round_trip(auth_env):
+    c = _login("admin", "Adminpass1")
+    r = c.put("/api/auth/me/theme", json={"theme": "energy"})
+    assert r.status_code == 200
+    assert r.json()["theme"] == "energy"
+    assert c.get("/api/auth/me").json()["user"]["theme"] == "energy"
+
+
+def test_set_own_theme_null_clears_override(auth_env):
+    c = _login("admin", "Adminpass1")
+    c.put("/api/auth/me/theme", json={"theme": "energy"})
+    r = c.put("/api/auth/me/theme", json={"theme": None})
+    assert r.status_code == 200
+    assert r.json()["theme"] is None
+    assert c.get("/api/auth/me").json()["user"]["theme"] is None
+
+
+def test_set_own_theme_rejects_invalid_value(auth_env):
+    c = _login("admin", "Adminpass1")
+    r = c.put("/api/auth/me/theme", json={"theme": "not-a-real-theme"})
+    assert r.status_code == 400
+
+
+def test_set_own_theme_reachable_by_non_admin_role(auth_env):
+    """Regression for the _SELF_PATHS entry: without it, a non-admin role
+    would be blocked by the middleware's role allowlist before ever reaching
+    this route (admins bypass role-gating entirely, so this must be tested
+    with a non-admin caller to actually exercise the fix)."""
+    admin = _login("admin", "Adminpass1")
+    uid = admin.post(
+        "/api/auth/users",
+        json={"username": "frank", "password": "Frankpass1", "role": "threat-viewer"},
+    ).json()["id"]
+    assert uid > 0
+    viewer = _login("frank", "Frankpass1")
+    r = viewer.put("/api/auth/me/theme", json={"theme": "energy"})
+    assert r.status_code == 200
+    assert r.json()["theme"] == "energy"
 
 
 # ── forced password change (prompts-047) ──────────────────────────────────────
@@ -301,17 +387,20 @@ def test_create_user_rejects_insufficient_classes(auth_env):
     assert r.status_code == 400
 
 
-def test_admin_reset_password_allows_reuse_unconstrained(auth_env):
-    """Admin reset of ANOTHER user has no new!=current reuse constraint."""
+def test_admin_reset_password_no_body_required(auth_env):
+    """issue-local-016: the endpoint takes no request body at all — the admin
+    no longer supplies a password, so there's nothing left to validate here
+    (unlike the old reuse-constraint test this replaces, which tested an
+    admin-supplied value that no longer exists)."""
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
         json={"username": "carol", "password": "Carolpass1", "role": "threat-viewer"},
     )
     uid = r.json()["id"]
-    # Reset to the same value the user already has — allowed for admin reset.
-    r2 = c.put(f"/api/auth/users/{uid}/password", json={"new_password": "Carolpass1"})
+    r2 = c.put(f"/api/auth/users/{uid}/password")
     assert r2.status_code == 200, r2.text
+    assert r2.json()["generated_password"] != "Carolpass1"
 
 
 # ── admin user management ─────────────────────────────────────────────────────
@@ -343,15 +432,16 @@ def test_admin_user_crud(auth_env):
         .status_code
         == 401
     )
-    # Re-enable + admin reset password
+    # Re-enable + admin reset password (issue-local-016: bodyless, generated)
     c.put(f"/api/auth/users/{uid}/enabled", json={"enabled": True})
-    assert (
-        c.put(f"/api/auth/users/{uid}/password", json={"new_password": "Resetpass1"}).status_code
-        == 200
-    )
+    reset = c.put(f"/api/auth/users/{uid}/password")
+    assert reset.status_code == 200
     assert (
         _client()
-        .post("/api/auth/login", json={"username": "viewer1", "password": "Resetpass1"})
+        .post(
+            "/api/auth/login",
+            json={"username": "viewer1", "password": reset.json()["generated_password"]},
+        )
         .status_code
         == 200
     )

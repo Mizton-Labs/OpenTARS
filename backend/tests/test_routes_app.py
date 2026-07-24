@@ -241,6 +241,64 @@ def test_put_th_llm_retry_backoff_seconds_rejects_missing_key(client):
     assert resp.status_code == 400
 
 
+# ── app_title (issue-local-001-rev1) / theme (issue-local-016) ──────────────
+
+
+def test_get_app_title_default(client):
+    resp = client.get("/api/app/title")
+    assert resp.status_code == 200
+    assert resp.json() == {"app_title": ""}
+
+
+def test_put_app_title_round_trip(client):
+    resp = client.put("/api/app/title", json={"app_title": "My Instance"})
+    assert resp.status_code == 200
+    assert resp.json() == {"app_title": "My Instance"}
+    assert client.get("/api/app/title").json() == {"app_title": "My Instance"}
+
+
+def test_get_default_theme_default(client):
+    resp = client.get("/api/app/theme")
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "classic"}
+
+
+def test_put_default_theme_round_trip(client):
+    resp = client.put("/api/app/theme", json={"theme": "energy"})
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "energy"}
+    assert client.get("/api/app/theme").json() == {"theme": "energy"}
+
+
+def test_put_default_theme_rejects_invalid_value(client):
+    resp = client.put("/api/app/theme", json={"theme": "not-a-real-theme"})
+    assert resp.status_code == 400
+
+
+def test_put_default_theme_rejects_non_string(client):
+    resp = client.put("/api/app/theme", json={"theme": 123})
+    assert resp.status_code == 400
+
+
+def test_put_default_theme_rejects_missing_key(client):
+    resp = client.put("/api/app/theme", json={})
+    assert resp.status_code == 400
+
+
+def test_get_theme_and_title_public_when_auth_enabled(client, monkeypatch):
+    """issue-local-016 regression: GET /api/app/theme and GET /api/app/title
+    must both be reachable pre-login (no session cookie) even when auth
+    enforcement is on — the login screen needs the theme, and title's own
+    docstring already claimed public access but had no middleware carve-out
+    for it before this fix."""
+    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    anon = TestClient(app)
+    assert anon.get("/api/app/theme").status_code == 200
+    assert anon.get("/api/app/title").status_code == 200
+    # PUT still requires admin when auth is enabled.
+    assert anon.put("/api/app/theme", json={"theme": "energy"}).status_code == 401
+
+
 # ── branding logo (prompts-045) ──────────────────────────────────────────────
 # 1x1 transparent PNG.
 _PNG_BYTES = bytes.fromhex(
