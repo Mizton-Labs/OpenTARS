@@ -9,6 +9,47 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Run-tab clarity, larger Threat Hunting text, all-runs status table, LLM array-field crash (issue-local-017 follow-up)
+
+**Fixed a live page-crash bug (minified React error #31).** Confirmed on test-server: the
+"issue-015 bugfix2 verification" package's Mistral-Large-3 run has
+`threat_context.key_observations` entries shaped as `{observation, confidence, evidence}` objects
+instead of the plain strings the schema asks for — rendering an object directly as a React child
+blanks the whole page. The same risk existed for hypothesis `suggested_actions` and
+`ttp_analysis.detection_opportunities`. Fixed at both ends: backend nodes
+(`threat_context_builder`, `hypothesis_generator`, `ttp_analyst`) now normalize these arrays to
+strings at the source via a new `coerce_string_list()` helper in `llm_bridge.py`, so future runs
+are clean; the frontend also gained a defensive `asDisplayText()` coercion at every render site in
+`AnalysisTab.tsx`/`ReportPanel.tsx` (mirroring the existing `asQueryText` pattern for the same
+failure class), since a backend-only fix can't repair already-persisted historical runs without a
+re-run — this is what actually makes the Mistral run viewable again.
+
+**Run tabs on the hunt-package list now read as actual tabs.** The previous pass gave inactive
+tabs a transparent border (invisible until active) and only a faint ring to mark selection — hard
+to tell which run was selected or that the row was clickable at all. Inactive tabs now get a
+visible border, the active tab uses a stronger fill plus a brand-colored border, and a small
+"Runs" label identifies the row without hovering.
+
+**Larger text across the whole Threat Hunting module.** Bumped the smallest text a step each
+(9px→10px, 10px→11px, 11px→12px, `text-xs`→`text-sm`) across all `ThreatHunting.tsx` and
+`threat-hunting/` components — left `text-sm` and larger alone to limit layout-breakage risk
+without a visual QA pass.
+
+**New compact all-runs status table in HuntDetail**, shown below the run-selector dropdown: one
+row per run showing the model used, its status, and the same coarse workflow-with-arrows
+visualization (Evidence → IOC → Analysis → Execution → Report) `PipelineStepper` shows for the
+single selected run — so the whole run history's progress is visible at a glance without
+switching the selector back and forth. `list_generation_runs()` now returns each run's
+`phases`/`total_elapsed_s` (the same `_parse_step_logs` projection `list_hunt_packages()` already
+uses), so this needs no per-run extra fetch.
+
+**Tests:** `coerce_string_list()` unit coverage plus per-node coercion tests (object-shaped items
+flattened to strings, missing fields default to an empty list); a frontend regression test
+rendering the exact live-observed `{observation, confidence, evidence}` shape end-to-end through
+`AnalysisTab`; DB-layer coverage for `list_generation_runs()`'s new phase/elapsed projection; and
+`RunsStatusTable` coverage (model/effort display, provider fallback, status text, coarse-phase
+done/error states, one row per run).
+
 ### Added — Sidebar module grouping, forced password change, multi-run indicators, manual IOC verdict overrides (issue-local-017)
 
 **Sidebar now visually separates the Threat Intel and Threat Hunting modules from Home and the
