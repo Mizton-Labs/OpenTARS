@@ -7,7 +7,7 @@
  */
 import { useState, useEffect } from 'react'
 
-export type HuntDensity = 'compact' | 'detailed'
+export type HuntDensity = 'compact' | 'detailed' | 'table'
 
 const STORAGE_KEY = 'sfi.th.cardDensity'
 const DEFAULT_DENSITY: HuntDensity = 'detailed'
@@ -16,7 +16,7 @@ export function useHuntDensity(): { density: HuntDensity; setDensity: (d: HuntDe
   const [density, setDensityState] = useState<HuntDensity>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored === 'compact' || stored === 'detailed') return stored
+      if (stored === 'compact' || stored === 'detailed' || stored === 'table') return stored
     } catch {
       // ignore
     }

@@ -12,9 +12,9 @@
  * per-run extra fetches), unlike PipelineStepper's header usage which
  * reads a live `THGenerationRecord` for the single active run.
  */
-import { CheckCircle, XCircle, Loader2, ArrowRight } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, ArrowRight, FileText, FileCode2, FileJson } from 'lucide-react'
 import { clsx } from 'clsx'
-import type { THuntPackageRun } from '../../api/client'
+import { api, type THuntPackageRun } from '../../api/client'
 import { runStatusClass } from './runStatusUtils'
 
 type PhaseState = 'done' | 'active' | 'error' | 'pending'
@@ -108,16 +108,76 @@ function MiniPhaseTrack({ run }: { run: THuntPackageRun }) {
   )
 }
 
-export default function RunsStatusTable({ runs }: { runs: THuntPackageRun[] }) {
+function IocCounts({ run }: { run: THuntPackageRun }) {
+  if (run.sanitized_ioc_count == null && run.removed_ioc_count == null) {
+    return <span className="text-[10px] text-gray-600">—</span>
+  }
+  return (
+    <span className="text-[10px] whitespace-nowrap">
+      <span className="text-green-400">{run.sanitized_ioc_count ?? 0} sanitized</span>
+      <span className="text-gray-600"> · </span>
+      <span className="text-red-400">{run.removed_ioc_count ?? 0} removed</span>
+    </span>
+  )
+}
+
+// issue-local-017: MD/PDF download directly via <a href> (the backend
+// serves those formats from GET routes); JSON has no server-side download
+// route (ReportPanel.tsx's exportJson builds it client-side from the
+// already-fetched report object) — so this fetches on click, mirroring
+// that same client-side Blob/URL.createObjectURL pattern.
+function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
+  if (!run.has_report) {
+    return <span className="text-[10px] text-gray-600">—</span>
+  }
+
+  async function downloadJson() {
+    const report = await api.threatHunting.getRunReport(pkgId, run.id)
+    const blob = new Blob([JSON.stringify(report.full_report, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `hunt-report-${run.id.slice(0, 8)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const linkClass = 'text-gray-500 hover:text-brand-400 transition-colors'
+  return (
+    <span className="flex items-center gap-2">
+      <a
+        href={api.threatHunting.downloadRunReportMarkdown(pkgId, run.id)}
+        className={linkClass}
+        title="Download report as Markdown"
+      >
+        <FileText className="w-3.5 h-3.5" />
+      </a>
+      <a
+        href={api.threatHunting.downloadRunReportPdf(pkgId, run.id)}
+        className={linkClass}
+        title="Download report as PDF"
+      >
+        <FileCode2 className="w-3.5 h-3.5" />
+      </a>
+      <button type="button" onClick={() => void downloadJson()} className={linkClass} title="Download report as JSON">
+        <FileJson className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  )
+}
+
+export default function RunsStatusTable({ pkgId, runs }: { pkgId: string; runs: THuntPackageRun[] }) {
   if (runs.length === 0) return null
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-800">
-      <table className="w-full min-w-[620px]">
+      <table className="w-full min-w-[780px]">
         <thead>
           <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
             <th className="text-left py-1.5 px-2">Model</th>
             <th className="text-left py-1.5 px-2">Status</th>
             <th className="text-left py-1.5 px-2">Workflow</th>
+            <th className="text-left py-1.5 px-2">IOCs</th>
+            <th className="text-left py-1.5 px-2">Report</th>
             <th className="text-left py-1.5 px-2">Created</th>
           </tr>
         </thead>
@@ -135,6 +195,12 @@ export default function RunsStatusTable({ runs }: { runs: THuntPackageRun[] }) {
               </td>
               <td className="py-1.5 px-2">
                 <MiniPhaseTrack run={run} />
+              </td>
+              <td className="py-1.5 px-2">
+                <IocCounts run={run} />
+              </td>
+              <td className="py-1.5 px-2">
+                <ReportLinks pkgId={pkgId} run={run} />
               </td>
               <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
                 {run.created_at.slice(0, 19).replace('T', ' ')}

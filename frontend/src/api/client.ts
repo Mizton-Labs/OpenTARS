@@ -368,7 +368,7 @@ export interface AuthUser {
    * Per-user theme override (issue-local-016). `null`/`undefined` means "use
    * the instance default" (see `getDefaultTheme`/`setDefaultTheme`).
    */
-  theme?: 'classic' | 'energy' | null
+  theme?: 'classic' | 'energy' | 'light' | null
 }
 
 export interface CreateUserPayload {
@@ -435,7 +435,7 @@ export const api = {
     // issue-local-016: any authenticated user may set their own theme
     // override. `theme: null` clears the override (falls back to the
     // instance default set via setDefaultTheme).
-    setOwnTheme: (theme: 'classic' | 'energy' | null) =>
+    setOwnTheme: (theme: 'classic' | 'energy' | 'light' | null) =>
       request<AuthUser>('/auth/me/theme', {
         method: 'PUT',
         body: JSON.stringify({ theme }),
@@ -697,7 +697,7 @@ export const api = {
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
   getDefaultTheme: () => request<{ theme: string }>('/app/theme'),
-  setDefaultTheme: (theme: 'classic' | 'energy') =>
+  setDefaultTheme: (theme: 'classic' | 'energy' | 'light') =>
     request<{ theme: string }>('/app/theme', {
       method: 'PUT',
       body: JSON.stringify({ theme }),
@@ -1837,6 +1837,13 @@ export interface THRunSummary {
 export interface THuntPackageRun extends THRunSummary {
   phases?: THPhaseEntry[] | null
   total_elapsed_s?: number | null
+  /** issue-local-017: post-action-filter IOC split (deep_retrohunt.sanitized_iocs),
+   *  null when the run has no deep_retrohunt lead yet. */
+  sanitized_ioc_count?: number | null
+  removed_ioc_count?: number | null
+  /** issue-local-017: whether a hunt_reports row exists for this run — drives
+   *  the report-download links in the all-runs status table. */
+  has_report?: boolean
 }
 
 export interface THGenerationRecord {

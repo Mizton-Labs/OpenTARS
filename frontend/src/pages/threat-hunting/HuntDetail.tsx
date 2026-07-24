@@ -283,7 +283,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
             All runs
           </p>
-          <RunsStatusTable runs={runs} />
+          <RunsStatusTable pkgId={pkgId} runs={runs} />
         </div>
       )}
 

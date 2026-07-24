@@ -26,6 +26,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { useHuntTheme, type HuntTheme } from './threat-hunting/useHuntTheme'
 import { useHuntDensity, type HuntDensity } from './threat-hunting/useHuntDensity'
 import RunStatusBadge from './threat-hunting/RunStatusBadge'
+import RunsStatusTable from './threat-hunting/RunsStatusTable'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -440,12 +441,13 @@ function PackageCard({
             )}
           </p>
 
-          {/* issue-local-016: per-run compact status chips — shown whenever a
-              package has more than one run, in BOTH density modes (this is
-              the actual payoff of the multi-run feature; only the heavier
-              stage rail below is gated by density). Clicking a chip selects
-              that run for this card's stage rail. */}
-          {runs.length > 1 && (
+          {/* issue-local-016/017: per-run compact status chips — shown for
+              every package that has at least one run (including a
+              single-run package, so its model/status is visible without
+              opening the detail view), in BOTH density modes (only the
+              heavier stage rail below is gated by density). Clicking a chip
+              selects that run for this card's stage rail. */}
+          {runs.length > 0 && (
             <div
               className="flex items-end gap-1.5 mt-2 border-b border-gray-700 flex-wrap"
               onClick={(e) => e.stopPropagation()}
@@ -606,10 +608,12 @@ export default function ThreatHunting() {
               Modern
             </button>
           </div>
-          {/* issue-local-016: Compact/Detailed density toggle — independent
-              of the Classic/Modern card-color toggle above. Compact hides
-              the per-stage ProcessArrow rail; the per-run chip row (when a
-              package has multiple runs) shows in both modes. */}
+          {/* issue-local-016/017: Compact/Detailed/Table density toggle —
+              independent of the Classic/Modern card-color toggle above.
+              Compact hides the per-stage ProcessArrow rail; Table replaces
+              the card list with each package's all-runs table (the same
+              RunsStatusTable HuntDetail uses); the per-run chip row (when a
+              package has multiple runs) shows in both card modes. */}
           <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
             <button
               className={clsx(
@@ -635,6 +639,18 @@ export default function ThreatHunting() {
             >
               Compact
             </button>
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'table'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('table')}
+              title="Table view"
+            >
+              Table
+            </button>
           </div>
           {isResearcher && (
             <button className="btn-primary flex items-center gap-2" onClick={() => setShowWizard(true)}>
@@ -656,6 +672,31 @@ export default function ThreatHunting() {
               Create your first Hunt Package
             </button>
           )}
+        </div>
+      ) : density === 'table' ? (
+        <div className="space-y-5">
+          {packages.map((pkg: THuntPackage) => (
+            <div key={pkg.id} className="space-y-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedId(pkg.id)}
+                className="flex items-center gap-2 text-left group"
+              >
+                <p className="text-sm font-semibold text-gray-100 group-hover:text-brand-400 transition-colors">
+                  {pkg.name}
+                </p>
+                <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+                  {pkg.status}
+                </span>
+                <span className="text-[10px] text-gray-600">{pkg.run_count ?? 0} run{pkg.run_count === 1 ? '' : 's'}</span>
+              </button>
+              {pkg.runs && pkg.runs.length > 0 ? (
+                <RunsStatusTable pkgId={pkg.id} runs={pkg.runs} />
+              ) : (
+                <p className="text-[10px] text-gray-600 italic px-1">No runs yet.</p>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-2">
