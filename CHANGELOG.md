@@ -39,11 +39,14 @@ infrastructure existed before this (single hardcoded dark palette) — built fro
   component-file changes. Severity badges and other status colors (red/green/orange) stay on
   Tailwind's stock palettes, untouched, so error/success meaning stays constant across themes.
   Classic's values are the literal pre-existing colors — visually unchanged.
-- Energy: solid neutral dark grey/black (every gray/brand stop is R=G=B — no warm/sepia tint).
-  Yellow is deliberately NOT a broad palette color — it appears only as a glow/shadow (never a
-  fill) on two specific components (primary buttons, active toggles), keeping the rest of the UI
-  monochrome. A muted brick-red decorative touch remains on the sidebar active item / card hover
-  — unrelated to yellow, not a semantic color; danger/error stays on stock red in both themes.
+- Energy: solid neutral dark grey/black surfaces (every `gray-*` stop is R=G=B — no warm/sepia
+  tint) with a real solid yellow accent (`brand-*`) on buttons, active tab, toggles, and focus
+  rings — same role a theme's accent color normally plays, just yellow instead of blue. (An
+  earlier iteration tried a diffuse yellow box-shadow glow instead of a solid fill, to keep the
+  accent more contained — but the glow bled into the surrounding dark background and read as
+  sepia too, so it was dropped in favor of solid fills on discrete elements.) A muted brick-red
+  decorative touch remains on the sidebar active item / card hover — unrelated to yellow, not a
+  semantic color; danger/error stays on stock red in both themes.
 - `users.theme` (schema v5, nullable — NULL means "follow the instance default"), a new
   `GET/PUT /api/app/theme` (public GET, admin-gated PUT, mirrors the existing `app/title`
   pattern), and a new self-service `PUT /api/auth/me/theme` (any authenticated user, own account
