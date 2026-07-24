@@ -22,6 +22,7 @@ from backend.config.loader import (
     load_app_base_prefix,
     load_app_pagination_max,
     load_app_title,
+    load_default_theme,
     load_logo_path,
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
@@ -35,6 +36,7 @@ from backend.config.loader import (
     save_app_base_prefix,
     save_app_pagination_max,
     save_app_title,
+    save_default_theme,
     save_logo_path,
     save_th_llm_max_retries,
     save_th_llm_retry_backoff_seconds,
@@ -152,6 +154,43 @@ async def set_app_title(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"app_title": value.strip()}
+
+
+# ── Instance-wide default UI theme (issue-local-016) ─────────────────────────
+
+
+@router.get("/theme")
+async def get_default_theme() -> dict[str, str]:
+    """Return the instance-wide default theme.
+
+    Public — no auth required. The login screen (pre-authentication) needs
+    this to apply the configured theme before any user is known; see the
+    matching carve-out in backend/main.py's auth_enforcement middleware.
+    """
+    return {"theme": load_default_theme()}
+
+
+@router.put("/theme")
+async def set_default_theme(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the instance-wide default theme.
+
+    Body: {"theme": "classic" | "energy"}
+
+    A signed-in user with a personal theme override (see PUT /api/auth/me/theme)
+    is unaffected by this — it only changes what everyone else (and logged-out
+    visitors) sees. Takes effect immediately (no restart).
+    """
+    value = body.get("theme")
+    if not isinstance(value, str) or isinstance(value, bool):
+        raise HTTPException(status_code=400, detail="Body must contain 'theme' as a string")
+    try:
+        save_default_theme(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"theme": value}
 
 
 @router.get("/pagination-max")

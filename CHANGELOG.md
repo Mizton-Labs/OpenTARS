@@ -9,6 +9,69 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — User Management relocation, admin password reset hardening, per-user themes (issue-local-016)
+
+**User Management moved from Threat Intel to General Configuration.** It's an instance-wide
+administration concern, not Threat-Intel-specific — a tab-group relocation only, no behavior
+change (still admin-only, still the same component).
+
+**Global Field Defaults moved from General Configuration to Threat Intel.** It configures
+default field mappings for ingested Threat Intel data specifically, so it belongs alongside the
+other Threat-Intel-scoped settings (General TI Settings, feed sources) rather than under general
+platform settings — a tab-group relocation only, no behavior change.
+
+**Admin password reset now generates a random password and forces a change on next login.**
+Previously the admin typed the new password directly. The admin no longer supplies one at
+all — the backend generates it (`secrets.token_urlsafe(18)`, the same pattern already used by
+`--reset-admin-password`), flags the account `must_change_password`, and returns the generated
+value once for the admin to hand off out-of-band (there's no email capability in this codebase).
+The forced-change enforcement itself needed no new code — the existing `must_change_password`
+middleware gate and forced-reset screen already covered it unconditionally. The reset UI requires
+an explicit "Generate new password" click (not auto-generated on open) and shows the value
+read-only with a copy-to-clipboard affordance and a one-time-only warning.
+
+**New per-user theme system: "Classic" (the existing look, now a named theme) and "Energy" (new)
+— an admin-configurable instance default, user-overridable from the Account page.** No theming
+infrastructure existed before this (single hardcoded dark palette) — built from scratch:
+- `gray`/`brand` Tailwind color scales now resolve through CSS custom properties, switched by a
+  `data-theme` attribute on `<html>`, so every existing component's `bg-gray-950`,
+  `border-brand-700`, `.tab-active`, `.toggle-on`, focus rings, etc. re-skins per theme with zero
+  component-file changes. Severity badges and other status colors (red/green/orange) stay on
+  Tailwind's stock palettes, untouched, so error/success meaning stays constant across themes.
+  Classic's values are the literal pre-existing colors — visually unchanged.
+- Energy: solid neutral dark grey/black surfaces (every `gray-*` stop is R=G=B — no warm/sepia
+  tint) with a real solid yellow accent (`brand-*`) on buttons, active tab, toggles, and focus
+  rings — same role a theme's accent color normally plays, just yellow instead of blue. (An
+  earlier iteration tried a diffuse yellow box-shadow glow instead of a solid fill, to keep the
+  accent more contained — but the glow bled into the surrounding dark background and read as
+  sepia too, so it was dropped in favor of solid fills on discrete elements.) A muted brick-red
+  decorative touch remains on the sidebar active item / card hover — unrelated to yellow, not a
+  semantic color; danger/error stays on stock red in both themes.
+- `users.theme` (schema v5, nullable — NULL means "follow the instance default"), a new
+  `GET/PUT /api/app/theme` (public GET, admin-gated PUT, mirrors the existing `app/title`
+  pattern), and a new self-service `PUT /api/auth/me/theme` (any authenticated user, own account
+  only). Selectable in General Configuration (instance default) and the Account page (personal
+  override, with a "use instance default" option to clear it).
+- Fixed a related pre-existing bug found while wiring this up: `GET /api/app/title` claimed
+  public (pre-login) access in its own docstring but had no matching middleware carve-out, so it
+  actually 401'd for unauthenticated visitors — the sidebar/tab-title just silently fell back to
+  the default, masking it. Fixed alongside the new `/api/app/theme` carve-out (same one-line
+  pattern, needed for the login screen to theme correctly pre-login).
+
+**About page now shows the build's git branch alongside its commit**, so the exact deployed
+version is always unambiguous (e.g. a feature-branch build vs. `main`). Follows the exact same
+build-time-injection pattern already used for the commit hash: the launcher (`mizton-threatbox`)
+now also captures `git rev-parse --abbrev-ref HEAD` and passes it as `GIT_BRANCH` to the frontend
+build, wired through Vite's `define` as `__GIT_BRANCH__`.
+
+**Tests:** schema v4→v5 migration and `set_theme`/`VALID_THEMES` coverage, admin-reset
+random-generation + forced-change + session-eviction + non-admin-403 coverage, self-service theme
+endpoint (including a non-admin-role regression test for the new `_SELF_PATHS` entry),
+`GET/PUT /api/app/theme` admin-gating + validation, a public-pre-login regression test for both
+`/api/app/theme` and `/api/app/title`, `ThemeProvider`/`useTheme` fallback/apply/optimistic-
+update/rollback coverage, and Configuration/Account UI coverage for the relocated tab and both new
+theme pickers.
+
 ### Added — Threat Hunting analysis/IOC data-integrity improvements (issue-local-015 Part 1)
 
 issue-local-015 spans five feature areas (progress stepper/run-scoping, per-run configuration

@@ -364,6 +364,11 @@ export interface AuthUser {
    * forced-password-reset screen.
    */
   idp?: string | null
+  /**
+   * Per-user theme override (issue-local-016). `null`/`undefined` means "use
+   * the instance default" (see `getDefaultTheme`/`setDefaultTheme`).
+   */
+  theme?: 'classic' | 'energy' | null
 }
 
 export interface CreateUserPayload {
@@ -427,6 +432,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ current_password, new_password }),
       }),
+    // issue-local-016: any authenticated user may set their own theme
+    // override. `theme: null` clears the override (falls back to the
+    // instance default set via setDefaultTheme).
+    setOwnTheme: (theme: 'classic' | 'energy' | null) =>
+      request<AuthUser>('/auth/me/theme', {
+        method: 'PUT',
+        body: JSON.stringify({ theme }),
+      }),
     // Admin: user management
     listUsers: () => request<AuthUser[]>('/auth/users'),
     createUser: (payload: CreateUserPayload) =>
@@ -441,11 +454,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ enabled }),
       }),
-    resetUserPassword: (id: number, new_password: string) =>
-      request<{ status: string }>(`/auth/users/${id}/password`, {
-        method: 'PUT',
-        body: JSON.stringify({ new_password }),
-      }),
+    // issue-local-016: admin no longer supplies the new password — the
+    // backend generates one and returns it once for the admin to hand off
+    // out-of-band; the target is forced to change it on next login.
+    resetUserPassword: (id: number) =>
+      request<{ status: string; username: string; generated_password: string }>(
+        `/auth/users/${id}/password`,
+        { method: 'PUT' },
+      ),
     deleteUser: (id: number) =>
       request<{ status: string; id: number }>(`/auth/users/${id}`, { method: 'DELETE' }),
     // SSO config (issue-local-010) — admin only
@@ -676,6 +692,15 @@ export const api = {
     request<{ app_title: string }>('/app/title', {
       method: 'PUT',
       body: JSON.stringify({ app_title: value }),
+    }),
+
+  // Application — instance-wide default UI theme (issue-local-016). Public
+  // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
+  getDefaultTheme: () => request<{ theme: string }>('/app/theme'),
+  setDefaultTheme: (theme: 'classic' | 'energy') =>
+    request<{ theme: string }>('/app/theme', {
+      method: 'PUT',
+      body: JSON.stringify({ theme }),
     }),
 
   // Application — branding logo (prompts-045)

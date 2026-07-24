@@ -134,7 +134,7 @@ export default function Sidebar() {
             'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
             collapsed && 'justify-center',
             isActive
-              ? 'bg-brand-600/20 text-brand-400'
+              ? 'bg-brand-600/20 text-brand-400 nav-item-active'
               : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800',
           )
         }

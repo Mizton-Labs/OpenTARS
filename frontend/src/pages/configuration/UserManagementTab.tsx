@@ -14,11 +14,10 @@
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, KeyRound, Plus, X } from 'lucide-react'
+import { Trash2, KeyRound, Plus, X, Copy, Check, AlertTriangle } from 'lucide-react'
 import { api, type AuthUser, type UserRole } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import Toggle from '../../components/Toggle'
-import ChangePasswordCard from '../../components/ChangePasswordCard'
 import { describePasswordPolicy, validatePassword } from '../../utils/passwordPolicy'
 
 const USERS_KEY = ['auth-users'] as const
@@ -317,7 +316,14 @@ function CreateUserForm({
   )
 }
 
-// ── Reset password ──────────────────────────────────────────────────────────
+// ── Reset password (issue-local-016) ────────────────────────────────────────
+//
+// The admin no longer types a new password — the backend generates one and
+// returns it once. Two-step: an explicit "Generate new password" click
+// (armed-confirmation pattern, matching delete above — a reset immediately
+// invalidates the account's password and evicts all sessions, so a stray
+// click on the row shouldn't trigger it), then a one-time read-only reveal
+// with a copy-to-clipboard affordance.
 
 function ResetPasswordModal({
   user,
@@ -326,6 +332,20 @@ function ResetPasswordModal({
   user: AuthUser
   onClose: () => void
 }) {
+  const qc = useQueryClient()
+  const [copied, setCopied] = useState(false)
+
+  const mutation = useMutation({
+    mutationFn: () => api.auth.resetUserPassword(user.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: USERS_KEY }) },
+  })
+
+  async function handleCopy() {
+    if (mutation.data === undefined) return
+    await navigator.clipboard.writeText(mutation.data.generated_password)
+    setCopied(true)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="card w-full max-w-sm space-y-4">
@@ -338,13 +358,58 @@ function ResetPasswordModal({
           </button>
         </div>
 
-        {/* Admin reset: no current-password field, no reuse constraint. The
-            shared card renders its own success/error feedback. */}
-        <ChangePasswordCard mode="admin" userId={user.id} />
-
-        <div className="flex justify-end">
-          <button className="btn-ghost text-xs" onClick={onClose}>Close</button>
-        </div>
+        {mutation.data === undefined ? (
+          <>
+            <p className="text-xs text-gray-400">
+              This generates a brand-new random password for this account and immediately signs
+              them out everywhere. They will be required to set their own password on next login.
+            </p>
+            {mutation.isError && (
+              <p role="alert" className="text-xs text-red-400">{errorMessage(mutation.error)}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost text-xs" onClick={onClose}>Cancel</button>
+              <button
+                className="btn-primary"
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate()}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                {mutation.isPending ? 'Generating…' : 'Generate new password'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 p-2.5 flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300">
+                Shown only once — copy it now and share it with{' '}
+                <span className="font-mono">{user.username}</span> through a secure channel. It
+                cannot be retrieved again, and they must set a new password on their next login.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                aria-label="Generated password"
+                className="input font-mono flex-1"
+                value={mutation.data.generated_password}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <button className="btn-secondary p-2" title="Copy to clipboard" onClick={handleCopy}>
+                {copied ? (
+                  <Check className="w-3.5 h-3.5 text-green-400" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <button className="btn-primary text-xs" onClick={onClose}>Done</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

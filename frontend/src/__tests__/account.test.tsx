@@ -15,7 +15,10 @@ vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
   return {
     ...actual,
-    api: { auth: { changePassword: vi.fn() } },
+    api: {
+      auth: { changePassword: vi.fn(), setOwnTheme: vi.fn() },
+      getDefaultTheme: vi.fn().mockResolvedValue({ theme: 'classic' }),
+    },
   }
 })
 
@@ -24,6 +27,7 @@ vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
 import { api } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import Account from '../pages/Account'
+import { ThemeProvider } from '../theme/ThemeProvider'
 
 const selfUser: AuthUser = { id: 7, username: 'reader', role: 'threat-viewer', enabled: true }
 
@@ -50,7 +54,9 @@ function renderAccount() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <Account />
+      <ThemeProvider>
+        <Account />
+      </ThemeProvider>
     </QueryClientProvider>,
   )
 }
@@ -92,5 +98,32 @@ describe('Account page', () => {
       expect(api.auth.changePassword).toHaveBeenCalledWith('Adminpass1', 'Newpass123')
     })
     expect(await screen.findByText('Password changed.')).toBeInTheDocument()
+  })
+})
+
+describe('Account page theme selector (issue-local-016)', () => {
+  it('shows Classic, Energy, and "use instance default" options', async () => {
+    renderAccount()
+    expect(await screen.findByText('Classic')).toBeInTheDocument()
+    expect(screen.getByText('Energy')).toBeInTheDocument()
+    expect(screen.getByText(/use instance default/i)).toBeInTheDocument()
+  })
+
+  it('defaults to "use instance default" as active when the user has no override', async () => {
+    renderAccount()
+    const defaultOption = (await screen.findByText(/use instance default/i)).closest('button')
+    expect(defaultOption).toHaveTextContent('Active')
+  })
+
+  it('selecting Energy calls setOwnTheme and marks it active', async () => {
+    vi.mocked(api.auth.setOwnTheme).mockResolvedValue({
+      id: 7, username: 'reader', role: 'threat-viewer', enabled: true, theme: 'energy',
+    })
+    renderAccount()
+    fireEvent.click(await screen.findByText('Energy'))
+
+    await waitFor(() => expect(api.auth.setOwnTheme).toHaveBeenCalledWith('energy'))
+    const energyButton = screen.getByText('Energy').closest('button')
+    await waitFor(() => expect(energyButton).toHaveTextContent('Active'))
   })
 })

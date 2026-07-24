@@ -65,12 +65,17 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 4
+_USERS_SCHEMA_VERSION = 5
 
 # Canonical role set (issue-local-002): expanded for the Threat Hunting module.
 # Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
 # 'feed-sender' respectively on first startup after this change.
 VALID_ROLES = frozenset({"admin", "threat-researcher", "threat-viewer", "feed-sender"})
+
+# issue-local-016: per-user UI theme override. NULL in the DB means "use the
+# instance-wide default" (backend/config/loader.load_default_theme) — see
+# users.theme column, added in the v4->v5 migration below.
+VALID_THEMES = frozenset({"classic", "energy"})
 
 
 CREATE_USERS_TABLE = """
@@ -165,6 +170,13 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
       - Add nullable ``external_id`` column (IdP subject claim for SSO accounts).
       - Ensure ``oidc_flows`` table exists (handled by CREATE_OIDC_FLOWS_TABLE in
         init_users_db; listed here for documentation completeness).
+
+    v4 -> v5 (issue-local-016): per-user theme override.
+      - Add nullable ``theme`` column. NULL means "use the instance-wide
+        default" (backend/config/loader.load_default_theme); a non-NULL value
+        (one of VALID_THEMES) is an explicit per-user override. Valid values
+        are enforced at the API layer, not via a SQL CHECK constraint — same
+        approach already used for ``role``/VALID_ROLES.
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -195,6 +207,9 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
     if "external_id" not in cols:
         logger.info("Migrating users schema v3->v4: adding external_id column")
         await db.execute("ALTER TABLE users ADD COLUMN external_id TEXT")
+    if "theme" not in cols:
+        logger.info("Migrating users schema v4->v5: adding theme column")
+        await db.execute("ALTER TABLE users ADD COLUMN theme TEXT")
 
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
@@ -212,11 +227,14 @@ def _user_row_to_dict(row: Any) -> dict[str, Any]:
         # issue-local-010: SSO columns (may be absent in old rows before migration)
         "idp": row[7] if len(row) > 7 else None,
         "external_id": row[8] if len(row) > 8 else None,
+        # issue-local-016: per-user theme override (may be absent in old rows)
+        "theme": row[9] if len(row) > 9 else None,
     }
 
 
 _USER_COLS = (
-    "id, username, password_hash, role, enabled, created_at, must_change_password, idp, external_id"
+    "id, username, password_hash, role, enabled, created_at, must_change_password, "
+    "idp, external_id, theme"
 )
 
 
@@ -379,6 +397,16 @@ async def set_role(user_id: int, role: str) -> bool:
         raise ValueError(f"invalid role: {role!r}")
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_theme(user_id: int, theme: str | None) -> bool:
+    """Set (or clear, via ``theme=None``) a user's personal theme override."""
+    if theme is not None and theme not in VALID_THEMES:
+        raise ValueError(f"invalid theme: {theme!r}")
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute("UPDATE users SET theme = ? WHERE id = ?", (theme, user_id))
         await db.commit()
         return cur.rowcount > 0
 

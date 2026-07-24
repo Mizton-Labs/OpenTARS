@@ -304,6 +304,33 @@ def save_app_title(value: str) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Instance-wide default UI theme (issue-local-016) ─────────────────────────
+
+_VALID_THEMES = {"classic", "energy"}
+
+
+def load_default_theme() -> str:
+    """Return the instance-wide default theme (falls back to 'classic').
+
+    This is what unauthenticated visitors (e.g. the login screen) see, and
+    what a signed-in user sees when they haven't set a personal override
+    (users.theme is NULL — see backend/auth/db.py).
+    """
+    raw = load_app_config().get("theme", "classic")
+    if raw not in _VALID_THEMES:
+        return "classic"
+    return raw
+
+
+def save_default_theme(value: str) -> None:
+    """Persist the instance-wide default theme to application.yaml."""
+    if value not in _VALID_THEMES:
+        raise ValueError(f"theme must be one of {sorted(_VALID_THEMES)}")
+    data = load_app_config()
+    data["theme"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Normalized viewer pagination cap (prompts-043) ───────────────────────────
 
 # Ceiling on rows the Normalized Feeds viewer pulls in a single request. The

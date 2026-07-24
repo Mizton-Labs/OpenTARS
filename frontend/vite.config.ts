@@ -36,6 +36,10 @@ export default defineConfig({
   define: {
     // Injected at build time — populated by the runner script via env var
     __GIT_COMMIT__: JSON.stringify(process.env.GIT_COMMIT || 'dev'),
+    // issue-local-016: which branch the build was made from, so the About
+    // page always shows the explicit version (commit) AND its branch —
+    // same env-var-at-build-time pattern as __GIT_COMMIT__.
+    __GIT_BRANCH__: JSON.stringify(process.env.GIT_BRANCH || 'unknown'),
     __APP_VERSION__: JSON.stringify('0.1.0'),
   },
   test: {

@@ -1,20 +1,17 @@
 /**
- * Shared change-password form (prompts-046).
+ * Self change-password form (prompts-046).
  *
- * Unifies the two password-change flows that previously lived in AccountTab and
- * the User Management reset modal:
+ * The signed-in user changing their OWN password. Requires the current
+ * password, and enforces new != current client-side (the backend enforces it
+ * authoritatively). Calls api.auth.changePassword. Enforces the active
+ * password policy (length + character classes) via validatePassword, fetched
+ * from the auth context (GET /api/auth/status).
  *
- *   mode="self"  — the signed-in user changing their OWN password. Requires the
- *                  current password, and enforces new != current client-side
- *                  (the backend enforces it authoritatively). Calls
- *                  api.auth.changePassword.
- *   mode="admin" — an admin resetting ANOTHER user's password (or their own row
- *                  in User Management). No current-password field, no reuse
- *                  constraint. Calls api.auth.resetUserPassword(userId, …).
- *
- * Both modes require a confirmation field and enforce the active password policy
- * (length + character classes) via validatePassword. The policy comes from the
- * auth context (fetched from GET /api/auth/status).
+ * issue-local-016: the admin-reset flow used to be a second mode of this same
+ * component (mode="admin", no current-password field, admin typed the new
+ * password) — that flow no longer collects admin input at all (the backend
+ * generates a random password), so it's a distinct one-time-reveal UI now,
+ * not a variant of this form. See UserManagementTab's AdminResetPasswordPanel.
  */
 import { useState, type FormEvent } from 'react'
 import { useMutation } from '@tanstack/react-query'
@@ -23,18 +20,13 @@ import { useAuth } from '../auth/useAuth'
 import { describePasswordPolicy, validatePassword } from '../utils/passwordPolicy'
 
 interface ChangePasswordCardProps {
-  mode: 'self' | 'admin'
-  /** Target user id — required when mode === 'admin'. */
-  userId?: number
-  /** Optional label shown above the form (e.g. the target username). */
+  /** Optional label shown above the form. */
   heading?: string
   /** Called after a successful change. */
   onSuccess?: () => void
 }
 
 export default function ChangePasswordCard({
-  mode,
-  userId,
   heading,
   onSuccess,
 }: ChangePasswordCardProps) {
@@ -45,15 +37,7 @@ export default function ChangePasswordCard({
   const [done, setDone] = useState(false)
 
   const mutation = useMutation({
-    mutationFn: () => {
-      if (mode === 'admin') {
-        if (userId === undefined) {
-          return Promise.reject(new Error('Missing target user'))
-        }
-        return api.auth.resetUserPassword(userId, next)
-      }
-      return api.auth.changePassword(current, next)
-    },
+    mutationFn: () => api.auth.changePassword(current, next),
     onSuccess: () => {
       setDone(true)
       setCurrent('')
@@ -68,19 +52,14 @@ export default function ChangePasswordCard({
   let clientError: string | null = policyError
   if (clientError === null && confirm !== '' && next !== confirm) {
     clientError = 'New password and confirmation do not match.'
-  } else if (
-    clientError === null &&
-    mode === 'self' &&
-    next !== '' &&
-    next === current
-  ) {
+  } else if (clientError === null && next !== '' && next === current) {
     clientError = 'New password must differ from the current password.'
   }
 
   const canSubmit =
     next !== '' &&
     confirm !== '' &&
-    (mode === 'admin' || current !== '') &&
+    current !== '' &&
     clientError === null &&
     !mutation.isPending
 
@@ -102,24 +81,22 @@ export default function ChangePasswordCard({
         <p className="text-sm font-medium text-gray-300">{heading}</p>
       )}
 
-      {mode === 'self' && (
-        <div>
-          <label htmlFor="current-password" className="label">
-            Current password
-          </label>
-          <input
-            id="current-password"
-            type="password"
-            autoComplete="current-password"
-            className="input"
-            value={current}
-            onChange={(e) => {
-              setCurrent(e.target.value)
-              resetFeedback()
-            }}
-          />
-        </div>
-      )}
+      <div>
+        <label htmlFor="current-password" className="label">
+          Current password
+        </label>
+        <input
+          id="current-password"
+          type="password"
+          autoComplete="current-password"
+          className="input"
+          value={current}
+          onChange={(e) => {
+            setCurrent(e.target.value)
+            resetFeedback()
+          }}
+        />
+      </div>
 
       <div>
         <label htmlFor="new-password" className="label">
@@ -170,11 +147,7 @@ export default function ChangePasswordCard({
 
       <div className="flex justify-end">
         <button type="submit" className="btn-primary text-xs" disabled={!canSubmit}>
-          {mutation.isPending
-            ? 'Saving…'
-            : mode === 'admin'
-              ? 'Reset password'
-              : 'Change password'}
+          {mutation.isPending ? 'Saving…' : 'Change password'}
         </button>
       </div>
     </form>

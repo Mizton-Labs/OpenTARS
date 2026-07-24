@@ -409,9 +409,10 @@ sys.exit(asyncio.run(_main()))
         log "Building frontend..."
         log "Installing/syncing frontend dependencies..."
         npm --prefix "${FRONTEND_DIR}" install
-        local git_commit
+        local git_commit git_branch
         git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-        GIT_COMMIT="${git_commit}" npm --prefix "${FRONTEND_DIR}" run build
+        git_branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+        GIT_COMMIT="${git_commit}" GIT_BRANCH="${git_branch}" npm --prefix "${FRONTEND_DIR}" run build
 
         log ""
         log "Mizton-ThreatBox is running (dev — foreground)."
@@ -456,9 +457,10 @@ sys.exit(asyncio.run(_main()))
     log "Building frontend..."
     log "Installing/syncing frontend dependencies..."
     npm --prefix "${FRONTEND_DIR}" install
-    local git_commit
+    local git_commit git_branch
     git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-    GIT_COMMIT="${git_commit}" npm --prefix "${FRONTEND_DIR}" run build
+    git_branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+    GIT_COMMIT="${git_commit}" GIT_BRANCH="${git_branch}" npm --prefix "${FRONTEND_DIR}" run build
     log "Frontend served by backend static files → http://${bind_addr}:${BACKEND_PORT}${cli_base_prefix}"
     log "  (Re-run with --dev to stream logs to terminal)"
 

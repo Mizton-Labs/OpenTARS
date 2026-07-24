@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { Rss, GitCommit, Tag, Activity, Users, Github, Scale } from 'lucide-react'
+import { Rss, GitCommit, GitBranch, Tag, Activity, Users, Github, Scale } from 'lucide-react'
 
 declare const __APP_VERSION__: string
 declare const __GIT_COMMIT__: string
+declare const __GIT_BRANCH__: string
 
 export default function About() {
   const { data: health } = useQuery({
@@ -45,6 +46,17 @@ export default function About() {
             <dt className="text-sm text-gray-400 w-32">Git Commit</dt>
             <dd className="text-sm font-mono text-gray-200 truncate" title={__GIT_COMMIT__}>
               {__GIT_COMMIT__ === 'dev' ? 'dev (not built from git)' : __GIT_COMMIT__.slice(0, 12)}
+            </dd>
+          </div>
+
+          {/* issue-local-016: explicit build branch alongside the commit, so
+              the exact version deployed is always unambiguous (e.g. a feature
+              branch build vs. main). */}
+          <div className="flex items-center gap-3">
+            <GitBranch className="w-4 h-4 text-brand-400 shrink-0" />
+            <dt className="text-sm text-gray-400 w-32">Git Branch</dt>
+            <dd className="text-sm font-mono text-gray-200 truncate" title={__GIT_BRANCH__}>
+              {__GIT_BRANCH__}
             </dd>
           </div>
 

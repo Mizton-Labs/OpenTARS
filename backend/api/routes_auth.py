@@ -18,10 +18,12 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/password
   DELETE /api/auth/users/{user_id}
 """
+
 from __future__ import annotations
 
 import logging
 import re
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -80,6 +82,11 @@ class ChangePasswordBody(BaseModel):
     new_password: str
 
 
+class ThemeBody(BaseModel):
+    # None clears a personal override — falls back to the instance default.
+    theme: str | None = None
+
+
 class CreateUserBody(BaseModel):
     username: str
     password: str
@@ -92,10 +99,6 @@ class RoleBody(BaseModel):
 
 class EnabledBody(BaseModel):
     enabled: bool
-
-
-class AdminPasswordBody(BaseModel):
-    new_password: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -119,6 +122,7 @@ def _client_ip(request: Request) -> str:
 def _safe_error_param(error: str) -> str:
     """Return a URL-safe error code (strip any attacker-supplied content)."""
     import re as _re
+
     return _re.sub(r"[^A-Za-z0-9_-]", "_", str(error))[:40]
 
 
@@ -165,6 +169,9 @@ def _public_user(user: dict) -> dict:
         # issue-local-013: expose idp so the SPA can exempt SSO users from the
         # forced-password-reset screen without an extra round trip.
         "idp": user.get("idp") or None,
+        # issue-local-016: personal theme override, or None to use the
+        # instance-wide default (GET /api/app/theme).
+        "theme": user.get("theme") or None,
     }
 
 
@@ -372,6 +379,20 @@ async def change_own_password(
     return {"status": "password_changed"}
 
 
+@router.put("/me/theme")
+async def set_own_theme(body: ThemeBody, user: dict = Depends(get_current_user)) -> dict:
+    """Set (or clear) the caller's personal theme override (issue-local-016).
+
+    `theme: null` clears the override — the caller then follows the
+    instance-wide default (GET /api/app/theme). Any authenticated user may
+    call this regardless of role — see backend/main.py's _SELF_PATHS.
+    """
+    if body.theme is not None and body.theme not in db.VALID_THEMES:
+        raise HTTPException(status_code=400, detail="theme must be 'classic', 'energy', or null")
+    await db.set_theme(user["id"], body.theme)
+    return _public_user(await db.get_user_by_id(user["id"]))
+
+
 # ── Admin: user management ────────────────────────────────────────────────────
 
 
@@ -429,15 +450,28 @@ async def set_user_enabled(
 
 
 @router.put("/users/{user_id}/password")
-async def admin_reset_password(
-    user_id: int, body: AdminPasswordBody, admin: dict = Depends(require_admin)
-) -> dict:
-    await _require_user(user_id)
-    _validate_password(body.new_password)
-    # Admin reset evicts ALL of the target's sessions (keep_token_hash=None),
-    # so resetting a compromised account immediately logs the attacker out.
-    await db.set_password(user_id, hash_password(body.new_password))
-    return {"status": "password_reset"}
+async def admin_reset_password(user_id: int, admin: dict = Depends(require_admin)) -> dict:
+    """Reset a user's password to a fresh random value (issue-local-016).
+
+    The admin no longer chooses the new password — it's generated server-side
+    (same `secrets.token_urlsafe(18)` pattern as `service.reset_admin_password`)
+    and returned once in this response so the admin can hand it to the user
+    out-of-band; it is never stored or logged. The target is flagged
+    `must_change_password=True`, so they're forced through the existing
+    forced-password-change flow on next login (backend/main.py's
+    `auth_enforcement` middleware + ProtectedLayout's forced-reset screen
+    already enforce this unconditionally — no other code needed). Admin reset
+    also evicts ALL of the target's sessions (keep_token_hash=None), so
+    resetting a compromised account immediately logs the attacker out.
+    """
+    target = await _require_user(user_id)
+    new_password = secrets.token_urlsafe(18)
+    await db.set_password(user_id, hash_password(new_password), must_change_password=True)
+    return {
+        "status": "password_reset",
+        "username": target["username"],
+        "generated_password": new_password,
+    }
 
 
 @router.delete("/users/{user_id}")

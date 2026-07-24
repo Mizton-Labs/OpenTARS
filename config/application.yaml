@@ -129,6 +129,12 @@
 #                  default "Mizton-ThreatBox". Maximum 80 characters. No newlines.
 #                  The About page always shows the static "Mizton-ThreatBox"
 #                  product name regardless of this value — it is branding-only.
+# theme:           the default UI theme served to users who have not chosen a
+#                  personal override in their Account page (issue-local-016).
+#                  One of: "classic" (default), "energy". Users can override
+#                  this per-account; this value only sets the instance-wide
+#                  default and what unauthenticated visitors see on the login
+#                  screen. Takes effect immediately (no restart).
 app_title: ""
 app_base_prefix: ""
 max_decompressed_bytes: 104857600
@@ -137,3 +143,4 @@ logo_path: ""
 cookie_secure: auto
 password_min_length: 8
 password_required_classes: 3
+theme: classic
