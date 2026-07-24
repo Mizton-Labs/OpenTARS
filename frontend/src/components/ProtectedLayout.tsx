@@ -53,7 +53,7 @@ export default function ProtectedLayout() {
               to continue.
             </p>
           </div>
-          <ChangePasswordCard mode="self" onSuccess={() => void refresh()} />
+          <ChangePasswordCard onSuccess={() => void refresh()} />
           <div className="flex justify-end border-t border-gray-800 pt-3">
             <button
               type="button"

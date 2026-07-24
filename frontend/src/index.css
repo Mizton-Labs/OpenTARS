@@ -3,6 +3,69 @@
 @tailwind utilities;
 
 @layer base {
+  /* issue-local-016: theming — CSS custom properties consumed by the
+   * `gray`/`brand` Tailwind color scales (see tailwind.config.js). Switched
+   * by `data-theme` on <html>, set by ThemeProvider (frontend/src/theme/).
+   * The bare `:root` block is the fallback BEFORE JS sets the attribute
+   * (first paint) and MUST equal Classic — Classic's rendered output is
+   * byte-identical to the pre-theming app (values are the literal previous
+   * Tailwind defaults / brand hex, just converted to "R G B" triples).
+   */
+  :root,
+  :root[data-theme='classic'] {
+    --color-gray-50:  249 250 251;
+    --color-gray-100: 243 244 246;
+    --color-gray-200: 229 231 235;
+    --color-gray-300: 209 213 219;
+    --color-gray-400: 156 163 175;
+    --color-gray-500: 107 114 128;
+    --color-gray-600: 75 85 99;
+    --color-gray-700: 55 65 81;
+    --color-gray-800: 31 41 55;
+    --color-gray-900: 17 24 39;
+    --color-gray-950: 3 7 18;
+
+    --color-brand-50:  240 244 255;
+    --color-brand-100: 221 230 255;
+    --color-brand-200: 184 205 255;
+    --color-brand-300: 135 170 255;
+    --color-brand-400: 84 128 250;
+    --color-brand-500: 47 88 240;
+    --color-brand-600: 28 61 230;
+    --color-brand-700: 24 45 209;
+    --color-brand-800: 25 39 170;
+    --color-brand-900: 26 39 134;
+  }
+
+  /* Energy — warm near-black/charcoal base, amber-gold accent, muted
+   * brick-red as a secondary decorative touch only (applied in specific
+   * components, e.g. sidebar active item / card hover — not a color token
+   * here, since danger/error stays on Tailwind's stock red everywhere). */
+  :root[data-theme='energy'] {
+    --color-gray-50:  250 249 247;
+    --color-gray-100: 240 238 234;
+    --color-gray-200: 221 217 211;
+    --color-gray-300: 184 178 170;
+    --color-gray-400: 143 137 131;
+    --color-gray-500: 107 102 95;
+    --color-gray-600: 77 73 67;
+    --color-gray-700: 58 54 50;
+    --color-gray-800: 36 34 32;
+    --color-gray-900: 22 21 18;
+    --color-gray-950: 10 10 10;
+
+    --color-brand-50:  255 253 240;
+    --color-brand-100: 254 252 232;
+    --color-brand-200: 254 249 195;
+    --color-brand-300: 254 240 138;
+    --color-brand-400: 253 224 71;
+    --color-brand-500: 250 204 21;
+    --color-brand-600: 234 179 8;
+    --color-brand-700: 161 98 7;
+    --color-brand-800: 133 77 14;
+    --color-brand-900: 113 63 18;
+  }
+
   :root {
     --sidebar-width: 220px;
   }
@@ -108,4 +171,24 @@
   .toggle-knob {
     @apply pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-md transform transition duration-200 ease-in-out;
   }
+}
+
+/* issue-local-016 — Energy theme's "some red": a muted decorative touch on
+ * the active sidebar item and card hover, NOT a semantic color (danger/error
+ * stays on Tailwind's stock red-* everywhere, in both themes). No-op in
+ * Classic (and the pre-theme-resolved default), so this cannot change
+ * Classic's rendered output. `.nav-item-active`/`.card` are plain, always-
+ * present class hooks — no component needs to know which theme is active. */
+.nav-item-active {
+  box-shadow: none;
+  transition: box-shadow 150ms ease-in-out;
+}
+.card {
+  transition: box-shadow 150ms ease-in-out;
+}
+:root[data-theme='energy'] .nav-item-active {
+  box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.4);
+}
+:root[data-theme='energy'] .card:hover {
+  box-shadow: 0 0 0 1px rgba(127, 29, 29, 0.35);
 }

@@ -199,6 +199,9 @@ _SELF_PATHS = frozenset(
         "/api/auth/me",
         "/api/auth/logout",
         "/api/auth/password",
+        # issue-local-016: any authenticated user (not just admins, who
+        # already bypass role-gating entirely below) may set their own theme.
+        "/api/auth/me/theme",
     }
 )
 
@@ -314,6 +317,16 @@ async def auth_enforcement(request, call_next):
     if path in _PUBLIC_API_PATHS:
         return await call_next(request)
     if method == "GET" and path == "/api/app/logo":
+        return await call_next(request)
+    # issue-local-016: the login screen (pre-authentication) must be able to
+    # apply the instance-wide theme, so GET /api/app/theme needs the same
+    # public carve-out as /api/app/logo above. While adding this, also fixed
+    # a pre-existing gap: GET /api/app/title's docstring already claimed
+    # "Public — no auth required" but had no matching carve-out here, so it
+    # actually 401'd for unauthenticated visitors — the sidebar/tab-title
+    # just silently fell back to the default, masking the bug. Both are
+    # branding-ish settings shown pre-login, so fixed together.
+    if method == "GET" and path in ("/api/app/theme", "/api/app/title"):
         return await call_next(request)
 
     # Require a valid session for everything else.

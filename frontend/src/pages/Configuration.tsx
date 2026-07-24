@@ -96,19 +96,21 @@ export default function Configuration() {
 
   // Build the tab list for the current group.
   // Auth-gated tabs:
-  //   - User Management is admin-only (prompts-045), lives in Threat Intel group.
+  //   - User Management is admin-only (prompts-045), lives in the General group
+  //     (issue-local-016 — moved out of Threat Intel, it's an instance-wide
+  //     administration concern, not TI-specific).
   // Self-service account management moved to its own top-level Account page
   // (prompts-046), so there is no longer an Account tab here.
-  const threatIntelTabs: { id: Tab; label: string }[] = [
-    ...THREAT_INTEL_BASE_TABS,
+  const generalTabs: { id: Tab; label: string }[] = [
+    ...GENERAL_TABS,
     ...(authEnabled && isAdmin
       ? [{ id: 'user-management' as Tab, label: 'User Management' }]
       : []),
   ]
 
   const tabsForGroup: Record<Group, { id: Tab; label: string }[]> = {
-    'general':        GENERAL_TABS,
-    'threat-intel':   threatIntelTabs,
+    'general':        generalTabs,
+    'threat-intel':   THREAT_INTEL_BASE_TABS,
     'threat-hunting': THREAT_HUNTING_TABS,
   }
 
@@ -316,6 +318,85 @@ function AppTitleSetting() {
   )
 }
 
+// issue-local-016: swatch colors are hardcoded hex (not Tailwind classes) so
+// each option always shows its OWN theme's real colors regardless of which
+// theme is currently active on the page rendering this picker.
+const THEME_SWATCHES: Record<'classic' | 'energy', { label: string; colors: string[] }> = {
+  classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
+  energy: { label: 'Energy', colors: ['#0a0a0a', '#161512', '#eab308', '#7f1d1d'] },
+}
+
+function ThemeSetting() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['app-default-theme'],
+    queryFn: api.getDefaultTheme,
+  })
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: (theme: 'classic' | 'energy') => api.setDefaultTheme(theme),
+    onSuccess: () => {
+      setSaved(true)
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['app-default-theme'] })
+    },
+    onError: (err: unknown) => {
+      setSaved(false)
+      setError(err instanceof Error ? err.message : String(err))
+    },
+  })
+
+  const current = data?.theme === 'energy' ? 'energy' : 'classic'
+
+  return (
+    <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
+      <div>
+        <p className="text-sm text-gray-300">Default Theme</p>
+        <p className="text-xs text-gray-500">
+          Shown to signed-out visitors and to signed-in users who haven&apos;t chosen a personal
+          theme in their Account page. Takes effect immediately (no restart).
+        </p>
+      </div>
+      <div className="flex gap-2">
+        {(Object.entries(THEME_SWATCHES) as ['classic' | 'energy', { label: string; colors: string[] }][]).map(
+          ([id, { label, colors }]) => (
+            <button
+              key={id}
+              type="button"
+              className={clsx(
+                'flex-1 rounded-lg border px-3 py-2 text-left transition-colors',
+                current === id
+                  ? 'border-brand-500 bg-brand-900/10'
+                  : 'border-gray-700 hover:border-gray-600',
+              )}
+              disabled={mutation.isPending}
+              onClick={() => {
+                setSaved(false)
+                setError(null)
+                mutation.mutate(id)
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-200">{label}</span>
+                {current === id && <span className="text-[10px] text-brand-400">Active</span>}
+              </div>
+              <div className="flex gap-1 mt-1.5">
+                {colors.map((c, i) => (
+                  <span key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c }} />
+                ))}
+              </div>
+            </button>
+          ),
+        )}
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {saved && !error && <p className="text-xs text-green-400">Saved.</p>}
+    </div>
+  )
+}
+
 // ── Application Tab ───────────────────────────────────────────────────────────
 
 function ApplicationTab() {
@@ -363,6 +444,8 @@ function ApplicationTab() {
       </div>
 
       <AppTitleSetting />
+
+      <ThemeSetting />
 
       <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
         <div>
