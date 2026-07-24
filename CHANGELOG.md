@@ -9,6 +9,29 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — IOC apply placement, run header dedup, graph focus/colors, Ocean re-hue (issue-local-018 follow-up)
+
+**"Apply changes" for staged IOC verdicts moved next to the filter it affects** — instead of a
+page-wide banner detached from context, it now sits directly beside the All/Sanitized/Removed
+filter (Analysis tab) and the IOC counts row (IOCs tab), with a visible amber staged-count + Apply
+button and a brief green "Applied" confirmation after saving.
+
+**Removed the duplicated "currently viewing" run info** in HuntDetail — the standalone "Viewing
+`TH01` / `TH01-X01`" indicator card is gone; the active run's RunID now appears alongside the
+HuntID directly in the main title (next to the back arrow and re-run button) instead of being
+shown twice.
+
+**The workflow graph now focuses on where an analysis starts**: on mount, both the ReactFlow and
+Mermaid visualizers center tightly on the Evidence nodes + the root `intake_classifier` node,
+instead of fitting the entire ~1800px-tall pipeline (which zoomed out so far the starting point was
+barely visible). Evidence nodes' "ok" state also no longer reuses the exact green Agent nodes use
+for "completed" — it's now a distinct teal, consistent with Evidence's other states, so a completed
+Evidence node never reads as a completed Agent node at a glance.
+
+**Ocean theme re-hued** — previously a darkened copy of Classic's indigo-blue accent, it now uses a
+cyan/sky-blue accent with a teal-tinted gray ramp, so it reads as a genuinely different blue tone
+rather than just a dimmer Classic.
+
 ### Added — HuntID emphasis, run indicator, pagination, IOC approval gate, Ocean theme (issue-local-018 follow-up)
 
 **HuntID now renders as an emphasized badge** (bordered, brand-accented) everywhere it appears —
