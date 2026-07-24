@@ -98,7 +98,7 @@ export default function HuntPackageWizard({
         </div>
 
         {/* Step indicator */}
-        <div className="flex gap-1 px-5 py-3 border-b border-gray-800 text-xs">
+        <div className="flex gap-1 px-5 py-3 border-b border-gray-800 text-sm">
           {(['identity', 'evidence', 'review'] as Step[]).map((s, i) => (
             <span key={s} className={clsx('flex items-center gap-1', step === s ? 'text-brand-400 font-semibold' : 'text-gray-600')}>
               {i > 0 && <span className="text-gray-700 mx-1">›</span>}
@@ -110,7 +110,7 @@ export default function HuntPackageWizard({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {error && (
-            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-900/20 border border-red-800/40 rounded p-2">
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-900/20 border border-red-800/40 rounded p-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
               {error}
             </div>
@@ -150,11 +150,11 @@ export default function HuntPackageWizard({
               {addedItems.length > 0 && (
                 <div className="space-y-1.5">
                   {addedItems.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 text-xs text-gray-300 bg-gray-800/60 rounded px-3 py-2">
+                    <div key={item.id} className="flex items-center gap-2 text-sm text-gray-300 bg-gray-800/60 rounded px-3 py-2">
                       <CheckCircle className="w-3.5 h-3.5 text-green-400 shrink-0" />
                       <span className="truncate flex-1">{item.label || item.source_ref}</span>
                       <span className="text-gray-600">{item.item_type}</span>
-                      <span className={clsx('text-[10px]', item.parse_status === 'ok' ? 'text-green-500' : 'text-amber-400')}>
+                      <span className={clsx('text-[11px]', item.parse_status === 'ok' ? 'text-green-500' : 'text-amber-400')}>
                         {item.parse_status}
                       </span>
                     </div>
@@ -165,7 +165,7 @@ export default function HuntPackageWizard({
               {/* Add item type selector */}
               {!addMode && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-2">Add hunt package item:</p>
+                  <p className="text-sm text-gray-500 mb-2">Add hunt package item:</p>
                   <div className="grid grid-cols-2 gap-2">
                     {([
                       { kind: 'file', icon: FileUp, label: 'File', desc: 'PDF, DOCX, TXT, CSV, JSON…' },
@@ -181,7 +181,7 @@ export default function HuntPackageWizard({
                         <Icon className="w-4 h-4 text-brand-400 mt-0.5 shrink-0" />
                         <div>
                           <p className="text-sm font-medium text-gray-200">{label}</p>
-                          <p className="text-[10px] text-gray-500">{desc}</p>
+                          <p className="text-[11px] text-gray-500">{desc}</p>
                         </div>
                       </button>
                     ))}
@@ -233,10 +233,10 @@ export default function HuntPackageWizard({
             <div className="space-y-3">
               <div className="card space-y-2">
                 <p className="text-sm font-semibold text-gray-200">{name}</p>
-                {description && <p className="text-xs text-gray-500">{description}</p>}
-                <p className="text-xs text-gray-400">{addedItems.length} evidence item{addedItems.length !== 1 ? 's' : ''} added</p>
+                {description && <p className="text-sm text-gray-500">{description}</p>}
+                <p className="text-sm text-gray-400">{addedItems.length} evidence item{addedItems.length !== 1 ? 's' : ''} added</p>
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-sm text-gray-500">
                 The hunt package has been created. You can add more evidence and start the LLM analysis from the package detail page.
               </p>
             </div>
@@ -315,7 +315,7 @@ function AddFileForm({
       {files.length > 0 && (
         <div className="space-y-1">
           {files.map((f, i) => (
-            <div key={i} className="flex items-center justify-between text-xs text-gray-400">
+            <div key={i} className="flex items-center justify-between text-sm text-gray-400">
               <span className="truncate flex-1">{f.name}</span>
               <span className="text-gray-600 ml-2 shrink-0">{formatSize(f.size)}</span>
             </div>
@@ -331,7 +331,7 @@ function AddFileForm({
               style={{ width: `${uploadProgress.pct}%` }}
             />
           </div>
-          <p className="text-[10px] text-gray-500">
+          <p className="text-[11px] text-gray-500">
             Uploading… {uploadProgress.pct}%
             {uploadProgress.total > 0 && (
               <span className="ml-1 opacity-60">
@@ -342,7 +342,7 @@ function AddFileForm({
         </div>
       )}
       <div>
-        <label className="label text-xs">Parser</label>
+        <label className="label text-sm">Parser</label>
         <select
           className="input text-sm"
           value={parserMode}
@@ -354,8 +354,8 @@ function AddFileForm({
         </select>
       </div>
       <div className="flex gap-2 justify-end">
-        <button className="btn-ghost text-xs" onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="btn-primary text-xs" disabled={files.length === 0 || busy} onClick={onAdd}>
+        <button className="btn-ghost text-sm" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn-primary text-sm" disabled={files.length === 0 || busy} onClick={onAdd}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : `Add${files.length > 1 ? ` ${files.length} files` : ''}`}
         </button>
       </div>
@@ -378,16 +378,16 @@ function AddUrlForm({
     <div className="border border-gray-700 rounded-lg p-4 space-y-3">
       <p className="text-sm font-medium text-gray-300">Add URL</p>
       <div>
-        <label className="label text-xs">URL *</label>
+        <label className="label text-sm">URL *</label>
         <input className="input w-full font-mono text-sm" type="url" placeholder="https://..." value={url} onChange={(e) => { setUrl(e.target.value); onSubmit(e.target.value, label) }} />
       </div>
       <div>
-        <label className="label text-xs">Label</label>
+        <label className="label text-sm">Label</label>
         <input className="input w-full text-sm" placeholder="Optional display name" value={label} onChange={(e) => { setLabel(e.target.value); onSubmit(url, e.target.value) }} />
       </div>
       <div className="flex gap-2 justify-end">
-        <button className="btn-ghost text-xs" onClick={onCancel}>Cancel</button>
-        <button className="btn-primary text-xs" disabled={!url.startsWith('http') || busy} onClick={onAdd}>
+        <button className="btn-ghost text-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary text-sm" disabled={!url.startsWith('http') || busy} onClick={onAdd}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Fetch & Add'}
         </button>
       </div>
@@ -410,16 +410,16 @@ function AddTextForm({
     <div className="border border-gray-700 rounded-lg p-4 space-y-3">
       <p className="text-sm font-medium text-gray-300">Add Manual Text</p>
       <div>
-        <label className="label text-xs">Label</label>
+        <label className="label text-sm">Label</label>
         <input className="input w-full text-sm" placeholder="Optional display name" value={label} onChange={(e) => { setLabel(e.target.value); onSubmit(text, e.target.value) }} />
       </div>
       <div>
-        <label className="label text-xs">Text *</label>
-        <textarea className="input w-full h-32 resize-none font-mono text-xs" placeholder="Paste threat intel, IOCs, notes..." value={text} onChange={(e) => { setText(e.target.value); onSubmit(e.target.value, label) }} />
+        <label className="label text-sm">Text *</label>
+        <textarea className="input w-full h-32 resize-none font-mono text-sm" placeholder="Paste threat intel, IOCs, notes..." value={text} onChange={(e) => { setText(e.target.value); onSubmit(e.target.value, label) }} />
       </div>
       <div className="flex gap-2 justify-end">
-        <button className="btn-ghost text-xs" onClick={onCancel}>Cancel</button>
-        <button className="btn-primary text-xs" disabled={!text.trim() || busy} onClick={onAdd}>
+        <button className="btn-ghost text-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary text-sm" disabled={!text.trim() || busy} onClick={onAdd}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
         </button>
       </div>
@@ -448,7 +448,7 @@ function AddWatcherForm({
     <div className="border border-gray-700 rounded-lg p-4 space-y-3">
       <p className="text-sm font-medium text-gray-300">Import from Watcher</p>
       <div>
-        <label className="label text-xs">Watcher *</label>
+        <label className="label text-sm">Watcher *</label>
         <select className="input w-full text-sm" value={watcherId} onChange={(e) => { setWatcherId(e.target.value); onSubmit(e.target.value, label) }}>
           <option value="">Select a watcher...</option>
           {watchers.map((w: { id: string; name: string }) => (
@@ -457,12 +457,12 @@ function AddWatcherForm({
         </select>
       </div>
       <div>
-        <label className="label text-xs">Label</label>
+        <label className="label text-sm">Label</label>
         <input className="input w-full text-sm" placeholder="Optional display name" value={label} onChange={(e) => { setLabel(e.target.value); onSubmit(watcherId, e.target.value) }} />
       </div>
       <div className="flex gap-2 justify-end">
-        <button className="btn-ghost text-xs" onClick={onCancel}>Cancel</button>
-        <button className="btn-primary text-xs" disabled={!watcherId || busy} onClick={onAdd}>
+        <button className="btn-ghost text-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary text-sm" disabled={!watcherId || busy} onClick={onAdd}>
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Import'}
         </button>
       </div>

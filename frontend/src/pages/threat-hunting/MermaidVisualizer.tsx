@@ -274,7 +274,7 @@ export default function MermaidVisualizer({
 
   if (error) {
     return (
-      <div className="rounded border border-red-800/30 bg-red-900/10 p-3 text-xs text-red-400">
+      <div className="rounded border border-red-800/30 bg-red-900/10 p-3 text-sm text-red-400">
         Mermaid render error: {error}
       </div>
     )

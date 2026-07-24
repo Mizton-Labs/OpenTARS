@@ -45,6 +45,7 @@ import {
   type THHypothesis,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
+import { asDisplayText } from './llmTextUtils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -188,15 +189,15 @@ function EvidenceSummarySection({ r }: { r: THFullReport }) {
     <div className="grid grid-cols-3 gap-3">
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{ev.total_items}</p>
-        <p className="text-[10px] text-gray-500 mt-0.5">Evidence Items</p>
+        <p className="text-[11px] text-gray-500 mt-0.5">Evidence Items</p>
       </div>
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{ev.ioc_count}</p>
-        <p className="text-[10px] text-gray-500 mt-0.5">IOCs Extracted</p>
+        <p className="text-[11px] text-gray-500 mt-0.5">IOCs Extracted</p>
       </div>
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{r.hypotheses.length}</p>
-        <p className="text-[10px] text-gray-500 mt-0.5">Hypotheses</p>
+        <p className="text-[11px] text-gray-500 mt-0.5">Hypotheses</p>
       </div>
     </div>
   )
@@ -207,12 +208,12 @@ function ThreatContextSection({ ctx }: { ctx: Record<string, unknown> }) {
   const actor = typeof ctx.threat_actor === 'string' ? ctx.threat_actor : ''
   const campaign = typeof ctx.campaign_name === 'string' ? ctx.campaign_name : ''
   const confidence = typeof ctx.confidence === 'string' ? ctx.confidence : ''
-  const observations = Array.isArray(ctx.key_observations) ? (ctx.key_observations as string[]) : []
+  const observations = Array.isArray(ctx.key_observations) ? (ctx.key_observations as unknown[]) : []
 
   return (
     <div className="space-y-3">
       {summary && <p className="text-sm text-gray-300 leading-relaxed">{summary}</p>}
-      <div className="grid grid-cols-2 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 text-sm">
         {actor && <div><span className="text-gray-500">Actor: </span><span className="text-gray-200">{actor}</span></div>}
         {campaign && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-200">{campaign}</span></div>}
         {confidence && (
@@ -228,8 +229,9 @@ function ThreatContextSection({ ctx }: { ctx: Record<string, unknown> }) {
       {observations.length > 0 && (
         <ul className="space-y-1">
           {observations.map((obs, i) => (
-            <li key={i} className="text-xs text-gray-400 flex gap-1.5">
-              <span className="text-brand-600">•</span>{obs}
+            <li key={i} className="text-sm text-gray-400 flex gap-1.5">
+              <span className="text-brand-600">•</span>
+              {asDisplayText(obs, ['observation', 'text', 'description', 'summary'])}
             </li>
           ))}
         </ul>
@@ -244,20 +246,20 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
       {hypotheses.map((h) => (
         <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1.5">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-brand-400">{h.id}</span>
-            <span className={clsx('text-[10px] px-1.5 py-0.5 rounded',
+            <span className="text-[11px] font-mono text-brand-400">{h.id}</span>
+            <span className={clsx('text-[11px] px-1.5 py-0.5 rounded',
               h.relevance === 'high' ? 'bg-red-900/30 text-red-400' :
               h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500'
             )}>{h.relevance}</span>
           </div>
           <p className="text-sm font-medium text-gray-200">{h.title}</p>
-          <p className="text-xs text-gray-400">{h.description}</p>
-          {h.justification && <p className="text-xs text-gray-600 italic">{h.justification}</p>}
+          <p className="text-sm text-gray-400">{h.description}</p>
+          {h.justification && <p className="text-sm text-gray-600 italic">{h.justification}</p>}
           {/* issue-008-2C-B: ioc_basis chips — matches Analysis tab */}
           {h.ioc_basis && h.ioc_basis.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-0.5">
               {h.ioc_basis.map((ioc) => (
-                <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
+                <span key={ioc} className="text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
                   {ioc}
                 </span>
               ))}
@@ -266,9 +268,11 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
           {/* issue-008-2C-B: suggested_actions — matches Analysis tab */}
           {h.suggested_actions && h.suggested_actions.length > 0 && (
             <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-0.5">
-              <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+              <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
               {h.suggested_actions.map((action, i) => (
-                <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
+                <p key={i} className="text-[11px] text-gray-400 font-mono leading-relaxed">
+                  {asDisplayText(action, ['action', 'text', 'description'])}
+                </p>
               ))}
             </div>
           )}
@@ -280,55 +284,56 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
 
 function RetrohuntSummarySection({ r }: { r: THFullReport }) {
   const dr = r.deep_retrohunt_summary
-  if (!dr) return <p className="text-xs text-gray-500 italic">No retrohunt performed.</p>
+  if (!dr) return <p className="text-sm text-gray-500 italic">No retrohunt performed.</p>
   const execEvents = r.execution_results.reduce((acc, ex) => acc + (ex.event_count || 0), 0)
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-gray-800/50 rounded-lg p-3">
           <p className="text-lg font-bold text-gray-100">{dr.total_iocs}</p>
-          <p className="text-[10px] text-gray-500">IOCs searched</p>
+          <p className="text-[11px] text-gray-500">IOCs searched</p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3">
           <p className="text-lg font-bold text-gray-100">{execEvents}</p>
-          <p className="text-[10px] text-gray-500">SIEM events matched</p>
+          <p className="text-[11px] text-gray-500">SIEM events matched</p>
         </div>
       </div>
       {dr.noisy_iocs > 0 && (
-        <p className="text-xs text-amber-400 flex items-center gap-1">
+        <p className="text-sm text-amber-400 flex items-center gap-1">
           <AlertTriangle className="w-3.5 h-3.5" />
           {dr.noisy_iocs} noisy IOC(s) excluded from queries
         </p>
       )}
-      <p className="text-[10px] text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
-      {dr.search_hint && <p className="text-xs text-gray-400">{dr.search_hint}</p>}
+      <p className="text-[11px] text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
+      {dr.search_hint && <p className="text-sm text-gray-400">{dr.search_hint}</p>}
     </div>
   )
 }
 
 function TTPSection({ r }: { r: THFullReport }) {
   const ttp = r.ttp_analysis
-  if (!ttp) return <p className="text-xs text-gray-500 italic">No TTP analysis available.</p>
+  if (!ttp) return <p className="text-sm text-gray-500 italic">No TTP analysis available.</p>
   return (
     <div className="space-y-3">
       {ttp.summary && <p className="text-sm text-gray-300">{ttp.summary}</p>}
       {(ttp.techniques || []).map((t) => (
         <div key={t.technique_id} className="border border-gray-700 rounded p-2.5 space-y-0.5">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-brand-400">{t.technique_id}</span>
-            <span className="text-[10px] text-gray-500">{t.tactic}</span>
+            <span className="text-[11px] font-mono text-brand-400">{t.technique_id}</span>
+            <span className="text-[11px] text-gray-500">{t.tactic}</span>
           </div>
-          <p className="text-xs font-medium text-gray-200">{t.technique_name}</p>
-          <p className="text-[10px] text-gray-500">{t.description}</p>
+          <p className="text-sm font-medium text-gray-200">{t.technique_name}</p>
+          <p className="text-[11px] text-gray-500">{t.description}</p>
         </div>
       ))}
       {(ttp.detection_opportunities || []).length > 0 && (
         <div>
-          <p className="text-xs font-medium text-gray-400 mb-1">Detection opportunities:</p>
+          <p className="text-sm font-medium text-gray-400 mb-1">Detection opportunities:</p>
           <ul className="space-y-0.5">
-            {(ttp.detection_opportunities as string[]).map((opp, i) => (
-              <li key={i} className="text-xs text-gray-500 flex gap-1.5">
-                <span className="text-brand-600">•</span>{opp}
+            {(ttp.detection_opportunities as unknown[]).map((opp, i) => (
+              <li key={i} className="text-sm text-gray-500 flex gap-1.5">
+                <span className="text-brand-600">•</span>
+                {asDisplayText(opp, ['description', 'text', 'detail'])}
               </li>
             ))}
           </ul>
@@ -339,21 +344,21 @@ function TTPSection({ r }: { r: THFullReport }) {
 }
 
 function ExecutionResultsSection({ results }: { results: THFullReport['execution_results'] }) {
-  if (!results.length) return <p className="text-xs text-gray-500 italic">No executions recorded.</p>
+  if (!results.length) return <p className="text-sm text-gray-500 italic">No executions recorded.</p>
   return (
     <div className="space-y-2">
       {results.map((ex, i) => (
         <div key={ex.id || i} className="border border-gray-700 rounded-lg p-3 space-y-1">
           <div className="flex items-center gap-2">
-            <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium',
+            <span className={clsx('text-[11px] px-1.5 py-0.5 rounded font-medium',
               ex.status === 'completed' ? 'bg-green-900/30 text-green-400' :
               ex.status === 'failed' ? 'bg-red-900/30 text-red-400' : 'bg-gray-800 text-gray-400'
             )}>{ex.status}</span>
-            <span className="text-[10px] text-gray-500">{ex.earliest} → {ex.latest}</span>
-            <span className="text-[10px] text-gray-400 ml-auto">{ex.event_count} events</span>
+            <span className="text-[11px] text-gray-500">{ex.earliest} → {ex.latest}</span>
+            <span className="text-[11px] text-gray-400 ml-auto">{ex.event_count} events</span>
           </div>
           {ex.interpreted_findings && (
-            <p className="text-xs text-gray-300 leading-relaxed">{ex.interpreted_findings}</p>
+            <p className="text-sm text-gray-300 leading-relaxed">{ex.interpreted_findings}</p>
           )}
         </div>
       ))}
@@ -362,7 +367,7 @@ function ExecutionResultsSection({ results }: { results: THFullReport['execution
 }
 
 function RecommendationsSection({ recommendations }: { recommendations: string[] }) {
-  if (!recommendations.length) return <p className="text-xs text-gray-500 italic">No recommendations.</p>
+  if (!recommendations.length) return <p className="text-sm text-gray-500 italic">No recommendations.</p>
   return (
     <ul className="space-y-2">
       {recommendations.map((rec, i) => (
@@ -414,7 +419,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           <FileText className="w-5 h-5 text-brand-400" />
           <h3 className="text-sm font-semibold text-gray-200">Hunt Report</h3>
           {report && (
-            <span className="text-[10px] text-gray-500">
+            <span className="text-[11px] text-gray-500">
               {report.created_at.slice(0, 19).replace('T', ' ')} UTC
               {report.created_by && ` · ${report.created_by}`}
             </span>
@@ -423,7 +428,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
         <div className="flex gap-2">
           {isResearcher && (
             <button
-              className="btn-secondary text-xs flex items-center gap-1.5"
+              className="btn-secondary text-sm flex items-center gap-1.5"
               disabled={generateMut.isPending}
               onClick={() => generateMut.mutate()}
             >
@@ -436,14 +441,14 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           {report && (
             <>
               <button
-                className="btn-ghost text-xs flex items-center gap-1"
+                className="btn-ghost text-sm flex items-center gap-1"
                 onClick={() => exportMarkdown(report)}
                 title="Export as Markdown"
               >
                 <Download className="w-3.5 h-3.5" /> MD
               </button>
               <button
-                className="btn-ghost text-xs flex items-center gap-1"
+                className="btn-ghost text-sm flex items-center gap-1"
                 onClick={() => exportJson(report)}
                 title="Export as JSON"
               >
@@ -452,7 +457,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
               {/* PDF download — links to backend renderer */}
               {runId ? (
                 <a
-                  className="btn-ghost text-xs flex items-center gap-1"
+                  className="btn-ghost text-sm flex items-center gap-1"
                   href={api.threatHunting.downloadRunReportPdf(pkgId, runId)}
                   target="_blank"
                   rel="noreferrer"
@@ -462,7 +467,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
                 </a>
               ) : (
                 <a
-                  className="btn-ghost text-xs flex items-center gap-1"
+                  className="btn-ghost text-sm flex items-center gap-1"
                   href={api.threatHunting.downloadReportPdf(pkgId)}
                   target="_blank"
                   rel="noreferrer"
@@ -479,7 +484,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
       {generateMut.isError && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-red-900/20 border border-red-800/30">
           <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-          <p className="text-xs text-red-300">
+          <p className="text-sm text-red-300">
             {generateMut.error instanceof Error ? generateMut.error.message : 'Report generation failed'}
           </p>
         </div>
@@ -491,7 +496,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           <FileText className="w-10 h-10 text-gray-700 mx-auto" />
           <p className="text-sm text-gray-500">No report generated yet.</p>
           {isResearcher && (
-            <p className="text-xs text-gray-600">
+            <p className="text-sm text-gray-600">
               Reports are generated automatically after execution, or click{' '}
               <span className="text-brand-400">Generate Report</span> above.
             </p>
@@ -505,7 +510,7 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           <Loader2 className="w-5 h-5 text-brand-400 animate-spin shrink-0" />
           <div>
             <p className="text-sm font-medium text-brand-300">Generating report…</p>
-            <p className="text-xs text-gray-500">Assembling findings and writing executive summary.</p>
+            <p className="text-sm text-gray-500">Assembling findings and writing executive summary.</p>
           </div>
         </div>
       )}

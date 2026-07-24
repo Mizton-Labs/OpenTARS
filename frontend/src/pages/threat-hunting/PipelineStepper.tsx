@@ -98,7 +98,7 @@ export default function PipelineStepper({
           <div key={phase.id} className="flex items-center shrink-0">
             <div
               className={clsx(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-[11px] font-medium whitespace-nowrap transition-colors',
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-[12px] font-medium whitespace-nowrap transition-colors',
                 phase.state === 'done' && 'bg-green-900/20 border-green-800/40 text-green-400',
                 phase.state === 'error' && 'bg-red-900/20 border-red-800/40 text-red-400',
                 phase.state === 'active' && 'bg-blue-900/20 border-blue-700/50 text-blue-300',

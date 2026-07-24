@@ -3,7 +3,7 @@
  *
  * Phase/arrow card improvements (issue-008 review):
  *   1. Live refresh — polls every 4s while any package is running; stops when idle.
- *   2. Bigger cards — text-[11px], px-2.5 py-1.5, min-w-[68px].
+ *   2. Bigger cards — text-[12px], px-2.5 py-1.5, min-w-[68px].
  *   3. Visible status colors — stronger contrast: bright green/red/blue/amber/gray
  *      with a per-card status glyph (✓ · ✕ · ⟳ · ⊘ · ⋯) for color-independent scanning.
  *   4. Fixed active-step detection — keep last entry per step (handles parallel fan-out
@@ -176,10 +176,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
             </span>
           </div>
 
-          {/* Status word + elapsed — Part 3a: text-[10px] mt-0.5 */}
+          {/* Status word + elapsed — Part 3a: text-[11px] mt-0.5 */}
           <div className="flex items-center justify-center gap-1.5 mt-0.5">
             <span className={clsx(
-              'text-[10px] font-normal leading-none',
+              'text-[11px] font-normal leading-none',
               isActive ? 'text-blue-300' :
               isDone ? isPartial ? 'text-amber-400' : 'text-green-400' :
               isError ? 'text-red-400' :
@@ -189,25 +189,25 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
               {statusWord}
             </span>
             {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
-              <span className="text-[10px] font-mono opacity-60 leading-none">
+              <span className="text-[11px] font-mono opacity-60 leading-none">
                 {phase.elapsed_s}s
               </span>
             )}
           </div>
         </div>
 
-        {/* ── Inline detail (done steps only) — Part 3a: max-w-[112px] text-[10px] ── */}
+        {/* ── Inline detail (done steps only) — Part 3a: max-w-[112px] text-[11px] ── */}
         {isDone && (hasCounts || hasTools) && (
           <div className="mt-1 space-y-0.5 max-w-[112px]" onClick={(e) => e.stopPropagation()}>
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
-                  <span className="text-[10px] font-mono text-brand-400 leading-none">
+                  <span className="text-[11px] font-mono text-brand-400 leading-none">
                     {phase!.item_count} items
                   </span>
                 )}
                 {phase!.ioc_count != null && (
-                  <span className="text-[10px] font-mono text-blue-400 leading-none">
+                  <span className="text-[11px] font-mono text-blue-400 leading-none">
                     {phase!.ioc_count} IOC{phase!.noisy_count ? ` (${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
@@ -218,7 +218,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
                 {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[10px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
+                    className="text-[11px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
                     title={t}
                   >
                     {t.replace(/_/g, ' ')}
@@ -300,7 +300,7 @@ function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
       {pkg.generation_status && (
         <div className="flex items-center gap-1.5 mb-1.5">
           <span className={clsx(
-            'text-[9px] font-mono px-1.5 py-0.5 rounded font-semibold',
+            'text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold',
             pkg.generation_status === 'completed'
               ? 'bg-green-900/30 text-green-400 border border-green-700/40'
               : pkg.generation_status === 'running'
@@ -319,12 +319,12 @@ function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
           </span>
 
           {isRunning && liveElapsed != null ? (
-            <span className="flex items-center gap-0.5 text-[9px] text-blue-300 font-mono">
+            <span className="flex items-center gap-0.5 text-[10px] text-blue-300 font-mono">
               <Timer className="w-2.5 h-2.5" />
               {liveElapsed}s
             </span>
           ) : pkg.total_elapsed_s != null && !isRunning ? (
-            <span className="flex items-center gap-0.5 text-[9px] text-gray-500 font-mono">
+            <span className="flex items-center gap-0.5 text-[10px] text-gray-500 font-mono">
               <Timer className="w-2.5 h-2.5" />
               {pkg.total_elapsed_s}s total
             </span>
@@ -347,7 +347,7 @@ function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
       </div>
 
       {!hasAnyData && (
-        <p className="text-[9px] text-gray-600 mt-1">No analysis run yet</p>
+        <p className="text-[10px] text-gray-600 mt-1">No analysis run yet</p>
       )}
     </div>
   )
@@ -416,11 +416,11 @@ function PackageCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
-            <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+            <span className={clsx('badge text-[11px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
               {pkg.status}
             </span>
             {pkg.generation_status && pkg.generation_status !== 'completed' && (
-              <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
+              <span className="badge text-[10px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
                 {pkg.generation_status.replace(/_/g, ' ')}
               </span>
             )}
@@ -428,7 +428,7 @@ function PackageCard({
           {pkg.description && (
             <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
           )}
-          <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+          <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
             <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
             <span>·</span>
             <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
@@ -447,9 +447,12 @@ function PackageCard({
               that run for this card's stage rail. */}
           {runs.length > 1 && (
             <div
-              className="flex items-end gap-0.5 mt-2 border-b border-gray-800/80 flex-wrap"
+              className="flex items-end gap-1.5 mt-2 border-b border-gray-700 flex-wrap"
               onClick={(e) => e.stopPropagation()}
             >
+              <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold pb-2 shrink-0">
+                Runs
+              </span>
               {runs.map((run: THuntPackageRun) => (
                 <RunStatusBadge
                   key={run.id}
@@ -577,7 +580,7 @@ export default function ThreatHunting() {
         </div>
         <div className="flex items-center gap-3">
           {/* Part 3b: Theme toggle segmented control */}
-          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-xs">
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
             <button
               className={clsx(
                 'px-2.5 py-1.5 transition-colors',
@@ -607,7 +610,7 @@ export default function ThreatHunting() {
               of the Classic/Modern card-color toggle above. Compact hides
               the per-stage ProcessArrow rail; the per-run chip row (when a
               package has multiple runs) shows in both modes. */}
-          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-xs">
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
             <button
               className={clsx(
                 'px-2.5 py-1.5 transition-colors',
@@ -708,7 +711,7 @@ export default function ThreatHunting() {
               autoFocus
             />
             {cloneMut.isError && (
-              <p className="text-xs text-red-400">
+              <p className="text-sm text-red-400">
                 Clone failed: {cloneMut.error instanceof Error ? cloneMut.error.message : String(cloneMut.error)}
               </p>
             )}

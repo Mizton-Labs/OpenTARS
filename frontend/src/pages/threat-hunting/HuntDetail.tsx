@@ -13,6 +13,7 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import { runStatusClass, runLabel } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
+import RunsStatusTable from './RunsStatusTable'
 
 type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report'
 
@@ -218,11 +219,11 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           or the Analysis tab's Sanitized IOCs table. */}
       {iocStaging.isDirty && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-brand-700/50 bg-brand-900/10">
-          <p className="text-xs text-brand-300">
+          <p className="text-sm text-brand-300">
             {iocStaging.pendingCount} IOC verdict change{iocStaging.pendingCount !== 1 ? 's' : ''} staged for this run.
           </p>
           <button
-            className="btn-primary flex items-center gap-2 text-xs shrink-0"
+            className="btn-primary flex items-center gap-2 text-sm shrink-0"
             disabled={iocStaging.isApplying}
             onClick={() => iocStaging.apply()}
           >
@@ -236,10 +237,10 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
       {runs.length > 0 && (
         <div className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 shrink-0">Run:</span>
+            <span className="text-sm text-gray-500 shrink-0">Run:</span>
             <div className="relative flex-1 max-w-xs">
               <select
-                className="input w-full text-xs pr-7 appearance-none"
+                className="input w-full text-sm pr-7 appearance-none"
                 value={activeRunId ?? ''}
                 onChange={(e) => setActiveRunId(e.target.value)}
               >
@@ -258,7 +259,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
             </div>
             <span className={clsx(
-              'text-[10px] px-2 py-0.5 rounded shrink-0',
+              'text-[11px] px-2 py-0.5 rounded shrink-0',
               runStatusClass(runs.find(r => r.id === activeRunId)?.generation_status),
             )}>
               {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
@@ -271,6 +272,18 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             hasResults={headerResults.length > 0}
             hasReport={!!headerReport}
           />
+        </div>
+      )}
+
+      {/* issue-local-017: compact all-runs overview — model, status, and
+          workflow progress for every run at once, so switching the run
+          selector back and forth isn't needed just to check overall state. */}
+      {runs.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+            All runs
+          </p>
+          <RunsStatusTable runs={runs} />
         </div>
       )}
 
@@ -335,18 +348,18 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                  <div className="flex-1 min-w-0 space-y-0.5">
                    <p className="text-sm text-gray-200 font-medium truncate">{item.label || item.source_ref}</p>
                    <div className="flex items-center gap-2 flex-wrap">
-                     <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{item.item_type}</span>
+                     <span className="text-[11px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{item.item_type}</span>
                      {item.parse_status === 'pending' ? (
-                       <span className="text-[10px] text-blue-400 font-mono">⟳ pending — fetched during analysis</span>
+                       <span className="text-[11px] text-blue-400 font-mono">⟳ pending — fetched during analysis</span>
                      ) : (
-                       <span className="text-[10px] text-gray-500">{item.parser_used}</span>
+                       <span className="text-[11px] text-gray-500">{item.parser_used}</span>
                      )}
                      {item.parse_warnings.length > 0 && item.parse_status !== 'pending' && (
-                       <span className="text-[10px] text-amber-500">{item.parse_warnings.length} warning{item.parse_warnings.length > 1 ? 's' : ''}</span>
+                       <span className="text-[11px] text-amber-500">{item.parse_warnings.length} warning{item.parse_warnings.length > 1 ? 's' : ''}</span>
                      )}
                    </div>
                    {item.source_ref && item.item_type === 'url' && (
-                     <p className="text-[10px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
+                     <p className="text-[11px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
                    )}
                  </div>
                  {isResearcher && (
@@ -371,7 +384,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             <p className="text-sm text-gray-500 text-center py-8">No IOCs extracted yet.</p>
           ) : (
             <>
-              <div className="flex gap-4 text-xs text-gray-500">
+              <div className="flex gap-4 text-sm text-gray-500">
                 <span className="text-green-400">{cleanCount} actionable</span>
                 <span className="text-amber-400">{noisyCount} noisy / flagged</span>
                 {removedCount > 0 && (
@@ -379,7 +392,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                 )}
               </div>
               {/* Column headers */}
-              <div className="flex items-center gap-3 px-3 text-[10px] text-gray-600 uppercase tracking-wider">
+              <div className="flex items-center gap-3 px-3 text-[11px] text-gray-600 uppercase tracking-wider">
                 <span className="w-24 shrink-0">Type</span>
                 <span className="flex-1">IOC</span>
                 <span className="w-28 shrink-0">Result</span>
@@ -393,7 +406,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                     <div
                       key={ioc.id}
                       className={clsx(
-                        'flex items-center gap-3 px-3 py-2 rounded-lg text-xs',
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm',
                         removed
                           ? 'bg-red-900/10 border border-red-900/30 opacity-60'
                           : ioc.flagged_noisy
@@ -412,9 +425,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                       </span>
                       <span className="w-28 shrink-0 flex items-center gap-1.5">
                         {ioc.flagged_noisy && (
-                          <span className="text-amber-500 text-[10px]">noisy</span>
+                          <span className="text-amber-500 text-[11px]">noisy</span>
                         )}
-                        <span className="text-gray-600 text-[10px]">
+                        <span className="text-gray-600 text-[11px]">
                           {(ioc.noise_score * 100).toFixed(0)}%
                         </span>
                       </span>
@@ -428,7 +441,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                         ) : (
                           <span
                             className={clsx(
-                              'text-[10px] font-medium',
+                              'text-[11px] font-medium',
                               removed ? 'text-red-400' : 'text-green-400',
                             )}
                           >
@@ -516,10 +529,10 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
             {/* Model selector */}
             <div className="space-y-1.5">
-              <label className="block text-xs text-gray-400">Model</label>
+              <label className="block text-sm text-gray-400">Model</label>
               <div className="relative">
                 <select
-                  className="input w-full text-xs pr-7 appearance-none"
+                  className="input w-full text-sm pr-7 appearance-none"
                   value={rerunModelChoice}
                   onChange={(e) => setRerunModelChoice(e.target.value)}
                 >
@@ -536,13 +549,13 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
             {/* Effort pills */}
             <div className="space-y-1.5">
-              <label className="block text-xs text-gray-400">Research Effort</label>
+              <label className="block text-sm text-gray-400">Research Effort</label>
               <div className="flex gap-2">
                 {EFFORT_OPTIONS.map((e) => (
                   <button
                     key={e}
                     className={clsx(
-                      'flex-1 py-1.5 text-xs rounded border transition-colors',
+                      'flex-1 py-1.5 text-sm rounded border transition-colors',
                       rerunEffort === e
                         ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
                         : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
@@ -557,13 +570,13 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
             {/* issue-local-015: IOC handling mode */}
             <div className="space-y-1.5">
-              <label className="block text-xs text-gray-400">IOC Handling</label>
+              <label className="block text-sm text-gray-400">IOC Handling</label>
               <div className="flex gap-2">
                 {(['tagging_only', 'active_cleaning'] as const).map((m) => (
                   <button
                     key={m}
                     className={clsx(
-                      'flex-1 py-1.5 text-[11px] rounded border transition-colors',
+                      'flex-1 py-1.5 text-[12px] rounded border transition-colors',
                       iocMode === m
                         ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
                         : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
@@ -584,7 +597,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
                       ['remove_legit_services', 'Remove known legit services'],
                     ] as const
                   ).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2 text-[11px] text-gray-400">
+                    <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
                       <input
                         type="checkbox"
                         checked={iocCleaningOptions[key]}
@@ -601,7 +614,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             </div>
 
             {/* Selected summary */}
-            <p className="text-[10px] text-gray-600">
+            <p className="text-[11px] text-gray-600">
               {rerunChosenModel
                 ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
                 : 'Default model'}{' '}
@@ -611,14 +624,14 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             {/* Actions */}
             <div className="flex gap-2 justify-end pt-1">
               <button
-                className="btn-ghost text-xs"
+                className="btn-ghost text-sm"
                 onClick={() => setShowRerunDialog(false)}
                 disabled={rerunMut.isPending}
               >
                 Cancel
               </button>
               <button
-                className="btn-primary text-xs"
+                className="btn-primary text-sm"
                 disabled={rerunMut.isPending}
                 onClick={() => rerunMut.mutate()}
               >

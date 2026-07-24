@@ -33,10 +33,10 @@ export default function RunStatusBadge({
         title={runLabelTitle(run)}
         onClick={onClick}
         className={clsx(
-          'flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-t border border-b-0 transition-colors shrink-0',
+          'flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-t border border-b-0 transition-colors shrink-0',
           active
-            ? 'bg-gray-800 border-gray-700 text-gray-100 -mb-px'
-            : 'bg-transparent border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-800/40',
+            ? 'bg-gray-700 border-brand-500 text-gray-100 -mb-px shadow-sm'
+            : 'bg-gray-900/50 border-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-800/60 hover:border-gray-700',
         )}
       >
         <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', runStatusDotClass(run.generation_status))} />
@@ -53,7 +53,7 @@ export default function RunStatusBadge({
 
   const className = clsx(
     'rounded shrink-0 transition-colors',
-    size === 'xs' ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5',
+    size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5',
     runStatusClass(run.generation_status),
   )
   return (

@@ -98,24 +98,24 @@ function IntakeSourceSubStatus({ src }: { src: THIntakeSource }) {
       <div className="w-1.5 flex justify-center shrink-0">
         <div className={clsx('w-1.5 h-1.5 rounded-full shrink-0', dotClass)} />
       </div>
-      <span className="text-[10px] text-gray-400 truncate flex-1 min-w-0">
+      <span className="text-[11px] text-gray-400 truncate flex-1 min-w-0">
         {src.label || src.item_type || 'source'}
       </span>
-      <span className="text-[9px] text-gray-600 font-mono shrink-0 ml-1">
+      <span className="text-[10px] text-gray-600 font-mono shrink-0 ml-1">
         {src.item_type}
       </span>
       {src.text_length > 0 && (
-        <span className="text-[9px] text-gray-700 font-mono shrink-0">
+        <span className="text-[10px] text-gray-700 font-mono shrink-0">
           {src.text_length.toLocaleString()} chars
         </span>
       )}
       {src.ioc_count != null && src.ioc_count > 0 && (
-        <span className="text-[9px] text-blue-500 font-mono shrink-0">
+        <span className="text-[10px] text-blue-500 font-mono shrink-0">
           {src.ioc_count} IOC{src.ioc_count !== 1 ? 's' : ''}
         </span>
       )}
       {src.parser_used && (
-        <span className="text-[9px] font-mono bg-gray-800 text-gray-500 border border-gray-700/50 rounded px-1 shrink-0">
+        <span className="text-[10px] font-mono bg-gray-800 text-gray-500 border border-gray-700/50 rounded px-1 shrink-0">
           {src.parser_used}
         </span>
       )}
@@ -188,24 +188,24 @@ function TimelineVisualizer({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span
                       className={clsx(
-                        'text-xs font-medium',
+                        'text-sm font-medium',
                         isActive ? 'text-blue-300' : isDone ? 'text-gray-200' : 'text-gray-600',
                       )}
                     >
                       {step.label}
                     </span>
                     {log?.elapsed_s !== undefined && (
-                      <span className="text-[10px] text-gray-600 font-mono">
+                      <span className="text-[11px] text-gray-600 font-mono">
                         {log.elapsed_s}s
                       </span>
                     )}
                     {log?.item_count !== undefined && (
-                      <span className="text-[10px] text-brand-600 font-mono">
+                      <span className="text-[11px] text-brand-600 font-mono">
                         {log.item_count} items
                       </span>
                     )}
                     {log?.ioc_count !== undefined && (
-                      <span className="text-[10px] text-brand-600 font-mono">
+                      <span className="text-[11px] text-brand-600 font-mono">
                         {log.ioc_count} IOCs
                         {log.noisy_count ? ` (${log.noisy_count} noisy)` : ''}
                       </span>
@@ -213,7 +213,7 @@ function TimelineVisualizer({
                     {/* Part 7a: "View N IOCs" link when IOCs are present */}
                     {log?.ioc_count != null && log.ioc_count > 0 && onShowIocs && (
                       <button
-                        className="flex items-center gap-0.5 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                        className="flex items-center gap-0.5 text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
                         onClick={onShowIocs}
                         title="Switch to IOCs tab"
                       >
@@ -222,7 +222,7 @@ function TimelineVisualizer({
                       </button>
                     )}
                     {log?.effort && (
-                      <span className="text-[10px] text-gray-700 font-mono">
+                      <span className="text-[11px] text-gray-700 font-mono">
                         effort={log.effort}
                       </span>
                     )}
@@ -230,7 +230,7 @@ function TimelineVisualizer({
                     {log?.tools_used?.map((tool) => (
                       <span
                         key={tool}
-                        className="text-[9px] font-mono bg-purple-900/40 text-purple-300 border border-purple-800/40 rounded px-1 py-0.5"
+                        className="text-[10px] font-mono bg-purple-900/40 text-purple-300 border border-purple-800/40 rounded px-1 py-0.5"
                       >
                         {tool}()
                       </span>
@@ -238,13 +238,13 @@ function TimelineVisualizer({
                   </div>
                   {/* issue-006-C: decision sub-text */}
                   {log?.decision && (
-                    <p className="text-[10px] text-gray-500 mt-0.5 italic">{log.decision}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5 italic">{log.decision}</p>
                   )}
                   {isActive && !log?.decision && (
-                    <p className="text-[10px] text-gray-500 mt-0.5">{step.description}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">{step.description}</p>
                   )}
                   {log?.error && (
-                    <p className="text-[10px] text-red-400 mt-0.5">Error: {log.error}</p>
+                    <p className="text-[11px] text-red-400 mt-0.5">Error: {log.error}</p>
                   )}
                   {/* Part 7a: per-evidence sub-list below intake_classifier */}
                   {intakeSources.length > 0 && (
@@ -264,12 +264,12 @@ function TimelineVisualizer({
       {/* Debug log panel */}
       {debug && (
         <div className="space-y-1">
-          <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">
+          <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
             Pipeline Log
           </p>
           <pre
             ref={debugRef}
-            className="bg-gray-950 border border-gray-800 rounded p-2 text-[9px] text-green-400 font-mono h-48 overflow-y-auto whitespace-pre-wrap"
+            className="bg-gray-950 border border-gray-800 rounded p-2 text-[10px] text-green-400 font-mono h-48 overflow-y-auto whitespace-pre-wrap"
           >
             {allDebugLines.length > 0
               ? allDebugLines.join('\n')
@@ -334,7 +334,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
             <div
               key={step.id}
               className={clsx(
-                'flex items-center gap-2 text-xs',
+                'flex items-center gap-2 text-sm',
                 isDone ? 'text-green-400' : isActive ? 'text-blue-400' : 'text-gray-600',
               )}
             >
@@ -360,7 +360,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   const SubtasksToolbar = (
     <div className="col-span-2 flex items-center gap-3 pb-1 border-b border-gray-800/50">
       <button
-        className="text-xs text-gray-400 flex items-center gap-1.5 cursor-pointer select-none hover:text-gray-200 transition-colors"
+        className="text-sm text-gray-400 flex items-center gap-1.5 cursor-pointer select-none hover:text-gray-200 transition-colors"
         onClick={() => {
           const next = !showSubtasks
           setShowSubtasks(next)
@@ -394,7 +394,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         <div className="min-w-0">
           <Suspense
             fallback={
-              <div className="flex items-center gap-2 text-xs text-gray-500">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading Mermaid diagram…
               </div>
@@ -420,7 +420,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         <div className="min-w-0">
           <Suspense
             fallback={
-              <div className="flex items-center gap-2 text-xs text-gray-500">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading React Flow graph…
               </div>

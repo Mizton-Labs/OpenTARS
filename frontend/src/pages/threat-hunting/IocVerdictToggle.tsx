@@ -27,7 +27,7 @@ export default function IocVerdictToggle({
   return (
     <div
       className={clsx(
-        'inline-flex items-center rounded overflow-hidden border text-[10px]',
+        'inline-flex items-center rounded overflow-hidden border text-[11px]',
         dirty ? 'border-brand-500 ring-1 ring-brand-500/60' : 'border-gray-700',
       )}
       title={dirty ? 'Change staged — click Apply changes to save' : undefined}
