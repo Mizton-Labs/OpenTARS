@@ -121,9 +121,10 @@ describe('RunsStatusTable', () => {
   describe('IOC sanitized/removed counts', () => {
     it('shows a dash when the run has no deep_retrohunt lead yet', () => {
       render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: null, removed_ioc_count: null })]} />)
-      // Both the IOCs and Report columns render a "—" placeholder for this
-      // run (no deep_retrohunt lead, no report) — assert both are present.
-      expect(screen.getAllByText('—')).toHaveLength(2)
+      // Run ID, Duration, IOCs, and Report all render a "—" placeholder for
+      // this bare fixture (no run_id_display/total_elapsed_s/deep_retrohunt
+      // lead/report) — assert all four are present.
+      expect(screen.getAllByText('—')).toHaveLength(4)
     })
 
     it('shows sanitized and removed counts when available', () => {
@@ -166,6 +167,57 @@ describe('RunsStatusTable', () => {
       await waitFor(() => expect(api.threatHunting.getRunReport).toHaveBeenCalledWith('pkg-1', 'run-1'))
       await waitFor(() => expect(clickSpy).toHaveBeenCalled())
       clickSpy.mockRestore()
+    })
+  })
+
+  describe('Run ID column (issue-local-018)', () => {
+    it('shows the run_id_display value', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ run_id_display: 'TH01-X02' })]} />)
+      expect(screen.getByText('TH01-X02')).toBeInTheDocument()
+    })
+  })
+
+  describe('Duration column (issue-local-018)', () => {
+    it('formats seconds under a minute as "Xs"', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ total_elapsed_s: 48 })]} />)
+      expect(screen.getByText('48s')).toBeInTheDocument()
+    })
+
+    it('formats seconds a minute or over as "Xm Ys"', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ total_elapsed_s: 332 })]} />)
+      expect(screen.getByText('5m 32s')).toBeInTheDocument()
+    })
+
+    it('shows a dash when total_elapsed_s is null', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ total_elapsed_s: null })]} />)
+      expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('onSelectRun (issue-local-018)', () => {
+    it('renders Run ID and Model as plain text when onSelectRun is absent', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ run_id_display: 'TH01-X01', llm_model: 'gpt-oss' })]} />)
+      expect(screen.queryByRole('button', { name: 'TH01-X01' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'gpt-oss' })).not.toBeInTheDocument()
+      expect(screen.getByText('TH01-X01')).toBeInTheDocument()
+      expect(screen.getByText('gpt-oss')).toBeInTheDocument()
+    })
+
+    it('renders Run ID and Model as clickable buttons when onSelectRun is provided, and calls it with the run id', () => {
+      const onSelectRun = vi.fn()
+      render(
+        <RunsStatusTable
+          pkgId="pkg-1"
+          runs={[makeRun({ id: 'run-42', run_id_display: 'TH01-X01', llm_model: 'gpt-oss' })]}
+          onSelectRun={onSelectRun}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'TH01-X01' }))
+      expect(onSelectRun).toHaveBeenCalledWith('run-42')
+
+      fireEvent.click(screen.getByRole('button', { name: 'gpt-oss' }))
+      expect(onSelectRun).toHaveBeenCalledWith('run-42')
+      expect(onSelectRun).toHaveBeenCalledTimes(2)
     })
   })
 })

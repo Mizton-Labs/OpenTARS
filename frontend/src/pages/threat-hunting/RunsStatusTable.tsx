@@ -108,6 +108,17 @@ function MiniPhaseTrack({ run }: { run: THuntPackageRun }) {
   )
 }
 
+// issue-local-018: no seconds -> "Xm Ys" formatter existed anywhere in the
+// frontend yet (total_elapsed_s was only ever shown raw, e.g. "12s total").
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null) return '—'
+  const total = Math.round(seconds)
+  if (total < 60) return `${total}s`
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return `${minutes}m ${rest}s`
+}
+
 function IocCounts({ run }: { run: THuntPackageRun }) {
   if (run.sanitized_ioc_count == null && run.removed_ioc_count == null) {
     return <span className="text-[10px] text-gray-600">—</span>
@@ -166,16 +177,30 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   )
 }
 
-export default function RunsStatusTable({ pkgId, runs }: { pkgId: string; runs: THuntPackageRun[] }) {
+export default function RunsStatusTable({
+  pkgId,
+  runs,
+  onSelectRun,
+}: {
+  pkgId: string
+  runs: THuntPackageRun[]
+  /** issue-local-018: when provided, the Run ID and Model cells render as
+   *  clickable buttons that open this specific run (rather than the
+   *  package's newest run). Omitted call sites stay plain text. */
+  onSelectRun?: (runId: string) => void
+}) {
   if (runs.length === 0) return null
+  const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-800">
-      <table className="w-full min-w-[780px]">
+      <table className="w-full min-w-[900px]">
         <thead>
           <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+            <th className="text-left py-1.5 px-2">Run ID</th>
             <th className="text-left py-1.5 px-2">Model</th>
             <th className="text-left py-1.5 px-2">Status</th>
             <th className="text-left py-1.5 px-2">Workflow</th>
+            <th className="text-left py-1.5 px-2">Duration</th>
             <th className="text-left py-1.5 px-2">IOCs</th>
             <th className="text-left py-1.5 px-2">Report</th>
             <th className="text-left py-1.5 px-2">Created</th>
@@ -184,8 +209,23 @@ export default function RunsStatusTable({ pkgId, runs }: { pkgId: string; runs: 
         <tbody>
           {runs.map((run) => (
             <tr key={run.id} className="border-t border-gray-800/60">
+              <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
+                {onSelectRun ? (
+                  <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                    {run.run_id_display || '—'}
+                  </button>
+                ) : (
+                  run.run_id_display || '—'
+                )}
+              </td>
               <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
-                {run.llm_model ?? run.llm_provider ?? '—'}
+                {onSelectRun ? (
+                  <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                    {run.llm_model ?? run.llm_provider ?? '—'}
+                  </button>
+                ) : (
+                  run.llm_model ?? run.llm_provider ?? '—'
+                )}
                 {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
               </td>
               <td className="py-1.5 px-2">
@@ -195,6 +235,9 @@ export default function RunsStatusTable({ pkgId, runs }: { pkgId: string; runs: 
               </td>
               <td className="py-1.5 px-2">
                 <MiniPhaseTrack run={run} />
+              </td>
+              <td className="py-1.5 px-2 text-[10px] text-gray-400 whitespace-nowrap">
+                {formatDuration(run.total_elapsed_s)}
               </td>
               <td className="py-1.5 px-2">
                 <IocCounts run={run} />

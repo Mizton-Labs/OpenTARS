@@ -129,12 +129,10 @@ describe('runStatusUtils', () => {
 })
 
 describe('ThreatHunting list — density toggle + run chips (issue-local-016)', () => {
-  it('renders the Compact/Detailed/Table toggle alongside Classic/Modern', async () => {
+  it('renders the Compact/Detailed/Table toggle', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([])
     renderList()
-    expect(await screen.findByRole('button', { name: /^classic$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^modern$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^compact$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^table$/i })).toBeInTheDocument()
   })

@@ -262,3 +262,36 @@
 :root[data-theme='energy'] .nav-module-group {
   box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.3);
 }
+
+/* issue-local-018 (Part 5): Light-theme contrast fix. Badges/buttons/chips
+ * throughout the app use Tailwind's *stock* `{color}-900/NN` + `{color}-300`
+ * or `{color}-400` pairing (e.g. severity badges, status pills, the IOC
+ * Keep/Remove toggle, workflow phase chips) — a dark-tinted translucent
+ * background with pastel text. Unlike the app's own `gray`/`brand` scales,
+ * these literal Tailwind classes are NOT routed through the `--color-*` CSS
+ * variables above, so they never participate in Light's ramp-mirroring and
+ * stay dark-ish on a near-white page: low contrast, reads as washed out.
+ * Fix: flip the idiom to light-tinted-background + dark-saturated-text,
+ * scoped to Light only, without touching any component file. Every opacity
+ * variant of `bg-{color}-900` collapses to the same solid light background
+ * (translucency was only ever meaningful against the dark page). */
+:root[data-theme='light'] [class*='bg-green-900'] { background-color: rgb(220 252 231); }
+:root[data-theme='light'] [class*='bg-red-900']    { background-color: rgb(254 226 226); }
+:root[data-theme='light'] [class*='bg-blue-900']   { background-color: rgb(219 234 254); }
+:root[data-theme='light'] [class*='bg-amber-900']  { background-color: rgb(254 243 199); }
+:root[data-theme='light'] [class*='bg-yellow-900'] { background-color: rgb(254 249 195); }
+:root[data-theme='light'] [class*='bg-orange-900'] { background-color: rgb(255 237 213); }
+
+:root[data-theme='light'] .text-green-300,
+:root[data-theme='light'] .text-green-400  { color: rgb(21 128 61); }
+:root[data-theme='light'] .text-red-300,
+:root[data-theme='light'] .text-red-400    { color: rgb(185 28 28); }
+:root[data-theme='light'] .text-blue-300,
+:root[data-theme='light'] .text-blue-400   { color: rgb(29 78 216); }
+:root[data-theme='light'] .text-amber-300,
+:root[data-theme='light'] .text-amber-300\/80,
+:root[data-theme='light'] .text-amber-400,
+:root[data-theme='light'] .text-amber-400\/80 { color: rgb(180 83 9); }
+:root[data-theme='light'] .text-yellow-300,
+:root[data-theme='light'] .text-yellow-400 { color: rgb(161 98 7); }
+:root[data-theme='light'] .text-orange-300 { color: rgb(194 65 12); }

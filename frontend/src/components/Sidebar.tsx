@@ -127,21 +127,30 @@ export default function Sidebar() {
 
   const filteredUtility = filterItems(utilityItems)
 
-  function renderSection(section: NavSection) {
+  function renderSection(section: NavSection, isModule?: boolean) {
     const sectionItems = filterItems(section.items)
     return (
       <div key={section.label} className="mb-3">
-        {/* Section header — hidden when collapsed */}
+        {/* Section header — hidden when collapsed. Module sections (Threat
+         * Intel / Threat Hunting) get a brighter, bolder treatment than Home
+         * so they read as emphasized subsection headers (issue-local-018). */}
         {!collapsed ? (
           <div className="flex items-center gap-1.5 px-3 mb-1">
-            <section.icon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+            <section.icon
+              className={clsx('w-3.5 h-3.5 shrink-0', isModule ? 'text-brand-400' : 'text-gray-500')}
+            />
+            <span
+              className={clsx(
+                'text-[10px] uppercase tracking-wider',
+                isModule ? 'text-brand-400 font-semibold' : 'text-gray-500 font-medium',
+              )}
+            >
               {section.label}
             </span>
           </div>
         ) : (
           <div className="flex justify-center mb-1">
-            <section.icon className="w-3.5 h-3.5 text-gray-500" />
+            <section.icon className={clsx('w-3.5 h-3.5', isModule ? 'text-brand-400' : 'text-gray-500')} />
           </div>
         )}
         {sectionItems.length > 0
@@ -224,7 +233,7 @@ export default function Sidebar() {
             collapsed ? 'p-1' : 'p-2',
           )}
         >
-          {moduleSections.map(renderSection)}
+          {moduleSections.map((section) => renderSection(section, true))}
         </div>
 
         {/* Utility items — separated by a border */}

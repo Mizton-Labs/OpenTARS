@@ -1,0 +1,62 @@
+/**
+ * Sidebar section-title emphasis tests (issue-local-018, Part 6).
+ *
+ * The module sections (Threat Intel, Threat Hunting) should read as
+ * emphasized subsection headers — brighter/bolder than the plain Home
+ * section label — so the app's two product modules are visually set apart
+ * from Home and the utility items in the sidebar.
+ */
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
+vi.mock('../api/client', async () => {
+  const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
+      getAppTitle: vi.fn().mockResolvedValue({ app_title: 'Mizton-ThreatBox' }),
+    },
+  }
+})
+
+import { useAuth } from '../auth/useAuth'
+import Sidebar from '../components/Sidebar'
+
+beforeEach(() => {
+  vi.mocked(useAuth).mockReturnValue({
+    authEnabled: false,
+    isAdmin: true,
+    isResearcher: true,
+    user: null,
+    logout: vi.fn(),
+  } as unknown as ReturnType<typeof useAuth>)
+})
+
+function renderSidebar() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('Sidebar section title emphasis', () => {
+  it('gives module section labels (Threat Intel, Threat Hunting) a brand-emphasized style', () => {
+    renderSidebar()
+    expect(screen.getByText('Threat Intel', { selector: 'span' })).toHaveClass('text-brand-400', 'font-semibold')
+    expect(screen.getByText('Threat Hunting', { selector: 'span' })).toHaveClass('text-brand-400', 'font-semibold')
+  })
+
+  it('keeps the Home section label in the plain muted style', () => {
+    renderSidebar()
+    expect(screen.getByText('Home', { selector: 'span' })).toHaveClass('text-gray-500', 'font-medium')
+  })
+})

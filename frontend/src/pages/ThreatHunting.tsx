@@ -23,7 +23,6 @@ import { useAuth } from '../auth/useAuth'
 import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { useHuntTheme, type HuntTheme } from './threat-hunting/useHuntTheme'
 import { useHuntDensity, type HuntDensity } from './threat-hunting/useHuntDensity'
 import RunStatusBadge from './threat-hunting/RunStatusBadge'
 import RunsStatusTable from './threat-hunting/RunsStatusTable'
@@ -89,16 +88,14 @@ interface PhaseCardProps {
   stepId: string
   currentStep: string | null | undefined
   isLast: boolean
-  theme: HuntTheme
 }
 
-function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps) {
+function PhaseCard({ phase, stepId, currentStep, isLast }: PhaseCardProps) {
   const isActive = currentStep === stepId
   const isPartial = phase?.status === 'partial'
   const isDone = phase?.status === 'ok' || isPartial
   const isError = phase?.status === 'error'
   const isSkipped = phase?.status === 'skipped'
-  const isPending = !phase  // no step_log entry yet
 
   const hasTools = (phase?.tools_used?.length ?? 0) > 0
   const hasCounts = phase?.item_count != null || phase?.ioc_count != null
@@ -117,7 +114,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
           ? 'skipped'
           : 'pending'
 
-  // ── Theme-specific card body classes ──────────────────────────────────────
+  // ── Card body classes (issue-local-018: Classic only, Modern removed) ─────
   const classicActive   = 'border-blue-400 bg-blue-800/60 text-blue-100 animate-pulse'
   const classicDone     = isPartial
     ? 'border-amber-400 bg-amber-800/50 text-amber-100'
@@ -126,26 +123,15 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
   const classicSkipped  = 'border-gray-600 bg-gray-800/50 text-gray-400'
   const classicPending  = 'border-gray-700 border-dashed bg-gray-900/50 text-gray-600'
 
-  const modernActive    = 'border border-blue-500/60 bg-blue-900/30 text-blue-200 animate-pulse'
-  const modernDone      = isPartial
-    ? 'border border-amber-500/60 bg-amber-900/20 text-amber-200'
-    : 'border border-green-600/50 bg-green-900/20 text-green-200'
-  const modernError     = 'border border-red-500/50 bg-red-900/20 text-red-300'
-  const modernSkipped   = 'border border-gray-600/40 bg-gray-800/30 text-gray-500'
-  const modernPending   = 'border border-gray-700/30 border-dashed bg-gray-900/20 text-gray-600'
-
-  const isClassic = theme === 'classic'
   const bodyClass = isActive
-    ? (isClassic ? classicActive : modernActive)
+    ? classicActive
     : isDone
-      ? (isClassic ? classicDone : modernDone)
+      ? classicDone
       : isError
-        ? (isClassic ? classicError : modernError)
+        ? classicError
         : isSkipped
-          ? (isClassic ? classicSkipped : modernSkipped)
-          : isPending
-            ? (isClassic ? classicPending : modernPending)
-            : (isClassic ? classicPending : modernPending)
+          ? classicSkipped
+          : classicPending
 
   return (
     <div className="flex items-start gap-1">
@@ -154,8 +140,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
         <div
           className={clsx(
             // Part 3a: reduced sizing (px-3 py-2 text-[13px] min-w-[88px])
-            'px-3 py-2 rounded text-[13px] font-semibold transition-all min-w-[88px] text-center select-none',
-            isClassic ? 'border-2' : '',
+            'px-3 py-2 rounded text-[13px] font-semibold transition-all min-w-[88px] text-center select-none border-2',
             bodyClass,
           )}
           title={`${stepId}${phase ? ` — ${phase.status} (${phase.elapsed_s}s)` : ' — pending'}`}
@@ -254,10 +239,9 @@ export interface ProcessArrowRunData {
 
 interface ProcessArrowProps {
   run: ProcessArrowRunData
-  theme: HuntTheme
 }
 
-function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
+function ProcessArrow({ run: pkg }: ProcessArrowProps) {
   // fix: keep the LAST entry per step so a re-run ok overrides an earlier error,
   // and parallel steps (threat_context_builder / deep_retrohunt_planner) both appear.
   const phaseByStep: Record<string, THPhaseEntry> = {}
@@ -342,7 +326,6 @@ function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
             stepId={stepId}
             currentStep={runningStep}
             isLast={i === STEP_ORDER.length - 1}
-            theme={theme}
           />
         ))}
       </div>
@@ -354,9 +337,8 @@ function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
   )
 }
 
-// Outer card classes for the two card-color themes (Classic / Modern) — module
-// scope since they're static, shared by PackageCard below.
-const MODERN_CARD = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
+// Outer card class (issue-local-018: Classic only, Modern removed) — module
+// scope since it's static, shared by PackageCard below.
 const CLASSIC_CARD = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
 
 /**
@@ -367,7 +349,6 @@ const CLASSIC_CARD = 'card cursor-pointer hover:bg-gray-800/60 transition-colors
  */
 function PackageCard({
   pkg,
-  theme,
   density,
   isResearcher,
   onSelect,
@@ -375,7 +356,6 @@ function PackageCard({
   onArchive,
 }: {
   pkg: THuntPackage
-  theme: HuntTheme
   density: HuntDensity
   isResearcher: boolean
   onSelect: () => void
@@ -410,12 +390,15 @@ function PackageCard({
 
   return (
     <div
-      className={theme === 'modern' ? MODERN_CARD : CLASSIC_CARD}
+      className={CLASSIC_CARD}
       onClick={onSelect}
     >
       <div className="flex items-start gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            {pkg.hunt_id_display && (
+              <span className="font-mono text-xs text-gray-500 shrink-0">{pkg.hunt_id_display}</span>
+            )}
             <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
             <span className={clsx('badge text-[11px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
               {pkg.status}
@@ -466,7 +449,7 @@ function PackageCard({
             </div>
           )}
 
-          {density === 'detailed' && <ProcessArrow run={resolvedRun} theme={theme} />}
+          {density === 'detailed' && <ProcessArrow run={resolvedRun} />}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {isResearcher && (
@@ -519,6 +502,10 @@ export default function ThreatHunting() {
   const qc = useQueryClient()
   const [showWizard, setShowWizard] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // issue-local-018: which run to deep-link HuntDetail to, set when a Run
+  // ID/Model cell is clicked in Table density mode. Cleared alongside
+  // selectedId so re-opening a package later doesn't carry over a stale run.
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
 
   // Part 4: archive confirmation
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null)
@@ -526,10 +513,7 @@ export default function ThreatHunting() {
   // Part 3b (clone): clone dialog state
   const [cloneTarget, setCloneTarget] = useState<CloneTarget | null>(null)
 
-  // Part 3b: theme
-  const { theme, setTheme } = useHuntTheme()
-  // issue-local-016: compact/detailed density — independent of the card
-  // color-theme toggle above.
+  // issue-local-016: compact/detailed/table density toggle.
   const { density, setDensity } = useHuntDensity()
 
   const { data: packages = [], isLoading } = useQuery({
@@ -566,7 +550,11 @@ export default function ThreatHunting() {
     return (
       <HuntDetail
         pkgId={selectedId}
-        onBack={() => setSelectedId(null)}
+        initialRunId={selectedRunId}
+        onBack={() => {
+          setSelectedId(null)
+          setSelectedRunId(undefined)
+        }}
       />
     )
   }
@@ -581,39 +569,13 @@ export default function ThreatHunting() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Part 3b: Theme toggle segmented control */}
-          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
-            <button
-              className={clsx(
-                'px-2.5 py-1.5 transition-colors',
-                theme === 'classic'
-                  ? 'bg-gray-700 text-gray-100'
-                  : 'bg-transparent text-gray-500 hover:text-gray-300',
-              )}
-              onClick={() => setTheme('classic')}
-              title="Classic theme"
-            >
-              Classic
-            </button>
-            <button
-              className={clsx(
-                'px-2.5 py-1.5 transition-colors',
-                theme === 'modern'
-                  ? 'bg-gray-700 text-gray-100'
-                  : 'bg-transparent text-gray-500 hover:text-gray-300',
-              )}
-              onClick={() => setTheme('modern')}
-              title="Modern theme"
-            >
-              Modern
-            </button>
-          </div>
-          {/* issue-local-016/017: Compact/Detailed/Table density toggle —
-              independent of the Classic/Modern card-color toggle above.
-              Compact hides the per-stage ProcessArrow rail; Table replaces
-              the card list with each package's all-runs table (the same
-              RunsStatusTable HuntDetail uses); the per-run chip row (when a
-              package has multiple runs) shows in both card modes. */}
+          {/* issue-local-016/017/018: Compact/Detailed/Table density toggle
+              (the separate Classic/Modern card-color toggle was removed —
+              Classic is now the only card design). Compact hides the
+              per-stage ProcessArrow rail; Table replaces the card list with
+              each package's all-runs table (the same RunsStatusTable
+              HuntDetail uses); the per-run chip row (when a package has
+              multiple runs) shows in both card modes. */}
           <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
             <button
               className={clsx(
@@ -676,12 +638,15 @@ export default function ThreatHunting() {
       ) : density === 'table' ? (
         <div className="space-y-5">
           {packages.map((pkg: THuntPackage) => (
-            <div key={pkg.id} className="space-y-1.5">
+            <div key={pkg.id} className="card space-y-1.5">
               <button
                 type="button"
                 onClick={() => setSelectedId(pkg.id)}
                 className="flex items-center gap-2 text-left group"
               >
+                {pkg.hunt_id_display && (
+                  <span className="font-mono text-xs text-gray-500 shrink-0">{pkg.hunt_id_display}</span>
+                )}
                 <p className="text-sm font-semibold text-gray-100 group-hover:text-brand-400 transition-colors">
                   {pkg.name}
                 </p>
@@ -691,7 +656,14 @@ export default function ThreatHunting() {
                 <span className="text-[10px] text-gray-600">{pkg.run_count ?? 0} run{pkg.run_count === 1 ? '' : 's'}</span>
               </button>
               {pkg.runs && pkg.runs.length > 0 ? (
-                <RunsStatusTable pkgId={pkg.id} runs={pkg.runs} />
+                <RunsStatusTable
+                  pkgId={pkg.id}
+                  runs={pkg.runs}
+                  onSelectRun={(runId) => {
+                    setSelectedId(pkg.id)
+                    setSelectedRunId(runId)
+                  }}
+                />
               ) : (
                 <p className="text-[10px] text-gray-600 italic px-1">No runs yet.</p>
               )}
@@ -704,7 +676,6 @@ export default function ThreatHunting() {
             <PackageCard
               key={pkg.id}
               pkg={pkg}
-              theme={theme}
               density={density}
               isResearcher={isResearcher}
               onSelect={() => setSelectedId(pkg.id)}
