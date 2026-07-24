@@ -9,6 +9,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — HuntID emphasis, run indicator, pagination, IOC approval gate, Ocean theme (issue-local-018 follow-up)
+
+**HuntID now renders as an emphasized badge** (bordered, brand-accented) everywhere it appears —
+the package list (all density modes) and the HuntDetail header — instead of a plain gray label,
+since it's the primary way analysts refer to a package. **HuntDetail also shows a "Viewing `TH01` /
+`TH01-X02`" indicator** above the run selector, so which run is currently open is unambiguous at a
+glance.
+
+**Fixed Light theme's plain-white cards**: `.card` had no Light override at all and fell through to
+a near-white background on a near-white page; it now gets a subtle slate-blue tint, matching the
+mechanism already used for Energy's card bump. Also extended the earlier Light-theme color-contrast
+fix to cover gaps it missed: the app's own `brand-900` accent idiom (re-run/IOC-mode selectors,
+SmartMappings/Configuration filter toggles), a `text-blue-200` case, and the workflow phase chips'
+one-shade-darker `-800` tier.
+
+**The hunt-package list gained pagination** — a "Show 10/20/50/100" page-size dropdown (persisted,
+default 20) plus Prev/Next controls, applied uniformly across Compact/Detailed/Table density modes.
+
+**Approve is now gated on unsaved IOC verdict changes**: if there are staged-but-unapplied IOC
+keep/remove overrides for a run, the Approve button is disabled with an explanatory message,
+preventing a package from moving into Execution using stale IOC data.
+
+**New "Ocean" theme** — a fourth UI theme, a slightly darker and more blue-biased variant of
+Classic's ramp (same accent, same construction method as Light's ramp-mirror), selectable
+everywhere Classic/Energy/Light already were (Account's personal override, Configuration's instance
+default).
+
 ### Added — HuntID/RunID, run-table polish, theme fixes, per-run comments (issue-local-018)
 
 **Every Hunt Package now gets an automatic HuntID** (e.g. `TH01`, `TH02`) — a configurable prefix
