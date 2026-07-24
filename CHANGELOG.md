@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — Run-tab clarity, larger Threat Hunting text, all-runs status table, LLM array-field crash (issue-local-017 follow-up)
 
-**Fixed a live page-crash bug (minified React error #31).** Confirmed on test-server: the
+**Fixed a live page-crash bug (minified React error #31).** Confirmed on the test deployment: the
 "issue-015 bugfix2 verification" package's Mistral-Large-3 run has
 `threat_context.key_observations` entries shaped as `{observation, confidence, evidence}` objects
 instead of the plain strings the schema asks for — rendering an object directly as a React child
