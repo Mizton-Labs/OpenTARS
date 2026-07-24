@@ -54,7 +54,6 @@ type Tab =
 // General group: infrastructure / platform settings
 const GENERAL_TABS: { id: Tab; label: string }[] = [
   { id: 'application',     label: 'Application' },
-  { id: 'global-fields',   label: 'Global Field Defaults' },
   { id: 'llm-providers',   label: 'LLM Providers' },
   { id: 'siem-connectors', label: 'SIEM Connectors' },
   { id: 'sso-config',      label: 'SSO / OIDC' },
@@ -69,6 +68,7 @@ const THREAT_INTEL_BASE_TABS: { id: Tab; label: string }[] = [
   { id: 'api',           label: 'External API' },
   { id: 'listener',      label: 'Listener Endpoint' },
   { id: 'general-ti',    label: 'General TI Settings' },
+  { id: 'global-fields', label: 'Global Field Defaults' },
 ]
 
 const GROUP_LABELS: Record<Group, string> = {
@@ -323,7 +323,7 @@ function AppTitleSetting() {
 // theme is currently active on the page rendering this picker.
 const THEME_SWATCHES: Record<'classic' | 'energy', { label: string; colors: string[] }> = {
   classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
-  energy: { label: 'Energy', colors: ['#0a0a0a', '#161512', '#eab308', '#7f1d1d'] },
+  energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#5c5c5c', '#eab308'] },
 }
 
 function ThemeSetting() {

@@ -37,33 +37,44 @@
     --color-brand-900: 26 39 134;
   }
 
-  /* Energy — warm near-black/charcoal base, amber-gold accent, muted
-   * brick-red as a secondary decorative touch only (applied in specific
-   * components, e.g. sidebar active item / card hover — not a color token
-   * here, since danger/error stays on Tailwind's stock red everywhere). */
+  /* Energy — solid neutral dark grey/black (no warm/sepia tint — every stop
+   * is R=G=B). Yellow is NOT a broad palette color here: `brand-*` (which
+   * drives buttons/active-tab/toggle/focus-ring everywhere) is a light
+   * neutral grey accent, so the whole UI stays monochrome. Yellow only
+   * appears as a glow/shadow (--color-energy-glow, defined below) on a
+   * small, deliberately limited set of components — see the decorative
+   * rules further down this file. Muted brick-red remains a secondary
+   * decorative touch on the sidebar active item / card hover (unrelated to
+   * yellow, unchanged) — danger/error stays on Tailwind's stock red
+   * everywhere in both themes. */
   :root[data-theme='energy'] {
-    --color-gray-50:  250 249 247;
-    --color-gray-100: 240 238 234;
-    --color-gray-200: 221 217 211;
-    --color-gray-300: 184 178 170;
-    --color-gray-400: 143 137 131;
-    --color-gray-500: 107 102 95;
-    --color-gray-600: 77 73 67;
-    --color-gray-700: 58 54 50;
-    --color-gray-800: 36 34 32;
-    --color-gray-900: 22 21 18;
+    --color-gray-50:  247 247 247;
+    --color-gray-100: 236 236 236;
+    --color-gray-200: 212 212 212;
+    --color-gray-300: 176 176 176;
+    --color-gray-400: 134 134 134;
+    --color-gray-500: 97 97 97;
+    --color-gray-600: 69 69 69;
+    --color-gray-700: 46 46 46;
+    --color-gray-800: 28 28 28;
+    --color-gray-900: 18 18 18;
     --color-gray-950: 10 10 10;
 
-    --color-brand-50:  255 253 240;
-    --color-brand-100: 254 252 232;
-    --color-brand-200: 254 249 195;
-    --color-brand-300: 254 240 138;
-    --color-brand-400: 253 224 71;
-    --color-brand-500: 250 204 21;
-    --color-brand-600: 234 179 8;
-    --color-brand-700: 161 98 7;
-    --color-brand-800: 133 77 14;
-    --color-brand-900: 113 63 18;
+    --color-brand-50:  255 255 255;
+    --color-brand-100: 245 245 245;
+    --color-brand-200: 224 224 224;
+    --color-brand-300: 194 194 194;
+    --color-brand-400: 158 158 158;
+    --color-brand-500: 122 122 122;
+    --color-brand-600: 92 92 92;
+    --color-brand-700: 64 64 64;
+    --color-brand-800: 48 48 48;
+    --color-brand-900: 32 32 32;
+
+    /* Yellow glow color for the limited decorative "shadow of yellow"
+     * treatment (box-shadow only, never a fill) applied to .btn-primary and
+     * .toggle-on further down this file. */
+    --color-energy-glow: 234 179 8;
   }
 
   :root {
@@ -191,4 +202,20 @@
 }
 :root[data-theme='energy'] .card:hover {
   box-shadow: 0 0 0 1px rgba(127, 29, 29, 0.35);
+}
+
+/* Energy's "shadow of yellow": deliberately limited to these two component
+ * classes only — the general palette (gray/brand above) stays solid neutral
+ * dark grey/black. A glow (box-shadow), never a fill, using
+ * --color-energy-glow (defined in the :root[data-theme='energy'] block). */
+.btn-primary,
+.toggle-on {
+  box-shadow: none;
+  transition: box-shadow 150ms ease-in-out, background-color 150ms ease-in-out;
+}
+:root[data-theme='energy'] .btn-primary {
+  box-shadow: 0 0 10px 1px rgb(var(--color-energy-glow) / 0.45);
+}
+:root[data-theme='energy'] .toggle-on {
+  box-shadow: 0 0 6px 0 rgb(var(--color-energy-glow) / 0.5);
 }
