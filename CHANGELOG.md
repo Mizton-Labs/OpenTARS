@@ -9,6 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Track workflow, full evidence in reports, professional branded PDF (issue-local-018 follow-up)
+
+**New "Track workflow" checkbox** next to "Show subtasks" in the workflow graph toolbar — when
+enabled, the React Flow chart re-centers on whichever agent/task node is currently active every
+time it changes (smooth animated pan, generous padding for a readable zoom), instead of staying at
+its initial fit for the rest of the run.
+
+**Reports now include the full extracted/parsed evidence**, not just an aggregate count. Every
+evidence item's label, type, parser, status, and full parsed text now appears as its own section in
+both the Markdown and PDF reports, consistent with how thoroughly every other section (hypotheses,
+leads, TTPs) is already documented.
+
+**Overhauled PDF report generation** — replaced the dark-UI color scheme (near-invisible light-gray
+headings and dark table fills on a printed white page) with a professional light palette: dark
+slate headings, a brand-blue accent rule, light indigo table headers with dark text, alternating
+rows, consistent borders, and header rows that repeat across page breaks. The configured branding
+logo and app title (when set in Configuration) now appear on the cover and in a running footer.
+
 ### Changed — IOC apply placement, run header dedup, graph focus/colors, Ocean re-hue (issue-local-018 follow-up)
 
 **"Apply changes" for staged IOC verdicts moved next to the filter it affects** — instead of a
