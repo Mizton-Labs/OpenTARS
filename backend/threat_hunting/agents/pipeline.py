@@ -39,6 +39,7 @@ Approval gate implementation:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from langgraph.graph import END, StateGraph
 
@@ -213,6 +214,7 @@ def build_initial_state(
     provider_name: str | None = None,
     model_name: str | None = None,
     research_effort: str = "medium",
+    run_config: dict[str, Any] | None = None,
 ) -> HuntPipelineState:
     """Build the initial pipeline state for a new generation run."""
     return HuntPipelineState(
@@ -220,6 +222,7 @@ def build_initial_state(
         provider_name=provider_name,
         model_name=model_name,
         research_effort=research_effort,
+        run_config=run_config or {},
         approved=False,
         rejected=False,
         approval_notes="",

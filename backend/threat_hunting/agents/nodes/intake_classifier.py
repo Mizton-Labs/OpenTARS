@@ -14,9 +14,14 @@ Performs four distinct tasks:
    on high research effort).
 
 3. **IOC extraction** (issue-008-2B): All evidence item texts are scanned by the
-   deterministic extract_iocs_from_text() extractor. Prior IOC rows are cleared
-   first (clear_extracted_iocs) so re-runs always produce a clean, non-duplicated
-   set.
+   deterministic extract_iocs_from_text() extractor. Prior IOC rows for THIS RUN
+   are cleared first (clear_extracted_iocs, run_id-scoped since issue-local-015)
+   so re-runs always produce a clean, non-duplicated set — without touching any
+   other run's IOC rows, which is what makes each run's IOC set independent.
+   Each IOC's keep/remove `action` is then computed from the run's `run_config`
+   (issue-local-015 "IOC active cleaning" — see `iocs.compute_ioc_action`) and
+   persisted; `tagging_only` mode (default) keeps everything, matching the
+   pre-015 behavior exactly.
 
 4. **LLM tool-calling enrichment** (issue-006-B): When the LLM provider supports
    tools, this node may call:
@@ -287,10 +292,12 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         evidence_text_corpus = "\n\n".join(texts) if texts else ""
 
         # ── 4. Deterministic IOC extraction (issue-008-2B) ───────────────────
-        # Clear prior IOCs first to ensure a clean slate on re-runs.
-        cleared = await th_db.clear_extracted_iocs(pkg_id)
+        # issue-local-015: scoped to this run_id — each run keeps its own
+        # independent IOC set instead of overwriting the package's shared one.
+        run_id = state.get("run_id", "")
+        cleared = await th_db.clear_extracted_iocs(pkg_id, run_id)
         if cleared:
-            debug_lines.append(f"IOC_CLEAR: cleared {cleared} prior IOC rows")
+            debug_lines.append(f"IOC_CLEAR: cleared {cleared} prior IOC rows for this run")
 
         all_iocs: list[dict[str, Any]] = []
         for item in evidence_items:
@@ -299,12 +306,12 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                 continue
             item_iocs = extract_iocs_from_text(text)
             if item_iocs:
-                await th_db.add_extracted_iocs(pkg_id, item["id"], item_iocs)
+                await th_db.add_extracted_iocs(pkg_id, item["id"], item_iocs, run_id=run_id)
                 all_iocs.extend(item_iocs)
                 ioc_count_extracted += len(item_iocs)
 
         # Reload from DB for deduplication guarantees
-        all_iocs = await th_db.list_extracted_iocs(pkg_id)
+        all_iocs = await th_db.list_extracted_iocs(pkg_id, run_id)
         debug_lines.append(
             f"IOC_EXTRACT: extracted {ioc_count_extracted} raw → {len(all_iocs)} unique stored"
         )
@@ -418,24 +425,70 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             except Exception as triage_exc:  # noqa: BLE001
                 debug_lines.append(f"IOC_LLM_TRIAGE_ERROR: {triage_exc}")
 
+        # ── 5c. IOC active-cleaning decision (issue-local-015) ────────────────
+        # Compute each IOC's keep/remove action from this run's config, now
+        # that noise scoring (step 4) and both enrichment passes (5, 5b) have
+        # had their say. Persist to the rows inserted in step 4 (tool-added
+        # IOCs from step 5 were never DB-backed to begin with — unchanged
+        # pre-existing behavior). In tagging_only mode (default) everything
+        # stays "keep" and downstream sees the full list, same as before this
+        # feature existed.
+        run_config = state.get("run_config") or {}
+        ioc_mode = run_config.get("ioc_mode", "tagging_only")
+        cleaning_options = run_config.get("ioc_cleaning_options") or {}
+        from backend.threat_hunting.iocs import compute_ioc_action
+
+        db_rows = await th_db.list_extracted_iocs(pkg_id, run_id)
+        db_row_keys = {(r.get("ioc"), r.get("ioc_type")) for r in db_rows}
+        action_updates: list[tuple[str, str, str]] = []
+        for ioc_item in all_iocs:
+            action, removal_reason = compute_ioc_action(
+                ioc_item, ioc_mode=ioc_mode, cleaning_options=cleaning_options
+            )
+            ioc_item["action"] = action
+            if removal_reason:
+                ioc_item["removal_reason"] = removal_reason
+            key = (ioc_item.get("ioc"), ioc_item.get("ioc_type"))
+            if key in db_row_keys:
+                action_updates.append(
+                    (ioc_item.get("ioc", ""), ioc_item.get("ioc_type", ""), action)
+                )
+        if action_updates:
+            await th_db.update_ioc_actions(run_id, action_updates)
+        removed_count = sum(1 for i in all_iocs if i.get("action") == "remove")
+        if ioc_mode == "active_cleaning":
+            debug_lines.append(
+                f"IOC_ACTIVE_CLEANING: {removed_count} IOC(s) marked removed, "
+                f"{len(all_iocs) - removed_count} kept for downstream analysis"
+            )
+            all_iocs_for_downstream = [i for i in all_iocs if i.get("action") != "remove"]
+        else:
+            all_iocs_for_downstream = all_iocs
+
         # ── 6. Build IOC summary ──────────────────────────────────────────────
+        # ioc_summary/raw_ioc_list (returned to state below) are built from
+        # all_iocs_for_downstream — the LLM-facing set, already excluding
+        # action=="remove" items in active_cleaning mode. Log/DB-facing
+        # counts below intentionally use the full all_iocs so operators can
+        # still see everything that was extracted, not just what survived.
         by_type: dict[str, int] = {}
-        for ioc in all_iocs:
+        for ioc in all_iocs_for_downstream:
             t = ioc.get("ioc_type", "other")
             by_type[t] = by_type.get(t, 0) + 1
+        noisy_downstream = sum(1 for i in all_iocs_for_downstream if i.get("flagged_noisy"))
         noisy = sum(1 for i in all_iocs if i.get("flagged_noisy"))
 
         ioc_summary: dict[str, Any] = {
-            "total": len(all_iocs),
+            "total": len(all_iocs_for_downstream),
             "by_type": by_type,
-            "noisy_count": noisy,
+            "noisy_count": noisy_downstream,
             "sample": [
                 {
                     "ioc": i.get("ioc"),
                     "ioc_type": i.get("ioc_type"),
                     "description": i.get("ioc_description"),
                 }
-                for i in all_iocs[:50]
+                for i in all_iocs_for_downstream[:50]
             ],
         }
 
@@ -473,7 +526,8 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             "errors": errors,
             "evidence_text_corpus": evidence_text_corpus,
             "ioc_summary": ioc_summary,
-            "raw_ioc_list": all_iocs,
+            "raw_ioc_list": all_iocs_for_downstream,
+            "all_extracted_iocs": all_iocs,
         }
     except Exception as exc:
         logger.exception("Node %s failed: %s", step, exc)

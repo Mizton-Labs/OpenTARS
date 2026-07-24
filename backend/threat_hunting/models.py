@@ -96,9 +96,11 @@ class ExtractedIOCOut(BaseModel):
     id: str
     evidence_item_id: str
     hunt_package_id: str
+    run_id: str | None = None
     ioc: str
     ioc_type: str
     ioc_description: str
     noise_score: float
     flagged_noisy: bool
+    action: str = "keep"
     created_at: str

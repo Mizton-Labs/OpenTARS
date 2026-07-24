@@ -1070,13 +1070,23 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
         { method: 'DELETE' },
       ),
-    listIocs: (pkgId: string) =>
+    listIocs: (pkgId: string, runId?: string) =>
       request<THExtractedIOC[]>(
-        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs`,
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs${runId ? `?run_id=${encodeURIComponent(runId)}` : ''}`,
+      ),
+    discardHypothesis: (pkgId: string, runId: string, hypothesisId: string, discarded: boolean) =>
+      request<THHypothesis>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/hypotheses/${encodeURIComponent(hypothesisId)}`,
+        { method: 'PATCH', body: JSON.stringify({ discarded }) },
+      ),
+    discardHuntingLead: (pkgId: string, runId: string, leadId: string, discarded: boolean) =>
+      request<THHuntingLead>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/hunting-leads/${encodeURIComponent(leadId)}`,
+        { method: 'PATCH', body: JSON.stringify({ discarded }) },
       ),
 
     // Generation (Phase 3)
-    startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string; research_effort?: string } = {}) =>
+    startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string; research_effort?: string; run_config?: THIocRunConfig } = {}) =>
       request<THGenerationRecord>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/generate`,
         { method: 'POST', body: JSON.stringify(body) },
@@ -1704,12 +1714,27 @@ export interface THExtractedIOC {
   id: string
   evidence_item_id: string
   hunt_package_id: string
+  /** issue-local-015: which run this IOC belongs to — each run's set is independent. */
+  run_id?: string | null
   ioc: string
   ioc_type: string
   ioc_description: string
   noise_score: number
   flagged_noisy: boolean
+  /** issue-local-015: keep/remove decision from this run's IOC active-cleaning config. */
+  action?: 'keep' | 'remove'
   created_at: string
+}
+
+/** issue-local-015: per-run IOC handling config, sent when starting a run. */
+export interface THIocRunConfig {
+  ioc_mode: 'tagging_only' | 'active_cleaning'
+  ioc_cleaning_options?: {
+    remove_noisy?: boolean
+    remove_legit_domains?: boolean
+    remove_cdn_ranges?: boolean
+    remove_legit_services?: boolean
+  }
 }
 
 /** Per-source intake metadata emitted by intake_classifier (issue-006-C / issue-local-011). */
@@ -1802,6 +1827,10 @@ export interface THHypothesis {
   ioc_basis: string[]
   /** Specific detection tools/artifacts/query fragments (issue-006-E). */
   suggested_actions?: string[]
+  /** issue-local-015: LLM-assessed confidence (0-100) this hypothesis is correct. */
+  confidence?: number
+  /** issue-local-015: analyst-set — excluded from further consideration/execution. */
+  discarded?: boolean
 }
 
 export interface THHuntTask {
@@ -1819,6 +1848,8 @@ export interface THHuntingLead {
   description: string
   priority: 'high' | 'medium' | 'low'
   tasks: THHuntTask[]
+  /** issue-local-015: analyst-set — excluded from further consideration/execution. */
+  discarded?: boolean
 }
 
 export interface THTTPTechnique {
@@ -1854,6 +1885,9 @@ export interface THSanitizedIOC {
   noise_score: number       // 0.0–1.0; higher = noisier
   noise_reasons: string[]   // human-readable noise reasons
   search_token: string      // shortest SIEM-ready search token
+  /** issue-local-015: this run's IOC active-cleaning decision. 'remove' items
+   * are excluded from the SPL/CSV but stay visible here for audit. */
+  action?: 'keep' | 'remove'
 }
 
 export interface THDeepRetrohuntLead {

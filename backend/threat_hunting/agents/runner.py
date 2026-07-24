@@ -91,7 +91,8 @@ async def _save_generation_state(
                    deep_retrohunt=?, ttp_analysis=?, query_drafts=?,
                    llm_provider=?, llm_model=?,
                    generation_status=?, generation_errors=?,
-                   current_step=?, completed_steps=?, step_logs=?, research_effort=?
+                   current_step=?, completed_steps=?, step_logs=?, research_effort=?,
+                   run_config=?
                    WHERE id=?""",
                 (
                     _to_json(state.get("threat_context")),
@@ -108,6 +109,7 @@ async def _save_generation_state(
                     _to_json(state.get("completed_steps") or []),
                     _to_json(state.get("step_logs") or []),
                     state.get("research_effort", "medium"),
+                    _to_json(state.get("run_config") or {}),
                     run_id,
                 ),
             )
@@ -118,8 +120,9 @@ async def _save_generation_state(
                     hunting_leads, deep_retrohunt, ttp_analysis, query_drafts,
                     llm_provider, llm_model,
                     generation_status, generation_errors, created_at,
-                    current_step, completed_steps, step_logs, research_effort)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    current_step, completed_steps, step_logs, research_effort,
+                    run_config)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id,
                     pkg_id,
@@ -138,6 +141,7 @@ async def _save_generation_state(
                     _to_json(state.get("completed_steps") or []),
                     _to_json(state.get("step_logs") or []),
                     state.get("research_effort", "medium"),
+                    _to_json(state.get("run_config") or {}),
                 ),
             )
         await db.commit()
@@ -169,6 +173,7 @@ async def _get_run_record(run_id: str) -> dict[str, Any] | None:
         "generation_errors",
         "completed_steps",
         "step_logs",
+        "run_config",
     ):
         raw = d.get(field)
         if raw and isinstance(raw, str):
@@ -210,6 +215,7 @@ async def _get_latest_run_record(pkg_id: str) -> dict[str, Any] | None:
         "generation_errors",
         "completed_steps",
         "step_logs",
+        "run_config",
     ):
         raw = d.get(field)
         if raw and isinstance(raw, str):
@@ -274,6 +280,12 @@ async def _run_pipeline(
         get_compiled_graph,
         get_post_approval_graph,
     )
+
+    # issue-local-015: nodes (e.g. intake_classifier) need run_id to scope
+    # extracted_iocs rows per-run — inject it into the graph state itself,
+    # since node functions only ever see HuntPipelineState, not this
+    # function's own run_id parameter.
+    initial_state = {**initial_state, "run_id": run_id}
 
     try:
         await _save_generation_state(run_id, pkg_id, initial_state, status="running")
@@ -358,6 +370,7 @@ async def start_generation(
     provider_name: str | None = None,
     model_name: str | None = None,
     research_effort: str = "medium",
+    run_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a new generation run for a hunt package.
 
@@ -366,6 +379,9 @@ async def start_generation(
     available at any time, so multiple runs (e.g. different models/effort)
     can execute concurrently. The prior run(s) are left untouched. Returns a
     dict containing the new run_id and initial status.
+
+    *run_config* (issue-local-015) carries this run's IOC-handling settings
+    (ioc_mode + cleaning toggles) — see HuntPipelineState.run_config.
     """
     from backend.threat_hunting.agents.pipeline import build_initial_state
 
@@ -375,6 +391,7 @@ async def start_generation(
         provider_name=provider_name,
         model_name=model_name,
         research_effort=research_effort,
+        run_config=run_config,
     )
     # Pre-register so sequential guard works before the task begins
     _ACTIVE_RUN_PKG[run_id] = pkg_id
@@ -390,6 +407,7 @@ async def start_generation(
         "provider_name": provider_name,
         "model_name": model_name,
         "research_effort": research_effort,
+        "run_config": run_config or {},
     }
 
 

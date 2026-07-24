@@ -84,6 +84,13 @@ class Hypothesis(TypedDict):
     ioc_basis: list[str]  # IOC values that support this hypothesis
     # issue-006-E: specific tool/artifact/query/technical details for this hypothesis
     suggested_actions: list[str]
+    # issue-local-015: LLM-assessed confidence (0-100), separate from the
+    # coarse relevance bucket above — how sure the model is this hypothesis
+    # is correct, not how important it would be if true.
+    confidence: int
+    # issue-local-015: app-set only (never LLM-provided) — True once an
+    # analyst excludes this hypothesis from further consideration/execution.
+    discarded: bool
 
 
 class HuntTask(TypedDict):
@@ -101,6 +108,9 @@ class HuntingLead(TypedDict):
     description: str
     tasks: list[HuntTask]
     priority: str  # 'high' | 'medium' | 'low'
+    # issue-local-015: app-set only (never LLM-provided) — True once an
+    # analyst excludes this lead from further consideration/execution.
+    discarded: bool
 
 
 class TTPTechnique(TypedDict):
@@ -143,6 +153,11 @@ class SanitizedIOC(TypedDict):
     noise_score: float  # 0.0–1.0; higher = noisier
     noise_reasons: list[str]  # human-readable reasons contributing to score
     search_token: str  # shortest search-ready token for SIEM queries
+    # issue-local-015: carried through from intake_classifier's IOC active-
+    # cleaning decision ('keep'|'remove') so this table can show — and let
+    # an analyst filter to — the full picture including what was excluded,
+    # not just what survived into the SPL draft.
+    action: str
 
 
 class DeepRetrohuntLead(TypedDict):
@@ -171,14 +186,35 @@ class DeepRetrohuntLead(TypedDict):
 class HuntPipelineState(TypedDict, total=False):
     # ── Inputs ────────────────────────────────────────────────────────────────
     hunt_package_id: str
+    # issue-local-015: injected by runner._run_pipeline before the graph
+    # starts (not part of build_initial_state) — the run_id this pipeline
+    # execution is persisting to, needed by nodes that scope DB writes per
+    # run (e.g. intake_classifier's extracted_iocs rows).
+    run_id: str
     provider_name: str | None  # override LLM provider; None = use default
     model_name: str | None  # override model; None = provider default
     research_effort: str  # 'high' | 'medium' | 'low' (default 'medium')
+    # issue-local-015: per-run IOC handling config —
+    # {"ioc_mode": "tagging_only"|"active_cleaning",
+    #  "ioc_cleaning_options": {"remove_noisy": bool, "remove_legit_domains": bool,
+    #                           "remove_cdn_ranges": bool, "remove_legit_services": bool}}
+    # Defaults to tagging_only (today's behavior) when absent/empty.
+    run_config: dict[str, Any]
 
     # ── Evidence summary (set by intake_classifier) ───────────────────────────
     evidence_text_corpus: str  # concatenated extracted text from all evidence
     ioc_summary: IOCSummary  # counts + sample IOCs for prompt context
-    raw_ioc_list: list[dict[str, Any]]  # full extracted IOC list
+    # LLM-facing extracted IOC list — excludes action=='remove' items when
+    # this run's ioc_mode is 'active_cleaning' (issue-local-015). This is
+    # what every prompt-building node (hypothesis/hunting-lead/query-draft)
+    # should read.
+    raw_ioc_list: list[dict[str, Any]]
+    # issue-local-015: the COMPLETE extracted IOC list, unfiltered, every
+    # item carrying its 'action' ('keep'|'remove'). deep_retrohunt_planner
+    # reads this instead of raw_ioc_list so its "Sanitized IOCs" review
+    # table can show both what's actionable and what active-cleaning
+    # excluded — the LLM-facing nodes above deliberately do NOT use this.
+    all_extracted_iocs: list[dict[str, Any]]
 
     # ── Generated outputs ─────────────────────────────────────────────────────
     threat_context: dict[str, Any]  # set by threat_context_builder
@@ -202,5 +238,5 @@ class HuntPipelineState(TypedDict, total=False):
     step_logs: Annotated[list[dict[str, Any]], _reduce_step_logs]
     generation_status: (
         str  # 'running' | 'awaiting_approval' | 'approved' | 'rejected'
-             # | 'executing' | 'reporting' | 'completed' | 'error'
+        # | 'executing' | 'reporting' | 'completed' | 'error'
     )

@@ -185,6 +185,16 @@ def _sanitize_ioc_list(raw_iocs: list[dict[str, Any]]) -> list[SanitizedIOC]:
         score = _noise_score(normalized, ioc_type)
         reasons = _noise_reasons(normalized, ioc_type)
         token = _search_token(normalized, ioc_type)
+        action = str(row.get("action") or "keep")
+
+        # issue-local-015 feedback: when active cleaning removed this IOC for
+        # a non-noise reason (legit-domain/CDN/service allowlist match —
+        # iocs.compute_ioc_action), that rationale doesn't come from
+        # _noise_reasons() at all, so the "Removed" section would otherwise
+        # show no explanation. Lead with it so the analyst always sees why.
+        removal_reason = row.get("removal_reason")
+        if action == "remove" and removal_reason and removal_reason not in reasons:
+            reasons = [str(removal_reason), *reasons]
 
         results.append(
             SanitizedIOC(
@@ -194,6 +204,11 @@ def _sanitize_ioc_list(raw_iocs: list[dict[str, Any]]) -> list[SanitizedIOC]:
                 noise_score=score,
                 noise_reasons=reasons,
                 search_token=token,
+                # issue-local-015: carried through from the source row —
+                # intake_classifier already computed this per the run's
+                # active-cleaning config; 'keep' when absent (e.g. rows
+                # from before this field existed).
+                action=action,
             )
         )
 
@@ -328,7 +343,14 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
 
     profile = get_effort_profile(state.get("research_effort"))
 
-    raw_iocs: list[dict[str, Any]] = list(state.get("raw_ioc_list") or [])
+    # issue-local-015: read the COMPLETE list (kept + removed), not the
+    # LLM-facing raw_ioc_list intake_classifier already filtered — this
+    # node's review table needs to show what active-cleaning excluded too.
+    # Falls back to raw_ioc_list for older/resumed state that predates
+    # all_extracted_iocs.
+    raw_iocs: list[dict[str, Any]] = list(
+        state.get("all_extracted_iocs") or state.get("raw_ioc_list") or []
+    )
 
     # Filter to atomic IOC types only
     atomic_iocs = [r for r in raw_iocs if str(r.get("ioc_type", "other")).lower() in _ATOMIC_TYPES]
@@ -357,13 +379,22 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
 
     # ── Stage 1: deterministic sanitization ──────────────────────────────────
     try:
+        # 'sanitized' is the COMPLETE reviewable list (kept + removed) —
+        # returned as-is for the frontend's Sanitized/Removed selector.
+        # Everything downstream that actually builds the hunt (CSV, SPL
+        # macro, LLM context/stats) uses 'kept' only — action=='remove'
+        # IOCs stay visible for audit but never enter the query.
         sanitized = _sanitize_ioc_list(atomic_iocs)
-        ioc_csv = _build_ioc_csv(sanitized)
-        noisy_count = sum(1 for s in sanitized if s["noise_score"] >= NOISE_THRESHOLD)
-        high_noise_count = sum(1 for s in sanitized if s["noise_score"] >= HIGH_NOISE_THRESHOLD)
+        kept = [s for s in sanitized if s.get("action") != "remove"]
+        removed_count = len(sanitized) - len(kept)
+        ioc_csv = _build_ioc_csv(kept)
+        noisy_count = sum(1 for s in kept if s["noise_score"] >= NOISE_THRESHOLD)
+        high_noise_count = sum(1 for s in kept if s["noise_score"] >= HIGH_NOISE_THRESHOLD)
         logger.info(
-            "deep_retrohunt_planner: sanitized %d IOCs (%d noisy, %d high-noise)",
+            "deep_retrohunt_planner: sanitized %d IOCs (%d kept, %d removed, %d noisy, %d high-noise)",
             len(sanitized),
+            len(kept),
+            removed_count,
             noisy_count,
             high_noise_count,
         )
@@ -400,7 +431,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         from backend.llm.errors import LLMDisabledError
 
         enrichment = await _enrich_with_llm(
-            sanitized,
+            kept,
             ioc_csv,
             state.get("hunt_package_id", "unknown"),
             provider_name=state.get("provider_name"),
@@ -427,7 +458,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     result: DeepRetrohuntLead = DeepRetrohuntLead(
         sanitized_iocs=sanitized,
         ioc_csv=ioc_csv,
-        total_ioc_count=len(sanitized),
+        total_ioc_count=len(kept),
         noisy_ioc_count=noisy_count,
         high_noise_ioc_count=high_noise_count,
         spl_draft=spl_draft,

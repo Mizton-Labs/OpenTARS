@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Radar,
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Radar, Ban, RotateCcw,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -17,6 +17,52 @@ import {
 import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
+
+// issue-local-015: prominent, highly-visible discard/restore action for a
+// hypothesis or hunting-lead card — a standalone button card rather than a
+// small inline text link, per explicit feedback that the original discard
+// link was too easy to miss.
+function DiscardButtonCard({
+  discarded,
+  onClick,
+  disabled,
+}: {
+  discarded: boolean
+  onClick: () => void
+  disabled: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={clsx(
+        'w-full flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2 text-xs font-semibold transition-colors mt-1.5',
+        discarded
+          ? 'border-green-700/60 bg-green-900/15 text-green-400 hover:bg-green-900/25'
+          : 'border-red-800/50 bg-red-900/15 text-red-400 hover:bg-red-900/25',
+        disabled && 'opacity-50 cursor-not-allowed',
+      )}
+    >
+      {discarded ? <RotateCcw className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+      {discarded ? 'Restore this item' : 'Discard this item'}
+    </button>
+  )
+}
+
+// Defensive: some LLMs (observed with an ES DSL draft) return `query` as a
+// nested JSON object instead of the string the schema asks for. The backend
+// now normalizes this going forward, but records generated before that fix
+// still have the raw object — rendering it directly as a React child throws
+// "Objects are not valid as a React child" and blanks the whole page. Coerce
+// anything non-string to readable JSON instead of trusting the TS type.
+function asQueryText(query: unknown): string {
+  if (typeof query === 'string') return query
+  try {
+    return JSON.stringify(query, null, 2)
+  } catch {
+    return String(query)
+  }
+}
 
 export default function AnalysisTab({
   pkgId,
@@ -36,6 +82,15 @@ export default function AnalysisTab({
   const [showApproveForm, setShowApproveForm] = useState(false)
   const [selectedEffort, setSelectedEffort] = useState<string>('')
   const [modelChoice, setModelChoice] = useState<string>('')
+  // issue-local-015: per-run IOC handling config (first-run form — the
+  // re-run dialog in HuntDetail.tsx has its own equivalent state).
+  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>('tagging_only')
+  const [iocCleaningOptions, setIocCleaningOptions] = useState({
+    remove_noisy: true,
+    remove_legit_domains: true,
+    remove_cdn_ranges: true,
+    remove_legit_services: false,
+  })
 
   // Load global default effort for the Generate screen
   const { data: effortData } = useQuery({
@@ -88,6 +143,10 @@ export default function AnalysisTab({
         research_effort: effort,
         provider_name: chosenModel?.provider ?? undefined,
         model_name: chosenModel?.model ?? undefined,
+        run_config: {
+          ioc_mode: iocMode,
+          ioc_cleaning_options: iocMode === 'active_cleaning' ? iocCleaningOptions : undefined,
+        },
       })
     },
     onSuccess: (data) => {
@@ -194,6 +253,50 @@ export default function AnalysisTab({
                   ))}
                 </select>
               </div>
+              {/* issue-local-015: IOC handling mode */}
+              <div className="flex flex-col items-center gap-1.5 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-500">IOC handling:</span>
+                  {(['tagging_only', 'active_cleaning'] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={clsx(
+                        'px-2.5 py-1 rounded text-xs border transition-colors',
+                        iocMode === m
+                          ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                          : 'border-gray-700 text-gray-500 hover:border-gray-500',
+                      )}
+                      onClick={() => setIocMode(m)}
+                    >
+                      {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
+                    </button>
+                  ))}
+                </div>
+                {iocMode === 'active_cleaning' && (
+                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pt-1">
+                    {(
+                      [
+                        ['remove_noisy', 'Noisy'],
+                        ['remove_legit_domains', 'Legit domains'],
+                        ['remove_cdn_ranges', 'CDN ranges'],
+                        ['remove_legit_services', 'Legit services'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-1 text-[11px] text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={iocCleaningOptions[key]}
+                          onChange={(e) =>
+                            setIocCleaningOptions((prev) => ({ ...prev, [key]: e.target.checked }))
+                          }
+                          className="accent-brand-500"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 className="btn-primary flex items-center gap-2 mx-auto"
                 disabled={startMut.isPending}
@@ -286,7 +389,7 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} pkgId={pkgId} />
+        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
       </div>
     )
   }
@@ -298,7 +401,7 @@ export default function AnalysisTab({
         <CheckCircle className="w-4 h-4 text-green-400" />
         <p className="text-sm font-semibold text-green-400">Hunt Package Approved</p>
       </div>
-      <HuntingPackageDraft record={genRecord} pkgId={pkgId} readOnly />
+      <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} readOnly />
     </div>
   )
 }
@@ -308,12 +411,57 @@ export default function AnalysisTab({
 function HuntingPackageDraft({
   record,
   pkgId,
-  readOnly: _readOnly = false,
+  runId,
+  readOnly = false,
 }: {
   record: THGenerationRecord
   pkgId: string
+  runId?: string
   readOnly?: boolean
 }) {
+  const qc = useQueryClient()
+
+  // issue-local-015: evidence-source chips on hypothesis cards are derived
+  // client-side (no new backend field) — ioc_basis values are looked up in
+  // this run's IOC list to find evidence_item_id, then in the evidence list
+  // for a human label. Same query keys HuntDetail.tsx uses for its own IOC
+  // tab / evidence tab, so this shares cache rather than re-fetching.
+  const { data: iocsForChips = [] } = useQuery({
+    queryKey: ['th-iocs', pkgId, runId],
+    queryFn: () => (runId ? api.threatHunting.listIocs(pkgId, runId) : Promise.resolve([])),
+    enabled: !!runId,
+  })
+  const { data: evidenceForChips = [] } = useQuery({
+    queryKey: ['th-evidence', pkgId],
+    queryFn: () => api.threatHunting.listEvidence(pkgId),
+  })
+
+  const evidenceLabelByIoc = useMemo(() => {
+    const evidenceLabelById = new Map(evidenceForChips.map((e) => [e.id, e.label || e.item_type]))
+    const map = new Map<string, string>()
+    for (const ioc of iocsForChips) {
+      const label = evidenceLabelById.get(ioc.evidence_item_id)
+      if (label) map.set(ioc.ioc, label)
+    }
+    return map
+  }, [iocsForChips, evidenceForChips])
+
+  const discardMut = useMutation({
+    mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
+      api.threatHunting.discardHypothesis(pkgId, runId ?? '', hypothesisId, discarded),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, runId] })
+    },
+  })
+
+  const discardLeadMut = useMutation({
+    mutationFn: ({ leadId, discarded }: { leadId: string; discarded: boolean }) =>
+      api.threatHunting.discardHuntingLead(pkgId, runId ?? '', leadId, discarded),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, runId] })
+    },
+  })
+
   return (
     <div className="space-y-5">
       {/* Threat Context */}
@@ -334,38 +482,87 @@ function HuntingPackageDraft({
       {record.hypotheses && record.hypotheses.length > 0 && (
         <CollapsibleSection title={`Hypotheses (${record.hypotheses.length})`} icon={Brain} defaultOpen>
           <div className="space-y-3">
-            {record.hypotheses.map((h: THHypothesis) => (
-              <div key={h.id} className="border border-gray-700 rounded-lg p-3 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-brand-400 font-mono">{h.id}</span>
-                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', h.relevance === 'high' ? 'bg-red-900/30 text-red-400' : h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
-                    {h.relevance}
-                  </span>
-                </div>
-                <p className="text-sm font-medium text-gray-200">{h.title}</p>
-                <p className="text-xs text-gray-400">{h.description}</p>
-                {h.justification && <p className="text-xs text-gray-500 italic">{h.justification}</p>}
-                {/* issue-006-E: ioc_basis */}
-                {h.ioc_basis && h.ioc_basis.length > 0 && (
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {h.ioc_basis.map((ioc) => (
-                      <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
-                        {ioc}
+            {record.hypotheses.map((h: THHypothesis) => {
+              // issue-local-015: evidence sources this hypothesis draws on,
+              // derived from ioc_basis → IOC → evidence label (deduplicated).
+              const evidenceLabels = Array.from(
+                new Set((h.ioc_basis ?? []).map((ioc) => evidenceLabelByIoc.get(ioc)).filter(Boolean)),
+              ) as string[]
+              return (
+                <div
+                  key={h.id}
+                  className={clsx(
+                    'border rounded-lg p-3 space-y-1.5 transition-opacity',
+                    h.discarded ? 'border-gray-800 opacity-50' : 'border-gray-700',
+                  )}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] text-brand-400 font-mono">{h.id}</span>
+                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', h.relevance === 'high' ? 'bg-red-900/30 text-red-400' : h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
+                      {h.relevance}
+                    </span>
+                    {/* issue-local-015: confidence score */}
+                    {h.confidence != null && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400"
+                        title="LLM-assessed confidence this hypothesis is correct"
+                      >
+                        {h.confidence}% confidence
                       </span>
-                    ))}
+                    )}
+                    {h.discarded && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+                        Discarded
+                      </span>
+                    )}
                   </div>
-                )}
-                {/* issue-006-E: suggested_actions */}
-                {h.suggested_actions && h.suggested_actions.length > 0 && (
-                  <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-0.5">
-                    <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
-                    {h.suggested_actions.map((action, i) => (
-                      <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+                  <p className={clsx('text-sm font-medium', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
+                    {h.title}
+                  </p>
+                  <p className="text-xs text-gray-400">{h.description}</p>
+                  {h.justification && <p className="text-xs text-gray-500 italic">{h.justification}</p>}
+                  {/* issue-006-E: ioc_basis */}
+                  {h.ioc_basis && h.ioc_basis.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {h.ioc_basis.map((ioc) => (
+                        <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
+                          {ioc}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* issue-local-015: evidence-source cards */}
+                  {evidenceLabels.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      <span className="text-[9px] text-gray-600 uppercase tracking-wider self-center mr-1">From:</span>
+                      {evidenceLabels.map((label) => (
+                        <span key={label} className="text-[9px] bg-blue-900/20 text-blue-400 border border-blue-800/30 rounded px-1.5 py-0.5">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* issue-006-E: suggested_actions */}
+                  {h.suggested_actions && h.suggested_actions.length > 0 && (
+                    <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-0.5">
+                      <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+                      {h.suggested_actions.map((action, i) => (
+                        <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
+                      ))}
+                    </div>
+                  )}
+                  {!readOnly && runId && (
+                    <DiscardButtonCard
+                      discarded={!!h.discarded}
+                      disabled={discardMut.isPending}
+                      onClick={() =>
+                        discardMut.mutate({ hypothesisId: h.id, discarded: !h.discarded })
+                      }
+                    />
+                  )}
+                </div>
+              )
+            })}
           </div>
         </CollapsibleSection>
       )}
@@ -374,15 +571,42 @@ function HuntingPackageDraft({
       {record.hunting_leads && record.hunting_leads.length > 0 && (
         <CollapsibleSection title={`Hunting Leads (${record.hunting_leads.length})`} icon={Target}>
           <div className="space-y-3">
-            {record.hunting_leads.map((lead: THHuntingLead) => (
-              <div key={lead.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
-                <div className="flex items-center gap-2">
+            {record.hunting_leads.map((lead: THHuntingLead) => {
+              // issue-local-015: show which hypothesis this lead was derived
+              // from — the data (hypothesis_id) already existed, just wasn't
+              // surfaced anywhere in the UI.
+              const sourceHypothesis = record.hypotheses?.find((h) => h.id === lead.hypothesis_id)
+              return (
+              <div
+                key={lead.id}
+                className={clsx(
+                  'border rounded-lg p-3 space-y-2 transition-opacity',
+                  lead.discarded ? 'border-gray-800 opacity-50' : 'border-gray-700',
+                )}
+              >
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] text-brand-400 font-mono">{lead.id}</span>
                   <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', lead.priority === 'high' ? 'bg-red-900/30 text-red-400' : lead.priority === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
                     {lead.priority}
                   </span>
+                  {lead.hypothesis_id && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900/20 text-brand-400 border border-brand-800/30"
+                      title={sourceHypothesis?.title}
+                    >
+                      Derived from: {lead.hypothesis_id}
+                      {sourceHypothesis?.discarded && ' (discarded)'}
+                    </span>
+                  )}
+                  {lead.discarded && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+                      Discarded
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-medium text-gray-200">{lead.title}</p>
+                <p className={clsx('text-sm font-medium', lead.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
+                  {lead.title}
+                </p>
                 <p className="text-xs text-gray-400">{lead.description}</p>
                 {lead.tasks && lead.tasks.length > 0 && (
                   <div className="pl-3 border-l border-gray-700 space-y-1.5 mt-2">
@@ -395,8 +619,18 @@ function HuntingPackageDraft({
                     ))}
                   </div>
                 )}
+                {!readOnly && runId && (
+                  <DiscardButtonCard
+                    discarded={!!lead.discarded}
+                    disabled={discardLeadMut.isPending}
+                    onClick={() =>
+                      discardLeadMut.mutate({ leadId: lead.id, discarded: !lead.discarded })
+                    }
+                  />
+                )}
               </div>
-            ))}
+              )
+            })}
           </div>
         </CollapsibleSection>
       )}
@@ -443,7 +677,7 @@ function HuntingPackageDraft({
                   <p className="text-xs font-medium text-gray-200">{q.title}</p>
                 </div>
                 {q.description && <p className="text-[10px] text-gray-500">{q.description}</p>}
-                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-[10px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{q.query}</pre>
+                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-[10px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{asQueryText(q.query)}</pre>
               </div>
             ))}
           </div>

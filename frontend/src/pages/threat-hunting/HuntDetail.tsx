@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
 import ExecutionPanel from './ExecutionPanel'
+import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
 import ConfirmDialog from '../../components/ConfirmDialog'
 
@@ -28,6 +29,14 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const [showRerunDialog, setShowRerunDialog] = useState(false)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
   const [rerunEffort, setRerunEffort] = useState<string>('medium')
+  // issue-local-015: per-run IOC handling config
+  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>('tagging_only')
+  const [iocCleaningOptions, setIocCleaningOptions] = useState({
+    remove_noisy: true,
+    remove_legit_domains: true,
+    remove_cdn_ranges: true,
+    remove_legit_services: false,
+  })
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -40,9 +49,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   })
 
   const { data: iocs = [] } = useQuery({
-    queryKey: ['th-iocs', pkgId],
-    queryFn: () => api.threatHunting.listIocs(pkgId),
-    enabled: activeTab === 'iocs',
+    queryKey: ['th-iocs', pkgId, activeRunId],
+    queryFn: () => api.threatHunting.listIocs(pkgId, activeRunId),
+    enabled: activeTab === 'iocs' && !!activeRunId,
   })
 
   // Load all generation runs for this package
@@ -50,6 +59,38 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     queryKey: ['th-runs', pkgId],
     queryFn: () => api.threatHunting.listRuns(pkgId),
     refetchInterval: 5000, // keep run list fresh
+  })
+
+  // issue-local-015: selected run's full record, for the header progress
+  // stepper. Same query key/shape as AnalysisTab.tsx's own fetch — React
+  // Query dedupes identical keys, so this doesn't double the polling when
+  // the Analysis tab is also active.
+  const { data: headerGenRecord } = useQuery({
+    queryKey: ['th-generation', pkgId, activeRunId],
+    queryFn: () => {
+      if (activeRunId) return api.threatHunting.getRunStatus(pkgId, activeRunId).catch(() => null)
+      return api.threatHunting.getGenerationStatus(pkgId).catch(() => null)
+    },
+    refetchInterval: (query) => {
+      const status = (query.state.data as { generation_status?: string } | null)?.generation_status
+      return status === 'running' ? 3000 : false
+    },
+    enabled: !!activeRunId,
+  })
+
+  // issue-local-015: lightweight existence checks for the Execution/Report
+  // phases of the header stepper — same query keys ExecutionPanel.tsx /
+  // ReportPanel.tsx already use, so this shares cache rather than
+  // duplicating fetches once those tabs are visited.
+  const { data: headerResults = [] } = useQuery({
+    queryKey: ['th-results', pkgId, activeRunId],
+    queryFn: () => (activeRunId ? api.threatHunting.listRunResults(pkgId, activeRunId) : Promise.resolve([])),
+    enabled: !!activeRunId,
+  })
+  const { data: headerReport } = useQuery({
+    queryKey: ['th-report', pkgId, activeRunId],
+    queryFn: () => (activeRunId ? api.threatHunting.getRunReport(pkgId, activeRunId).catch(() => null) : Promise.resolve(null)),
+    enabled: !!activeRunId,
   })
 
   // issue-006-G: LLM providers for re-run dialog model selector
@@ -98,6 +139,10 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
       research_effort: rerunEffort || 'medium',
       provider_name: rerunChosenModel?.provider ?? undefined,
       model_name: rerunChosenModel?.model ?? undefined,
+      run_config: {
+        ioc_mode: iocMode,
+        ioc_cleaning_options: iocMode === 'active_cleaning' ? iocCleaningOptions : undefined,
+      },
     }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
@@ -117,6 +162,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
   const noisyCount = (iocs as THExtractedIOC[]).filter((i) => i.flagged_noisy).length
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
+  const removedCount = (iocs as THExtractedIOC[]).filter((i) => i.action === 'remove').length
 
   const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
   // issue-local-014: re-run is available regardless of any run's status —
@@ -160,39 +206,48 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
-          <span className="text-xs text-gray-500 shrink-0">Run:</span>
-          <div className="relative flex-1 max-w-xs">
-            <select
-              className="input w-full text-xs pr-7 appearance-none"
-              value={activeRunId ?? ''}
-              onChange={(e) => setActiveRunId(e.target.value)}
-            >
-              {runs.map((run: THRunSummary, idx: number) => {
-                const label = run.created_at.slice(0, 19).replace('T', ' ')
-                const model = run.llm_model ?? run.llm_provider ?? ''
-                const effort = run.research_effort ?? ''
-                const suffix = [model, effort].filter(Boolean).join(' · ')
-                const status = run.generation_status
-                const isActive = status === 'running' || status === 'awaiting_approval'
-                return (
-                  <option key={run.id} value={run.id}>
-                    {idx === 0 ? '★ ' : ''}{label}{suffix ? ` (${suffix})` : ''}{isActive ? ' ⟳' : ''}
-                  </option>
-                )
-              })}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+        <div className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 shrink-0">Run:</span>
+            <div className="relative flex-1 max-w-xs">
+              <select
+                className="input w-full text-xs pr-7 appearance-none"
+                value={activeRunId ?? ''}
+                onChange={(e) => setActiveRunId(e.target.value)}
+              >
+                {runs.map((run: THRunSummary, idx: number) => {
+                  const label = run.created_at.slice(0, 19).replace('T', ' ')
+                  const model = run.llm_model ?? run.llm_provider ?? ''
+                  const effort = run.research_effort ?? ''
+                  const suffix = [model, effort].filter(Boolean).join(' · ')
+                  const status = run.generation_status
+                  const isActive = status === 'running' || status === 'awaiting_approval'
+                  return (
+                    <option key={run.id} value={run.id}>
+                      {idx === 0 ? '★ ' : ''}{label}{suffix ? ` (${suffix})` : ''}{isActive ? ' ⟳' : ''}
+                    </option>
+                  )
+                })}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+            </div>
+            <span className={clsx('text-[10px] px-2 py-0.5 rounded shrink-0',
+              runs.find(r => r.id === activeRunId)?.generation_status === 'completed' ? 'bg-green-900/30 text-green-400' :
+              runs.find(r => r.id === activeRunId)?.generation_status === 'running' ? 'bg-blue-900/30 text-blue-400' :
+              runs.find(r => r.id === activeRunId)?.generation_status === 'awaiting_approval' ? 'bg-amber-900/30 text-amber-400' :
+              runs.find(r => r.id === activeRunId)?.generation_status === 'error' ? 'bg-red-900/30 text-red-400' :
+              'bg-gray-800 text-gray-500'
+            )}>
+              {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
+            </span>
           </div>
-          <span className={clsx('text-[10px] px-2 py-0.5 rounded shrink-0',
-            runs.find(r => r.id === activeRunId)?.generation_status === 'completed' ? 'bg-green-900/30 text-green-400' :
-            runs.find(r => r.id === activeRunId)?.generation_status === 'running' ? 'bg-blue-900/30 text-blue-400' :
-            runs.find(r => r.id === activeRunId)?.generation_status === 'awaiting_approval' ? 'bg-amber-900/30 text-amber-400' :
-            runs.find(r => r.id === activeRunId)?.generation_status === 'error' ? 'bg-red-900/30 text-red-400' :
-            'bg-gray-800 text-gray-500'
-          )}>
-            {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
-          </span>
+          {/* issue-local-015: progress-block stepper for the selected run */}
+          <PipelineStepper
+            genRecord={headerGenRecord ?? undefined}
+            hasEvidence={evidence.length > 0}
+            hasResults={headerResults.length > 0}
+            hasReport={!!headerReport}
+          />
         </div>
       )}
 
@@ -296,16 +351,60 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
               <div className="flex gap-4 text-xs text-gray-500">
                 <span className="text-green-400">{cleanCount} actionable</span>
                 <span className="text-amber-400">{noisyCount} noisy / flagged</span>
+                {removedCount > 0 && (
+                  <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+                )}
+              </div>
+              {/* Column headers */}
+              <div className="flex items-center gap-3 px-3 text-[10px] text-gray-600 uppercase tracking-wider">
+                <span className="w-24 shrink-0">Type</span>
+                <span className="flex-1">IOC</span>
+                <span className="w-28 shrink-0">Result</span>
+                <span className="w-20 shrink-0 text-right">Action</span>
               </div>
               <div className="space-y-1">
-                {(iocs as THExtractedIOC[]).map((ioc) => (
-                  <div key={ioc.id} className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg text-xs', ioc.flagged_noisy ? 'bg-amber-900/10 border border-amber-800/30' : 'bg-gray-800/40')}>
-                    <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
-                    <span className="font-mono text-gray-200 flex-1 truncate">{ioc.ioc}</span>
-                    {ioc.flagged_noisy && <span className="text-amber-500 text-[10px] shrink-0">noisy</span>}
-                    <span className="text-gray-600 text-[10px] shrink-0">{(ioc.noise_score * 100).toFixed(0)}%</span>
-                  </div>
-                ))}
+                {(iocs as THExtractedIOC[]).map((ioc) => {
+                  const removed = ioc.action === 'remove'
+                  return (
+                    <div
+                      key={ioc.id}
+                      className={clsx(
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-xs',
+                        removed
+                          ? 'bg-red-900/10 border border-red-900/30 opacity-60'
+                          : ioc.flagged_noisy
+                            ? 'bg-amber-900/10 border border-amber-800/30'
+                            : 'bg-gray-800/40',
+                      )}
+                    >
+                      <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
+                      <span
+                        className={clsx(
+                          'font-mono flex-1 truncate',
+                          removed ? 'text-gray-500 line-through' : 'text-gray-200',
+                        )}
+                      >
+                        {ioc.ioc}
+                      </span>
+                      <span className="w-28 shrink-0 flex items-center gap-1.5">
+                        {ioc.flagged_noisy && (
+                          <span className="text-amber-500 text-[10px]">noisy</span>
+                        )}
+                        <span className="text-gray-600 text-[10px]">
+                          {(ioc.noise_score * 100).toFixed(0)}%
+                        </span>
+                      </span>
+                      <span
+                        className={clsx(
+                          'w-20 shrink-0 text-right text-[10px] font-medium',
+                          removed ? 'text-red-400' : 'text-green-400',
+                        )}
+                      >
+                        {removed ? 'remove' : 'keep'}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             </>
           )}
@@ -420,12 +519,57 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
               </div>
             </div>
 
+            {/* issue-local-015: IOC handling mode */}
+            <div className="space-y-1.5">
+              <label className="block text-xs text-gray-400">IOC Handling</label>
+              <div className="flex gap-2">
+                {(['tagging_only', 'active_cleaning'] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={clsx(
+                      'flex-1 py-1.5 text-[11px] rounded border transition-colors',
+                      iocMode === m
+                        ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
+                        : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
+                    )}
+                    onClick={() => setIocMode(m)}
+                  >
+                    {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
+                  </button>
+                ))}
+              </div>
+              {iocMode === 'active_cleaning' && (
+                <div className="space-y-1 pt-1">
+                  {(
+                    [
+                      ['remove_noisy', 'Remove noisy IOCs'],
+                      ['remove_legit_domains', 'Remove known legit domains'],
+                      ['remove_cdn_ranges', 'Remove known CDN ranges'],
+                      ['remove_legit_services', 'Remove known legit services'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-[11px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={iocCleaningOptions[key]}
+                        onChange={(e) =>
+                          setIocCleaningOptions((prev) => ({ ...prev, [key]: e.target.checked }))
+                        }
+                        className="accent-brand-500"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Selected summary */}
             <p className="text-[10px] text-gray-600">
               {rerunChosenModel
                 ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
                 : 'Default model'}{' '}
-              · effort: {rerunEffort}
+              · effort: {rerunEffort} · IOC: {iocMode === 'tagging_only' ? 'tagging only' : 'active cleaning'}
             </p>
 
             {/* Actions */}

@@ -39,7 +39,7 @@ async def test_db_v4_fresh_has_run_id_columns(tmp_path: Path) -> None:
 
     assert "run_id" in report_cols, "hunt_reports must have run_id"
     assert "run_id" in result_cols, "task_results must have run_id"
-    assert version == 4
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_db_v4_migration_from_v3(tmp_path: Path) -> None:
 
     assert "run_id" in report_cols
     assert "run_id" in result_cols
-    assert version == 4
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 # ── DB CRUD helpers ───────────────────────────────────────────────────────────

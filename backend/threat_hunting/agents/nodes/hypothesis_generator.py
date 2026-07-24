@@ -23,6 +23,7 @@ _OUTPUT_FORMAT = """[
     "description": "...",
     "justification": "...",
     "relevance": "high|medium|low",
+    "confidence": 0-100,
     "ioc_basis": ["ioc1", "ioc2"],
     "suggested_actions": [
       "Run SPL: index=main sourcetype=firewall dest_ip=<IOC>",
@@ -69,7 +70,12 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
                 "For each hypothesis, include 2-4 'suggested_actions': specific, actionable "
                 "detection steps such as a concrete SIEM query fragment, an EDR artifact to check, "
                 "a MITRE ATT&CK technique reference (e.g. T1059.001), or a log source to query. "
-                "suggested_actions must be strings, not nested objects."
+                "suggested_actions must be strings, not nested objects. "
+                "'confidence' (0-100) and 'relevance' (high/medium/low) are DIFFERENT signals — "
+                "confidence is how likely this hypothesis is to be correct given the evidence; "
+                "relevance is how significant/impactful it would be IF correct. A hypothesis can "
+                "be high-relevance but low-confidence (a serious concern with thin evidence), or "
+                "the reverse (near-certain but low-stakes)."
             ),
         )
 
@@ -95,6 +101,19 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             )
             errors.append(f"{step}: unexpected LLM response type, using empty list")
             hypotheses = []
+
+        # issue-local-015: confidence is LLM-provided but defensively
+        # clamped/coerced (models occasionally return strings or
+        # out-of-range values); discarded is always app-set, never trusted
+        # from the LLM even if it echoes the field back.
+        for h in hypotheses:
+            if not isinstance(h, dict):
+                continue
+            try:
+                h["confidence"] = max(0, min(100, int(h.get("confidence", 50))))
+            except (TypeError, ValueError):
+                h["confidence"] = 50
+            h["discarded"] = False
 
         elapsed = time.monotonic() - start
         logs.append(
