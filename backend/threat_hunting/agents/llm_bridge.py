@@ -343,3 +343,40 @@ def parse_json_response(response: str, context: str = "") -> Any:
         f" ({context})" if context else "",
     )
     return response  # Return raw string as fallback; nodes handle gracefully
+
+
+def coerce_string_list(value: Any, *, preferred_keys: tuple[str, ...] = ()) -> list[str]:
+    """Coerce a parsed LLM field to ``list[str]``, defensively.
+
+    Several node output schemas ask for a plain array of strings (e.g.
+    ``key_observations``, ``suggested_actions``, ``detection_opportunities``)
+    but models occasionally return a richer per-item object instead —
+    observed live with Mistral returning ``{"observation": ..., "confidence":
+    ..., "evidence": ...}`` entries for ``key_observations`` where a bare
+    string was asked for. Rendering such an object directly as a React child
+    crashes the whole page (minified error #31), and it can't be fixed
+    retroactively for already-persisted runs from the frontend alone since
+    the stored data itself has the wrong shape — so nodes call this right
+    after parsing to normalize at the source.
+    """
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            text = None
+            for key in preferred_keys:
+                candidate = item.get(key)
+                if isinstance(candidate, str) and candidate:
+                    text = candidate
+                    break
+            if text is None:
+                import json
+
+                text = json.dumps(item, default=str)
+            result.append(text)
+        elif item is not None:
+            result.append(str(item))
+    return result

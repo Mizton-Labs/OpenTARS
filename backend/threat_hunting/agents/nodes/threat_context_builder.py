@@ -20,6 +20,7 @@ from backend.threat_hunting.agents.llm_bridge import (
     build_prompt,
     call_llm,
     call_llm_with_tools,
+    coerce_string_list,
     parse_json_response,
 )
 from backend.threat_hunting.agents.state import HuntPipelineState
@@ -148,6 +149,11 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
                 if isinstance(parsed, dict)
                 else {"raw_response": str(parsed), "parse_error": True}
             )
+            if "key_observations" in threat_context:
+                threat_context["key_observations"] = coerce_string_list(
+                    threat_context["key_observations"],
+                    preferred_keys=("observation", "text", "description", "summary"),
+                )
 
         elapsed = time.monotonic() - start
         logs.append(

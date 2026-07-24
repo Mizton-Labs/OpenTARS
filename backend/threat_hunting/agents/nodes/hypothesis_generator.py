@@ -11,7 +11,12 @@ import logging
 import time
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
-from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
+from backend.threat_hunting.agents.llm_bridge import (
+    build_prompt,
+    call_llm,
+    coerce_string_list,
+    parse_json_response,
+)
 from backend.threat_hunting.agents.state import HuntPipelineState
 
 logger = logging.getLogger(__name__)
@@ -114,6 +119,13 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             except (TypeError, ValueError):
                 h["confidence"] = 50
             h["discarded"] = False
+            # Defensive: models occasionally return per-item objects instead
+            # of the plain strings the prompt/schema ask for (see
+            # coerce_string_list's docstring for the observed failure mode).
+            h["suggested_actions"] = coerce_string_list(
+                h.get("suggested_actions"),
+                preferred_keys=("action", "text", "description"),
+            )
 
         elapsed = time.monotonic() - start
         logs.append(

@@ -12,7 +12,12 @@ import logging
 import time
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
-from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
+from backend.threat_hunting.agents.llm_bridge import (
+    build_prompt,
+    call_llm,
+    coerce_string_list,
+    parse_json_response,
+)
 from backend.threat_hunting.agents.state import HuntPipelineState
 
 logger = logging.getLogger(__name__)
@@ -83,6 +88,16 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
             logger.error("ttp_analyst: unexpected parse result type=%s", type(parsed).__name__)
             errors.append(f"{step}: unexpected LLM response type; storing raw")
             ttp_analysis = {"raw_response": str(parsed), "parse_error": True}
+
+        if "detection_opportunities" in ttp_analysis:
+            # Defensive: models occasionally return a richer per-item object
+            # (observed live: {hypothesis_id, technique_id, description,
+            # log_source, query}) instead of the plain strings the schema
+            # asks for — see coerce_string_list's docstring.
+            ttp_analysis["detection_opportunities"] = coerce_string_list(
+                ttp_analysis["detection_opportunities"],
+                preferred_keys=("description", "text", "detail"),
+            )
 
         elapsed = time.monotonic() - start
         logs.append(
