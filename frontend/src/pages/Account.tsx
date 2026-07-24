@@ -20,7 +20,7 @@ import { useTheme } from '../theme/useTheme'
 // which theme is currently active on the page rendering this picker.
 const THEME_SWATCHES: Record<'classic' | 'energy', string[]> = {
   classic: ['#030712', '#111827', '#2f58f0', '#dc2626'],
-  energy: ['#0a0a0a', '#121212', '#5c5c5c', '#eab308'],
+  energy: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'],
 }
 
 function ThemePreferenceSection() {

@@ -323,7 +323,7 @@ function AppTitleSetting() {
 // theme is currently active on the page rendering this picker.
 const THEME_SWATCHES: Record<'classic' | 'energy', { label: string; colors: string[] }> = {
   classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
-  energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#5c5c5c', '#eab308'] },
+  energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'] },
 }
 
 function ThemeSetting() {
