@@ -187,7 +187,9 @@ class TestRoutesAgentVisualization:
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
             r = client.get("/api/app/agent-visualization")
         assert r.status_code == 200
-        assert r.json()["agent_workflow_visualization"] == "reactflow"  # issue-local-012: default changed
+        assert (
+            r.json()["agent_workflow_visualization"] == "reactflow"
+        )  # issue-local-012: default changed
 
     def test_put_mermaid(self, tmp_path: Path) -> None:
         client = _test_client()
