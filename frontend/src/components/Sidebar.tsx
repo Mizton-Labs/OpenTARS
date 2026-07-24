@@ -47,6 +47,9 @@ type NavSection = {
   items: NavItem[]
 }
 
+// [0] is the plain, unboxed "Home" section; [1:] are the product modules,
+// grouped together in the sidebar for stronger visual separation (see the
+// `.nav-module-group` wrapper in Sidebar()'s render).
 const navSections: NavSection[] = [
   {
     label: 'Home',
@@ -72,6 +75,7 @@ const navSections: NavSection[] = [
     ],
   },
 ]
+const [homeSection, ...moduleSections] = navSections
 
 const utilityItems: NavItem[] = [
   { to: 'configuration', label: 'Configuration', icon: Settings,   adminOnly: true,  authOnly: false },
@@ -122,6 +126,32 @@ export default function Sidebar() {
     items.filter((it) => (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled))
 
   const filteredUtility = filterItems(utilityItems)
+
+  function renderSection(section: NavSection) {
+    const sectionItems = filterItems(section.items)
+    return (
+      <div key={section.label} className="mb-3">
+        {/* Section header — hidden when collapsed */}
+        {!collapsed ? (
+          <div className="flex items-center gap-1.5 px-3 mb-1">
+            <section.icon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+              {section.label}
+            </span>
+          </div>
+        ) : (
+          <div className="flex justify-center mb-1">
+            <section.icon className="w-3.5 h-3.5 text-gray-500" />
+          </div>
+        )}
+        {sectionItems.length > 0
+          ? sectionItems.map(renderNavItem)
+          : !collapsed && (
+              <p className="px-3 text-[10px] text-gray-600 italic">Coming soon</p>
+            )}
+      </div>
+    )
+  }
 
   function renderNavItem(item: NavItem) {
     return (
@@ -181,31 +211,21 @@ export default function Sidebar() {
 
       {/* Nav — sectioned */}
       <nav className="flex-1 py-3 px-2 overflow-y-auto">
-        {navSections.map((section) => {
-          const sectionItems = filterItems(section.items)
-          return (
-            <div key={section.label} className="mb-3">
-              {/* Section header — hidden when collapsed */}
-              {!collapsed ? (
-                <div className="flex items-center gap-1.5 px-3 mb-1">
-                  <section.icon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-                  <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
-                    {section.label}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex justify-center mb-1">
-                  <section.icon className="w-3.5 h-3.5 text-gray-500" />
-                </div>
-              )}
-              {sectionItems.length > 0
-                ? sectionItems.map(renderNavItem)
-                : !collapsed && (
-                    <p className="px-3 text-[10px] text-gray-600 italic">Coming soon</p>
-                  )}
-            </div>
-          )
-        })}
+        {renderSection(homeSection)}
+
+        {/* Product modules — grouped in one bordered/tinted container for
+            stronger visual separation from Home above and the utility block
+            below. Energy theme gets a subtle accent ring (see .nav-module-group
+            in index.css); no-op in Classic. */}
+        <div
+          className={clsx(
+            'nav-module-group rounded-lg border border-gray-800 bg-gray-950/40 mb-3',
+            '[&>div:last-child]:mb-0',
+            collapsed ? 'p-1' : 'p-2',
+          )}
+        >
+          {moduleSections.map(renderSection)}
+        </div>
 
         {/* Utility items — separated by a border */}
         {filteredUtility.length > 0 && (
