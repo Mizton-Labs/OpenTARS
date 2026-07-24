@@ -14,16 +14,18 @@
  *   6. 2-theme system (Classic / Modern) stored in localStorage (Part 3b).
  *   7. Delete/archive confirmation dialog (Part 4).
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Shield, Trash2, ChevronRight, Timer, Copy, UserCircle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
+import { api, type THuntPackage, type THPhaseEntry, type THuntPackageRun } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useHuntTheme, type HuntTheme } from './threat-hunting/useHuntTheme'
+import { useHuntDensity, type HuntDensity } from './threat-hunting/useHuntDensity'
+import RunStatusBadge from './threat-hunting/RunStatusBadge'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -236,12 +238,25 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
   )
 }
 
+/**
+ * The subset of a run's fields ProcessArrow needs to render its stage rail —
+ * issue-local-016: extracted from `THuntPackage` directly so the parent can
+ * resolve "which run is selected" (defaulting to the latest) and pass THAT
+ * run's data down, independent of how many runs a package has.
+ */
+export interface ProcessArrowRunData {
+  phases: THPhaseEntry[] | null | undefined
+  generation_status: string | null | undefined
+  total_elapsed_s: number | null | undefined
+  run_created_at: string | null | undefined
+}
+
 interface ProcessArrowProps {
-  pkg: THuntPackage
+  run: ProcessArrowRunData
   theme: HuntTheme
 }
 
-function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
+function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
   // fix: keep the LAST entry per step so a re-run ok overrides an earlier error,
   // and parallel steps (threat_context_builder / deep_retrohunt_planner) both appear.
   const phaseByStep: Record<string, THPhaseEntry> = {}
@@ -338,6 +353,148 @@ function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
   )
 }
 
+// Outer card classes for the two card-color themes (Classic / Modern) — module
+// scope since they're static, shared by PackageCard below.
+const MODERN_CARD = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
+const CLASSIC_CARD = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
+
+/**
+ * One hunt-package list card (issue-local-016: extracted from the inline
+ * `.map()` body so each card can own its own "which run is selected" state
+ * — the run-chip row is a per-run selector, defaulting to the latest run,
+ * that drives which run's stage rail ProcessArrow renders).
+ */
+function PackageCard({
+  pkg,
+  theme,
+  density,
+  isResearcher,
+  onSelect,
+  onClone,
+  onArchive,
+}: {
+  pkg: THuntPackage
+  theme: HuntTheme
+  density: HuntDensity
+  isResearcher: boolean
+  onSelect: () => void
+  onClone: () => void
+  onArchive: () => void
+}) {
+  const runs = useMemo(() => pkg.runs ?? [], [pkg.runs])
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(runs[0]?.id)
+
+  // Default to the latest run whenever there's no valid selection yet (first
+  // render, or the previously-selected run disappeared from a refetch).
+  useEffect(() => {
+    if (runs.length > 0 && (!selectedRunId || !runs.some((r) => r.id === selectedRunId))) {
+      setSelectedRunId(runs[0].id)
+    }
+  }, [runs, selectedRunId])
+
+  const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0]
+  const resolvedRun: ProcessArrowRunData = selectedRun
+    ? {
+        phases: selectedRun.phases,
+        generation_status: selectedRun.generation_status,
+        total_elapsed_s: selectedRun.total_elapsed_s,
+        run_created_at: selectedRun.created_at,
+      }
+    : {
+        phases: pkg.phases,
+        generation_status: pkg.generation_status,
+        total_elapsed_s: pkg.total_elapsed_s,
+        run_created_at: pkg.run_created_at,
+      }
+
+  return (
+    <div
+      className={theme === 'modern' ? MODERN_CARD : CLASSIC_CARD}
+      onClick={onSelect}
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
+            <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+              {pkg.status}
+            </span>
+            {pkg.generation_status && pkg.generation_status !== 'completed' && (
+              <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
+                {pkg.generation_status.replace(/_/g, ' ')}
+              </span>
+            )}
+          </div>
+          {pkg.description && (
+            <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
+          )}
+          <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+            <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
+            <span>·</span>
+            <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
+            {pkg.created_by && (
+              <span className="flex items-center gap-0.5">
+                <UserCircle className="w-3 h-3" />
+                {pkg.created_by}
+              </span>
+            )}
+          </p>
+
+          {/* issue-local-016: per-run compact status chips — shown whenever a
+              package has more than one run, in BOTH density modes (this is
+              the actual payoff of the multi-run feature; only the heavier
+              stage rail below is gated by density). Clicking a chip selects
+              that run for this card's stage rail. */}
+          {runs.length > 1 && (
+            <div
+              className="flex items-end gap-0.5 mt-2 border-b border-gray-800/80 flex-wrap"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {runs.map((run: THuntPackageRun) => (
+                <RunStatusBadge
+                  key={run.id}
+                  run={run}
+                  active={run.id === selectedRun?.id}
+                  onClick={() => setSelectedRunId(run.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {density === 'detailed' && <ProcessArrow run={resolvedRun} theme={theme} />}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isResearcher && (
+            <>
+              <button
+                className="btn-ghost p-1.5 text-gray-600 hover:text-brand-400"
+                title="Clone hunt package"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onClone()
+                }}
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+              <button
+                className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
+                title="Archive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onArchive()
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <ChevronRight className="w-4 h-4 text-gray-600" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Confirm dialog state type (Part 4) ────────────────────────────────────────
 interface ConfirmTarget {
   id: string
@@ -366,6 +523,9 @@ export default function ThreatHunting() {
 
   // Part 3b: theme
   const { theme, setTheme } = useHuntTheme()
+  // issue-local-016: compact/detailed density — independent of the card
+  // color-theme toggle above.
+  const { density, setDensity } = useHuntDensity()
 
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
@@ -406,10 +566,6 @@ export default function ThreatHunting() {
     )
   }
 
-  // Modern theme outer card classes
-  const modernCard = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
-  const classicCard = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
-
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -447,6 +603,36 @@ export default function ThreatHunting() {
               Modern
             </button>
           </div>
+          {/* issue-local-016: Compact/Detailed density toggle — independent
+              of the Classic/Modern card-color toggle above. Compact hides
+              the per-stage ProcessArrow rail; the per-run chip row (when a
+              package has multiple runs) shows in both modes. */}
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-xs">
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'detailed'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('detailed')}
+              title="Detailed view"
+            >
+              Detailed
+            </button>
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'compact'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('compact')}
+              title="Compact view"
+            >
+              Compact
+            </button>
+          </div>
           {isResearcher && (
             <button className="btn-primary flex items-center gap-2" onClick={() => setShowWizard(true)}>
               <Plus className="w-4 h-4" />
@@ -471,73 +657,16 @@ export default function ThreatHunting() {
       ) : (
         <div className="space-y-2">
           {packages.map((pkg: THuntPackage) => (
-            <div
+            <PackageCard
               key={pkg.id}
-              className={theme === 'modern' ? modernCard : classicCard}
-              onClick={() => setSelectedId(pkg.id)}
-            >
-              <div className="flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                   <div className="flex items-center gap-2 flex-wrap">
-                     {/* Part 3a: text-base font-semibold */}
-                     <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
-                     <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
-                       {pkg.status}
-                     </span>
-                     {pkg.generation_status && pkg.generation_status !== 'completed' && (
-                       <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
-                         {pkg.generation_status.replace(/_/g, ' ')}
-                       </span>
-                     )}
-                   </div>
-                   {/* Part 3a: text-sm text-gray-400 */}
-                   {pkg.description && (
-                     <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
-                   )}
-                   {/* Part 3a: text-xs text-gray-500; Part 5: created_by */}
-                   <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
-                     <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
-                     <span>·</span>
-                     <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
-                     {pkg.created_by && (
-                       <span className="flex items-center gap-0.5">
-                         <UserCircle className="w-3 h-3" />
-                         {pkg.created_by}
-                       </span>
-                     )}
-                   </p>
-                  <ProcessArrow pkg={pkg} theme={theme} />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {isResearcher && (
-                    <>
-                      {/* Part 3b: Clone button */}
-                      <button
-                        className="btn-ghost p-1.5 text-gray-600 hover:text-brand-400"
-                        title="Clone hunt package"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setCloneTarget({ id: pkg.id, originalName: pkg.name, newName: `Copy of ${pkg.name}` })
-                        }}
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
-                        title="Archive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })
-                        }}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                  <ChevronRight className="w-4 h-4 text-gray-600" />
-                </div>
-              </div>
-            </div>
+              pkg={pkg}
+              theme={theme}
+              density={density}
+              isResearcher={isResearcher}
+              onSelect={() => setSelectedId(pkg.id)}
+              onClone={() => setCloneTarget({ id: pkg.id, originalName: pkg.name, newName: `Copy of ${pkg.name}` })}
+              onArchive={() => setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })}
+            />
           ))}
         </div>
       )}

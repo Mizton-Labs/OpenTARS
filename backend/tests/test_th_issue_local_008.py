@@ -66,6 +66,9 @@ async def test_list_hunt_packages_includes_run_created_at() -> None:
         async def execute(self, query, *args):
             if "hunt_packages" in query and "hunting_packages" not in query:
                 return _FakeCur([_DictRow(pkg_row_dict)])
+            elif "hunt_package_id IN (" in query:
+                # issue-local-016 bulk all-runs query — not exercised here
+                return _FakeCur([])
             return _FakeCur([hp_row])
 
     with patch("backend.threat_hunting.db.aiosqlite") as mock_aio:

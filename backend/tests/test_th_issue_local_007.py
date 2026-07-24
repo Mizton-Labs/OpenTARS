@@ -402,6 +402,9 @@ async def test_list_hunt_packages_enriches_phases() -> None:
             if "hunt_packages" in query and "hunting_packages" not in query:
                 # Return package rows as Row-like dicts
                 return _FakeCur([_DictRow(pkg_row)])
+            elif "hunt_package_id IN (" in query:
+                # issue-local-016 bulk all-runs query — not exercised here
+                return _FakeCur([])
             else:
                 return _FakeCur([hp_row])
 

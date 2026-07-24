@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
+import type { IocVerdict } from './IocVerdictToggle'
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
 // hypothesis or hunting-lead card — a standalone button card rather than a
@@ -69,12 +70,18 @@ export default function AnalysisTab({
   runId,
   onRunCreated,
   onShowIocs,
+  pendingVerdictFor,
+  onStageVerdict,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
   /** Called when the user clicks "View IOCs" in the workflow timeline. */
   onShowIocs?: () => void
+  /** issue-local-016: manual IOC verdict staging, lifted to HuntDetail.tsx so
+   *  a change staged here survives switching to the IOCs tab and back. */
+  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -389,7 +396,13 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
+        <HuntingPackageDraft
+          record={genRecord}
+          pkgId={pkgId}
+          runId={runId}
+          pendingVerdictFor={pendingVerdictFor}
+          onStageVerdict={onStageVerdict}
+        />
       </div>
     )
   }
@@ -413,11 +426,15 @@ function HuntingPackageDraft({
   pkgId,
   runId,
   readOnly = false,
+  pendingVerdictFor,
+  onStageVerdict,
 }: {
   record: THGenerationRecord
   pkgId: string
   runId?: string
   readOnly?: boolean
+  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
   const qc = useQueryClient()
 
@@ -445,6 +462,17 @@ function HuntingPackageDraft({
     }
     return map
   }, [iocsForChips, evidenceForChips])
+
+  // issue-local-016: manual IOC verdict overrides are visible on hypothesis
+  // evidence chips as a struck-through flag, not an auto-discard — the
+  // analyst should still see an IOC WAS cited, just that it's no longer
+  // considered valid. Hunting leads only reference IOCs transitively via
+  // their hypothesis, so no separate lead-level flag is needed.
+  const iocActionByValue = useMemo(() => {
+    const map = new Map<string, string | undefined>()
+    for (const ioc of iocsForChips) map.set(ioc.ioc, ioc.action)
+    return map
+  }, [iocsForChips])
 
   const discardMut = useMutation({
     mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
@@ -474,7 +502,12 @@ function HuntingPackageDraft({
           icon={Radar}
           defaultOpen
         >
-          <RetrohuntPanel retrohunt={record.deep_retrohunt} pkgId={pkgId} />
+          <RetrohuntPanel
+            retrohunt={record.deep_retrohunt}
+            pkgId={pkgId}
+            pendingFor={!readOnly ? pendingVerdictFor : undefined}
+            onStageVerdict={!readOnly ? onStageVerdict : undefined}
+          />
         </CollapsibleSection>
       )}
 
@@ -524,11 +557,23 @@ function HuntingPackageDraft({
                   {/* issue-006-E: ioc_basis */}
                   {h.ioc_basis && h.ioc_basis.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-0.5">
-                      {h.ioc_basis.map((ioc) => (
-                        <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
-                          {ioc}
-                        </span>
-                      ))}
+                      {h.ioc_basis.map((ioc) => {
+                        const removed = iocActionByValue.get(ioc) === 'remove'
+                        return (
+                          <span
+                            key={ioc}
+                            className={clsx(
+                              'text-[9px] font-mono border rounded px-1',
+                              removed
+                                ? 'bg-red-950/20 text-red-500/70 border-red-900/40 line-through'
+                                : 'bg-gray-800 text-gray-400 border-gray-700',
+                            )}
+                            title={removed ? 'This IOC was manually removed and is no longer part of the sanitized set' : undefined}
+                          >
+                            {ioc}
+                          </span>
+                        )
+                      })}
                     </div>
                   )}
                   {/* issue-local-015: evidence-source cards */}

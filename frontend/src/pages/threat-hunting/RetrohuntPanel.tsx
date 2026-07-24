@@ -29,6 +29,7 @@ import {
   Ban,
 } from 'lucide-react'
 import type { THDeepRetrohuntLead, THSanitizedIOC } from '../../api/client'
+import IocVerdictToggle, { type IocVerdict } from './IocVerdictToggle'
 
 // Must match NOISE_THRESHOLD / HIGH_NOISE_THRESHOLD in backend/threat_hunting/iocs.py.
 const NOISE_THRESHOLD = 0.7
@@ -102,12 +103,25 @@ function IOCTypeChip({ type }: { type: string }) {
   )
 }
 
-function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
-  const removed = ioc.action === 'remove'
+function IOCRow({
+  ioc,
+  pendingFor,
+  onStageVerdict,
+}: {
+  ioc: THSanitizedIOC
+  /** When provided (together with onStageVerdict), the Action column becomes
+   *  an interactive Keep/Remove toggle instead of the static noise/removed
+   *  badge — omitted for read-only draft views. */
+  pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
+}) {
+  const serverValue: IocVerdict = ioc.action ?? 'keep'
+  const removed = serverValue === 'remove'
   // Removed IOCs default to expanded — the rationale for removal must be
   // fully visible, not hidden behind a click (issue-local-015 feedback).
   const [expanded, setExpanded] = useState(removed)
   const hasReasons = ioc.noise_reasons.length > 0
+  const interactive = !!onStageVerdict
 
   return (
     <>
@@ -167,6 +181,13 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
                 <NoiseBar score={ioc.noise_score} />
                 <NoiseBadge score={ioc.noise_score} />
               </>
+            )}
+            {interactive && (
+              <IocVerdictToggle
+                value={serverValue}
+                pending={pendingFor?.(ioc.ioc, ioc.ioc_type)}
+                onChange={(next) => onStageVerdict?.(ioc.ioc, ioc.ioc_type, next, serverValue)}
+              />
             )}
           </div>
         </td>
@@ -261,21 +282,28 @@ function SplDraftBlock({
 export default function RetrohuntPanel({
   retrohunt,
   pkgId,
+  pendingFor,
+  onStageVerdict,
 }: {
   retrohunt: THDeepRetrohuntLead
   pkgId: string
+  /** When provided (together with onStageVerdict), each row gets an
+   *  interactive Keep/Remove toggle — omitted for read-only draft views. */
+  pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
-  // issue-local-015: default view is the actionable set (what actually
-  // feeds the SPL query) — 'removed' (action=='remove', excluded by this
-  // run's IOC active-cleaning config) is opt-in via the selector, not mixed
-  // into "all" by default. Noise level is already visible per-row via the
+  // issue-local-016: default view is the actionable set ('sanitized' — what
+  // actually feeds the SPL query). 'all' is a true union of every IOC seen,
+  // 'removed' is opt-in. Noise level is already visible per-row via the
   // NoiseBar/NoiseBadge, so a separate 'noisy' filter tab is redundant.
-  const [iocFilter, setIocFilter] = useState<'all' | 'removed'>('all')
+  const [iocFilter, setIocFilter] = useState<'all' | 'sanitized' | 'removed'>('sanitized')
 
   const removedIocs = retrohunt.sanitized_iocs.filter((ioc) => ioc.action === 'remove')
-  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) =>
-    iocFilter === 'removed' ? ioc.action === 'remove' : ioc.action !== 'remove',
-  )
+  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) => {
+    if (iocFilter === 'removed') return ioc.action === 'remove'
+    if (iocFilter === 'sanitized') return ioc.action !== 'remove'
+    return true
+  })
 
   return (
     <div className="space-y-5">
@@ -341,12 +369,14 @@ export default function RetrohuntPanel({
             <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
               Sanitized IOCs ({filteredIocs.length}/{retrohunt.sanitized_iocs.length})
             </h4>
-            {/* Filter buttons — default 'all' (actionable set); 'removed'
-                is opt-in, not folded into a misleading 'all' bucket. */}
+            {/* Filter buttons — default 'sanitized' (actionable set that
+                feeds the SPL query); 'all' is a true union, 'removed' is
+                opt-in — no bucket is a misleading mix of the other two. */}
             <div className="flex gap-1">
               {(
                 [
                   ['all', 'All'],
+                  ['sanitized', 'Sanitized'],
                   ['removed', `Removed${removedIocs.length ? ` (${removedIocs.length})` : ''}`],
                 ] as const
               ).map(([f, label]) => (
@@ -380,7 +410,14 @@ export default function RetrohuntPanel({
               </thead>
               <tbody>
                 {filteredIocs.length > 0 ? (
-                  filteredIocs.map((ioc, i) => <IOCRow key={`${ioc.ioc_type}-${ioc.ioc}-${i}`} ioc={ioc} />)
+                  filteredIocs.map((ioc, i) => (
+                    <IOCRow
+                      key={`${ioc.ioc_type}-${ioc.ioc}-${i}`}
+                      ioc={ioc}
+                      pendingFor={pendingFor}
+                      onStageVerdict={onStageVerdict}
+                    />
+                  ))
                 ) : (
                   <tr>
                     <td colSpan={6} className="py-4 text-center text-xs text-gray-500 italic">

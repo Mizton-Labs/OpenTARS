@@ -419,6 +419,47 @@ async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _parse_step_logs(
+    step_logs_json: str | None,
+) -> tuple[list[dict[str, Any]] | None, float | None]:
+    """Parse a run's ``step_logs`` JSON into a phase summary + total elapsed time.
+
+    Shared by the latest-run merge and the per-run (issue-local-016) bulk pass
+    in ``list_hunt_packages`` below — same projection either way.
+    """
+    import json as _json
+
+    phases: list[dict[str, Any]] = []
+    total_elapsed: float = 0.0
+    try:
+        step_logs: list[dict[str, Any]] = _json.loads(step_logs_json or "[]")
+        for log in step_logs:
+            step_name = log.get("step", "")
+            if step_name:
+                elapsed = log.get("elapsed_s") or 0.0
+                # issue-007: widen projection with richer step-log fields
+                phase_entry: dict[str, Any] = {
+                    "step": step_name,
+                    "status": log.get("status", "unknown"),
+                    "elapsed_s": elapsed,
+                }
+                if log.get("tools_used") is not None:
+                    phase_entry["tools_used"] = log["tools_used"]
+                if log.get("decision"):
+                    phase_entry["decision"] = log["decision"]
+                if log.get("item_count") is not None:
+                    phase_entry["item_count"] = log["item_count"]
+                if log.get("ioc_count") is not None:
+                    phase_entry["ioc_count"] = log["ioc_count"]
+                if log.get("noisy_count") is not None:
+                    phase_entry["noisy_count"] = log["noisy_count"]
+                phases.append(phase_entry)
+                total_elapsed += float(elapsed)
+    except Exception:  # noqa: BLE001
+        pass
+    return (phases if phases else None), (round(total_elapsed, 2) if phases else None)
+
+
 async def list_hunt_packages() -> list[dict[str, Any]]:
     """List all non-archived hunt packages with evidence counts and latest run summary.
 
@@ -426,6 +467,12 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
       - ``phases``         list[{step, status, elapsed_s}] from latest run's step_logs
       - ``total_elapsed_s`` sum of elapsed_s across all completed steps (float|None)
       - ``generation_status`` generation_status of the latest run (str|None)
+
+    issue-local-016: also gains ``runs`` (every generation run for this
+    package, newest first, each carrying its own ``phases``/
+    ``total_elapsed_s`` — not just the latest one) and ``run_count``, so the
+    list view can show per-run state (e.g. a compact status chip per run)
+    without an N+1 fetch per package.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -454,6 +501,23 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
         run_rows = await cur2.fetchall()
         await cur2.close()
 
+        # issue-local-016: EVERY run for these packages (not just the
+        # latest), for the list view's per-run chip row. One bulk query for
+        # the whole list, not per-package.
+        pkg_ids = tuple(row["id"] for row in rows)
+        all_run_rows: list[Any] = []
+        if pkg_ids:
+            placeholders = ",".join("?" for _ in pkg_ids)
+            cur3 = await db.execute(
+                "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
+                "       research_effort, created_at, step_logs "
+                f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
+                "ORDER BY hunt_package_id, created_at DESC",
+                pkg_ids,
+            )
+            all_run_rows = await cur3.fetchall()
+            await cur3.close()
+
     # Build lookup: hunt_package_id → {generation_status, step_logs_json, run_created_at}
     run_by_pkg: dict[str, dict[str, Any]] = {}
     for r in run_rows:
@@ -463,51 +527,41 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
             "run_created_at": r[3],
         }
 
+    # Build lookup: hunt_package_id → [run summary dicts, newest first]
+    runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
+    for r in all_run_rows:
+        phases, total_elapsed_s = _parse_step_logs(r["step_logs"])
+        runs_by_pkg.setdefault(r["hunt_package_id"], []).append(
+            {
+                "id": r["id"],
+                "hunt_package_id": r["hunt_package_id"],
+                "generation_status": r["generation_status"],
+                "llm_provider": r["llm_provider"],
+                "llm_model": r["llm_model"],
+                "research_effort": r["research_effort"],
+                "created_at": r["created_at"],
+                "phases": phases,
+                "total_elapsed_s": total_elapsed_s,
+            }
+        )
+
     result: list[dict[str, Any]] = []
     for row in rows:
         pkg = dict(row)
         run = run_by_pkg.get(pkg["id"])
         if run:
             pkg["generation_status"] = run["generation_status"]
-            # Parse step_logs JSON → phase summary
-            phases: list[dict[str, Any]] = []
-            total_elapsed: float = 0.0
-            try:
-                import json as _json
-
-                step_logs: list[dict[str, Any]] = _json.loads(run["step_logs_json"] or "[]")
-                for log in step_logs:
-                    step_name = log.get("step", "")
-                    if step_name:
-                        elapsed = log.get("elapsed_s") or 0.0
-                        # issue-007: widen projection with richer step-log fields
-                        phase_entry: dict[str, Any] = {
-                            "step": step_name,
-                            "status": log.get("status", "unknown"),
-                            "elapsed_s": elapsed,
-                        }
-                        if log.get("tools_used") is not None:
-                            phase_entry["tools_used"] = log["tools_used"]
-                        if log.get("decision"):
-                            phase_entry["decision"] = log["decision"]
-                        if log.get("item_count") is not None:
-                            phase_entry["item_count"] = log["item_count"]
-                        if log.get("ioc_count") is not None:
-                            phase_entry["ioc_count"] = log["ioc_count"]
-                        if log.get("noisy_count") is not None:
-                            phase_entry["noisy_count"] = log["noisy_count"]
-                        phases.append(phase_entry)
-                        total_elapsed += float(elapsed)
-            except Exception:  # noqa: BLE001
-                pass
-            pkg["phases"] = phases if phases else None
-            pkg["total_elapsed_s"] = round(total_elapsed, 2) if phases else None
+            phases, total_elapsed_s = _parse_step_logs(run["step_logs_json"])
+            pkg["phases"] = phases
+            pkg["total_elapsed_s"] = total_elapsed_s
             pkg["run_created_at"] = run.get("run_created_at")  # issue-008-2A: live timer
         else:
             pkg["generation_status"] = None
             pkg["phases"] = None
             pkg["total_elapsed_s"] = None
             pkg["run_created_at"] = None
+        pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
+        pkg["run_count"] = len(pkg["runs"])
         result.append(pkg)
     return result
 
@@ -802,6 +856,10 @@ async def update_ioc_actions(run_id: str, updates: list[tuple[str, str, str]]) -
     scoring/triage, to persist each IOC's final keep/remove decision so the
     IOC table can show it. *updates* is a list of (ioc, ioc_type, action)
     tuples, matched against the existing (run_id, ioc, ioc_type) row.
+
+    issue-local-016: also called directly from the manual-verdict-override
+    route (routes_threat_hunting.update_ioc_verdicts) — the same helper,
+    the only difference is who's calling it (the pipeline vs. an analyst).
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         for ioc, ioc_type, action in updates:
@@ -811,6 +869,74 @@ async def update_ioc_actions(run_id: str, updates: list[tuple[str, str, str]]) -
                 (action, run_id, ioc, ioc_type),
             )
         await db.commit()
+
+
+async def update_deep_retrohunt_ioc_actions(
+    run_id: str, updates: list[tuple[str, str, str]]
+) -> dict[str, Any] | None:
+    """Apply manual keep/remove verdict overrides to a run's stored
+    ``deep_retrohunt`` lead (issue-local-016).
+
+    ``sanitized_iocs`` entries (unlike ``extracted_iocs`` rows) have no
+    independent id — they're matched by ``(ioc, ioc_type)``, same as
+    ``update_ioc_actions`` above. Same load/find/mutate/write-back-whole-
+    column pattern as ``set_hypothesis_discarded``, but this also recomputes
+    the lead's derived summary fields (``ioc_csv``, ``total_ioc_count``,
+    ``noisy_ioc_count``, ``high_noise_ioc_count``) from the updated kept set
+    — cheap and deterministic, so a manual verdict change doesn't leave the
+    CSV/counts stale without re-running the whole node (which would also
+    needlessly re-call the LLM enrichment half of it).
+
+    Returns the updated ``deep_retrohunt`` dict, or None if the run has no
+    stored deep_retrohunt lead yet (e.g. the run never extracted any atomic
+    IOCs) — callers should treat that as "nothing to update here", not an
+    error, since the extracted_iocs half (``update_ioc_actions``) is
+    independent and still applies.
+    """
+    import json as _json
+
+    from backend.threat_hunting.agents.nodes.deep_retrohunt_planner import _build_ioc_csv
+    from backend.threat_hunting.iocs import HIGH_NOISE_THRESHOLD, NOISE_THRESHOLD
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT deep_retrohunt FROM hunting_packages WHERE id = ?", (run_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        if not row or not row[0]:
+            return None
+
+        try:
+            retro: dict[str, Any] = _json.loads(row[0])
+            sanitized: list[dict[str, Any]] = retro.get("sanitized_iocs") or []
+        except Exception:
+            return None
+        if not sanitized:
+            return None
+
+        update_by_key = {(ioc, ioc_type): action for ioc, ioc_type, action in updates}
+        for entry in sanitized:
+            key = (entry.get("ioc"), entry.get("ioc_type"))
+            if key in update_by_key:
+                entry["action"] = update_by_key[key]
+
+        kept = [s for s in sanitized if s.get("action") != "remove"]
+        retro["sanitized_iocs"] = sanitized
+        retro["ioc_csv"] = _build_ioc_csv(kept)  # type: ignore[arg-type]
+        retro["total_ioc_count"] = len(kept)
+        retro["noisy_ioc_count"] = sum(1 for s in kept if s["noise_score"] >= NOISE_THRESHOLD)
+        retro["high_noise_ioc_count"] = sum(
+            1 for s in kept if s["noise_score"] >= HIGH_NOISE_THRESHOLD
+        )
+
+        await db.execute(
+            "UPDATE hunting_packages SET deep_retrohunt = ? WHERE id = ?",
+            (_json.dumps(retro, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+        return retro
 
 
 async def list_extracted_iocs(
