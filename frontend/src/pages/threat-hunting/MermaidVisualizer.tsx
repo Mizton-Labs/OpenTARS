@@ -181,7 +181,9 @@ function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false
     let fill: string
     let stroke: string
     if (subStatus === 'ok') {
-      fill = '#14532d'; stroke = '#22c55e'
+      // issue-local-018 follow-up: teal "success", not agent nodes' green —
+      // mirrors ReactFlowVisualizer.tsx's identical fix.
+      fill = '#134e4a'; stroke = '#2dd4bf'
     } else if (subStatus === 'error') {
       fill = '#7f1d1d'; stroke = '#ef4444'
     } else {

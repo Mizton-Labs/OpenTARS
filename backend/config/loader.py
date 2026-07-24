@@ -306,7 +306,7 @@ def save_app_title(value: str) -> None:
 
 # ── Instance-wide default UI theme (issue-local-016) ─────────────────────────
 
-_VALID_THEMES = {"classic", "energy", "light"}
+_VALID_THEMES = {"classic", "energy", "light", "ocean"}
 
 
 def load_default_theme() -> str:
@@ -678,6 +678,47 @@ def save_th_report_formats(value: dict[str, bool]) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Threat Hunting HuntID prefix (issue-local-018) ────────────────────────────
+# The human-readable prefix used to build each hunt package's HuntID
+# (f"{prefix}{hunt_seq:02d}", e.g. "TH01") and, transitively, each of its
+# runs' Run ID (f"{hunt_id}-X{run_seq:02d}", e.g. "TH01-X01"). Computed
+# dynamically from this setting at read time (not baked into a stored
+# string), so changing the prefix relabels every package/run consistently.
+
+_TH_HUNT_ID_PREFIX_DEFAULT = "TH"
+_TH_HUNT_ID_PREFIX_MAX_LEN = 8
+
+
+def load_hunt_id_prefix() -> str:
+    """Return the configured HuntID prefix (default 'TH')."""
+    raw = load_app_config().get("hunt_id_prefix", _TH_HUNT_ID_PREFIX_DEFAULT)
+    if (
+        not isinstance(raw, str)
+        or not raw.isalnum()
+        or not (1 <= len(raw) <= _TH_HUNT_ID_PREFIX_MAX_LEN)
+    ):
+        logger.warning(
+            "hunt_id_prefix %r is not valid; using default %r", raw, _TH_HUNT_ID_PREFIX_DEFAULT
+        )
+        return _TH_HUNT_ID_PREFIX_DEFAULT
+    return raw
+
+
+def save_hunt_id_prefix(value: str) -> None:
+    """Persist the HuntID prefix to application.yaml."""
+    if (
+        not isinstance(value, str)
+        or not value.isalnum()
+        or not (1 <= len(value) <= _TH_HUNT_ID_PREFIX_MAX_LEN)
+    ):
+        raise ValueError(
+            f"hunt_id_prefix must be an alphanumeric string of 1-{_TH_HUNT_ID_PREFIX_MAX_LEN} characters"
+        )
+    data = load_app_config()
+    data["hunt_id_prefix"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Agent tools + document parsers toggle (issue-007) ────────────────────────
 # Controls which LLM-callable tools and document parsers are offered to agents.
 # All default to True (fully enabled). The 7 keys are kept in sync with
@@ -847,6 +888,27 @@ def save_logo_path(value: str) -> None:
     data = load_app_config()
     data["logo_path"] = value
     _write_yaml(APP_CONFIG_PATH, data)
+
+
+_BRANDING_DIR = _PROJECT_ROOT / "data" / "branding"
+
+
+def resolve_logo_file() -> Path | None:
+    """Return the on-disk branding logo Path if configured and present, else None.
+
+    Shared by the /api/app/logo route and PDF report generation. Defends
+    against a tampered application.yaml: the stored path must resolve to a
+    real file inside data/branding/ (no traversal escape).
+    """
+    rel = load_logo_path()
+    if not rel:
+        return None
+    fp = (_PROJECT_ROOT / rel).resolve()
+    try:
+        fp.relative_to(_BRANDING_DIR.resolve())
+    except ValueError:
+        return None
+    return fp if fp.is_file() else None
 
 
 # ── Password policy (prompts-046) ────────────────────────────────────────────

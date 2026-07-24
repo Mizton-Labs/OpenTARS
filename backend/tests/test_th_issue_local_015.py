@@ -122,7 +122,7 @@ async def test_schema_v5_fresh_db_has_new_columns(tmp_path: Path) -> None:
     assert "run_id" in ioc_cols
     assert "action" in ioc_cols
     assert "run_config" in run_cols
-    assert version == 5
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_schema_v4_migrates_to_v5_and_backfills_run_id(tmp_path: Path) -> 
     ).fetchone()
     conn.close()
 
-    assert version == 5
+    assert version == th_db._TH_SCHEMA_VERSION
     assert row[0] == run_id, "pre-v5 IOC row must be backfilled to the latest run for its package"
     assert row[1] == "keep"
 

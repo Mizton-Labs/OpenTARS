@@ -186,14 +186,58 @@ describe('RetrohuntPanel — three-way filter + verdict column', () => {
     fireEvent.click(removeButtons[0])
     expect(onStageVerdict).toHaveBeenCalledWith('evil.com', 'domain', 'remove', 'keep')
   })
+
+  describe('iocApplyBar (issue-local-018 follow-up)', () => {
+    it('renders the Apply button next to the All/Sanitized/Removed filter when dirty', () => {
+      const onApply = vi.fn()
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: true, pendingCount: 2, isApplying: false, justApplied: false, onApply }}
+        />,
+      )
+      expect(screen.getByText('2 staged')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Apply changes/ }))
+      expect(onApply).toHaveBeenCalled()
+    })
+
+    it('renders nothing when not dirty and not just applied', () => {
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: false, pendingCount: 0, isApplying: false, justApplied: false, onApply: vi.fn() }}
+        />,
+      )
+      expect(screen.queryByText(/staged/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Apply changes/ })).not.toBeInTheDocument()
+    })
+
+    it('shows a confirmation after applying', () => {
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: false, pendingCount: 0, isApplying: false, justApplied: true, onApply: vi.fn() }}
+        />,
+      )
+      expect(screen.getByText('Applied')).toBeInTheDocument()
+    })
+
+    it('does not render when iocApplyBar is omitted (read-only draft view)', () => {
+      render(<RetrohuntPanel retrohunt={makeRetrohunt(sanitized)} pkgId="pkg-1" />)
+      expect(screen.queryByText(/staged/)).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
-  function renderTab() {
+  function renderTab(props: Partial<React.ComponentProps<typeof AnalysisTab>> = {}) {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     return render(
       <QueryClientProvider client={qc}>
-        <AnalysisTab pkgId="pkg-1" runId="run-1" />
+        <AnalysisTab pkgId="pkg-1" runId="run-1" {...props} />
       </QueryClientProvider>,
     )
   }
@@ -233,5 +277,29 @@ describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
     await screen.findByText('evil.com')
     await waitFor(() => expect(screen.getByText('evil.com')).toHaveClass('line-through'))
     expect(screen.getByText('good.com')).not.toHaveClass('line-through')
+  })
+
+  describe('Approve gating on unapplied IOC verdict changes (issue-local-018 follow-up)', () => {
+    beforeEach(() => {
+      vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+        hunt_package_id: 'pkg-1',
+        run_id: 'run-1',
+        generation_status: 'awaiting_approval',
+        hypotheses: [],
+      })
+      vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+      vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+    })
+
+    it('enables Approve when there are no staged IOC verdict changes', async () => {
+      renderTab({ iocVerdictsDirty: false })
+      expect(await screen.findByRole('button', { name: 'Approve' })).not.toBeDisabled()
+    })
+
+    it('disables Approve and shows a warning while IOC verdict changes are unapplied', async () => {
+      renderTab({ iocVerdictsDirty: true })
+      expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(screen.getByText(/unapplied IOC verdict changes/i)).toBeInTheDocument()
+    })
   })
 })

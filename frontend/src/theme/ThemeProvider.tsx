@@ -21,7 +21,7 @@ import { api } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import { ThemeContext, type ThemeContextValue, type ThemeName } from './context'
 
-const VALID_THEMES: readonly ThemeName[] = ['classic', 'energy', 'light']
+const VALID_THEMES: readonly ThemeName[] = ['classic', 'energy', 'light', 'ocean']
 
 function asThemeName(value: unknown): ThemeName | null {
   return typeof value === 'string' && (VALID_THEMES as readonly string[]).includes(value)

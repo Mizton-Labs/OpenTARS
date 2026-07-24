@@ -10,12 +10,14 @@ from typing import Any
 
 import aiosqlite
 
+from backend.config.loader import load_hunt_id_prefix
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 5
+_TH_SCHEMA_VERSION = 6
 
 
 def _utc_now_iso() -> str:
@@ -24,6 +26,26 @@ def _utc_now_iso() -> str:
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+def format_hunt_id(prefix: str, hunt_seq: int | None) -> str:
+    """Build a hunt package's human-readable HuntID, e.g. prefix 'TH' + seq 1 -> 'TH01'.
+
+    ``:02d`` is a minimum width, not a cap — seq 100 renders as 'TH100', no
+    truncation. Computed dynamically from the *current* prefix setting
+    (issue-local-018), not baked into a stored string, so changing the
+    prefix relabels every package consistently.
+    """
+    if hunt_seq is None:
+        return ""
+    return f"{prefix}{hunt_seq:02d}"
+
+
+def format_run_id(hunt_id_display: str, run_seq: int | None) -> str:
+    """Build a run's human-readable Run ID, e.g. HuntID 'TH01' + seq 1 -> 'TH01-X01'."""
+    if run_seq is None or not hunt_id_display:
+        return ""
+    return f"{hunt_id_display}-X{run_seq:02d}"
 
 
 CREATE_SCHEMA_VERSION_TABLE = """
@@ -40,7 +62,8 @@ CREATE TABLE IF NOT EXISTS hunt_packages (
     status      TEXT NOT NULL DEFAULT 'draft',
     created_by  TEXT,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    hunt_seq    INTEGER
 );
 """
 
@@ -109,7 +132,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     completed_steps     TEXT,
     step_logs           TEXT,
     research_effort     TEXT,
-    run_config          TEXT DEFAULT '{}'
+    run_config          TEXT DEFAULT '{}',
+    run_seq             INTEGER
 );
 """
 
@@ -142,6 +166,17 @@ CREATE TABLE IF NOT EXISTS hunt_reports (
     full_report      TEXT,
     created_at       TEXT NOT NULL,
     created_by       TEXT
+);
+"""
+
+CREATE_RUN_COMMENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS run_comments (
+    id               TEXT PRIMARY KEY,
+    hunt_package_id  TEXT NOT NULL REFERENCES hunt_packages(id),
+    run_id           TEXT NOT NULL,
+    body             TEXT NOT NULL,
+    created_by       TEXT,
+    created_at       TEXT NOT NULL
 );
 """
 
@@ -263,6 +298,57 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
             "Migrated threat_hunting.db to schema v5 "
             "(added run_id/action to extracted_iocs, run_config to hunting_packages)"
         )
+    if current_version < 6:
+        # v6 (issue-local-018): hunt_seq/run_seq columns for human-readable
+        # HuntID/Run ID display codes, plus the run_comments table.
+        for table, col_def in (
+            ("hunt_packages", "ADD COLUMN hunt_seq INTEGER"),
+            ("hunting_packages", "ADD COLUMN run_seq INTEGER"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        # Backfill: assign sequences in creation order (oldest = 1) so every
+        # pre-existing package/run gets a HuntID/Run ID too, not just new
+        # ones going forward. A plain Python loop (not a SQL window
+        # function) to match this file's existing simple-SQL migration
+        # style — these tables are small (dozens to low hundreds of rows).
+        try:
+            cur = await db.execute(
+                "SELECT id FROM hunt_packages WHERE hunt_seq IS NULL ORDER BY created_at ASC"
+            )
+            pkg_rows = await cur.fetchall()
+            await cur.close()
+            cur = await db.execute("SELECT COALESCE(MAX(hunt_seq), 0) FROM hunt_packages")
+            next_seq = (await cur.fetchone())[0] + 1
+            await cur.close()
+            for row in pkg_rows:
+                await db.execute(
+                    "UPDATE hunt_packages SET hunt_seq = ? WHERE id = ?", (next_seq, row[0])
+                )
+                next_seq += 1
+
+            cur = await db.execute(
+                "SELECT id, hunt_package_id FROM hunting_packages "
+                "WHERE run_seq IS NULL ORDER BY hunt_package_id, created_at ASC"
+            )
+            run_rows = await cur.fetchall()
+            await cur.close()
+            run_seq_by_pkg: dict[str, int] = {}
+            for run_id, hunt_package_id in run_rows:
+                next_run_seq = run_seq_by_pkg.get(hunt_package_id, 0) + 1
+                run_seq_by_pkg[hunt_package_id] = next_run_seq
+                await db.execute(
+                    "UPDATE hunting_packages SET run_seq = ? WHERE id = ?", (next_run_seq, run_id)
+                )
+        except Exception as exc:
+            logger.warning("Schema v6 backfill skipped (non-fatal): %s", exc)
+        await db.execute(CREATE_RUN_COMMENTS_TABLE)
+        logger.info(
+            "Migrated threat_hunting.db to schema v6 "
+            "(added hunt_seq/run_seq for HuntID/Run ID, run_comments table)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -277,6 +363,7 @@ async def init_threat_hunting_db() -> None:
         await db.execute(CREATE_HUNTING_PACKAGES_TABLE)
         await db.execute(CREATE_TASK_RESULTS_TABLE)
         await db.execute(CREATE_HUNT_REPORTS_TABLE)
+        await db.execute(CREATE_RUN_COMMENTS_TABLE)
         await db.execute(CREATE_SIEM_CONNECTORS_TABLE)
         cur = await db.execute("SELECT version FROM th_schema_version LIMIT 1")
         row = await cur.fetchone()
@@ -304,12 +391,25 @@ async def create_hunt_package(
     pkg_id = _new_id()
     now = _utc_now_iso()
     async with aiosqlite.connect(_TH_DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO hunt_packages (id, name, description, status, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'draft', ?, ?, ?)",
-            (pkg_id, name, description, created_by, now, now),
-        )
-        await db.commit()
+        # issue-local-018: hunt_seq (the HuntID's numeric part) must be
+        # assigned atomically — BEGIN IMMEDIATE serializes the read-then-
+        # write against other concurrent create_hunt_package calls, same
+        # idiom used by backend/normalizer/mappings.py's activate_version.
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            cur = await db.execute("SELECT COALESCE(MAX(hunt_seq), 0) FROM hunt_packages")
+            next_seq = (await cur.fetchone())[0] + 1
+            await cur.close()
+            await db.execute(
+                "INSERT INTO hunt_packages "
+                "(id, name, description, status, created_by, created_at, updated_at, hunt_seq) "
+                "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)",
+                (pkg_id, name, description, created_by, now, now, next_seq),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
     return await get_hunt_package(pkg_id)
 
 
@@ -333,11 +433,18 @@ async def clone_hunt_package(
     now = _utc_now_iso()
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
-        # 1. Create the new package
+        # 1. Create the new package (issue-local-018: hunt_seq assigned
+        # atomically under the same BEGIN IMMEDIATE idiom as
+        # create_hunt_package — a clone is a brand-new package for HuntID
+        # purposes, not a copy of the source's own HuntID).
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT COALESCE(MAX(hunt_seq), 0) FROM hunt_packages")
+        next_seq = (await cur.fetchone())[0] + 1
+        await cur.close()
         await db.execute(
-            "INSERT INTO hunt_packages (id, name, description, status, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'draft', ?, ?, ?)",
-            (new_pkg_id, new_name, "", created_by, now, now),
+            "INSERT INTO hunt_packages (id, name, description, status, created_by, created_at, updated_at, hunt_seq) "
+            "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)",
+            (new_pkg_id, new_name, "", created_by, now, now, next_seq),
         )
 
         # 2. Copy all evidence items (reset parse_status to pending, clear extracted_text)
@@ -416,7 +523,11 @@ async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
         )
         row = await cur.fetchone()
         await cur.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    pkg = dict(row)
+    pkg["hunt_id_display"] = format_hunt_id(load_hunt_id_prefix(), pkg.get("hunt_seq"))
+    return pkg
 
 
 def _parse_step_logs(
@@ -534,7 +645,7 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
             placeholders = ",".join("?" for _ in pkg_ids)
             cur3 = await db.execute(
                 "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
-                "       research_effort, created_at, step_logs, deep_retrohunt "
+                "       research_effort, created_at, step_logs, deep_retrohunt, run_seq "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY hunt_package_id, created_at DESC",
                 pkg_ids,
@@ -563,6 +674,14 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
             "run_created_at": r[3],
         }
 
+    # issue-local-018: HuntID per package, needed up front so each of its
+    # runs' Run ID (derived from the owning package's HuntID) can be
+    # computed while building runs_by_pkg below.
+    prefix = load_hunt_id_prefix()
+    hunt_id_by_pkg: dict[str, str] = {
+        row["id"]: format_hunt_id(prefix, row["hunt_seq"]) for row in rows
+    }
+
     # Build lookup: hunt_package_id → [run summary dicts, newest first]
     runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
     for r in all_run_rows:
@@ -582,6 +701,9 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
                 "sanitized_ioc_count": sanitized_count,
                 "removed_ioc_count": removed_count,
                 "has_report": r["id"] in report_run_ids,
+                "run_id_display": format_run_id(
+                    hunt_id_by_pkg.get(r["hunt_package_id"], ""), r["run_seq"]
+                ),
             }
         )
 
@@ -602,6 +724,7 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
             pkg["run_created_at"] = None
         pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
         pkg["run_count"] = len(pkg["runs"])
+        pkg["hunt_id_display"] = hunt_id_by_pkg.get(pkg["id"], "")
         result.append(pkg)
     return result
 
@@ -1415,13 +1538,20 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
       - ``sanitized_ioc_count``/``removed_ioc_count``, via
         ``_parse_deep_retrohunt_counts``.
       - ``has_report``, whether a hunt_reports row exists for this run.
+      - ``run_id_display`` (issue-local-018), e.g. "TH01-X02".
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
+            "SELECT hunt_seq FROM hunt_packages WHERE id = ?", (hunt_package_id,)
+        )
+        pkg_row = await cur.fetchone()
+        await cur.close()
+
+        cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs, deep_retrohunt
+                      step_logs, deep_retrohunt, run_seq
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -1441,11 +1571,16 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
             report_run_ids = {r[0] for r in await cur2.fetchall()}
             await cur2.close()
 
+    hunt_id_display = format_hunt_id(
+        load_hunt_id_prefix(), pkg_row["hunt_seq"] if pkg_row else None
+    )
+
     result: list[dict[str, Any]] = []
     for row in rows:
         run = dict(row)
         step_logs_json = run.pop("step_logs")
         deep_retrohunt_json = run.pop("deep_retrohunt")
+        run_seq = run.pop("run_seq")
         phases, total_elapsed_s = _parse_step_logs(step_logs_json)
         sanitized_count, removed_count = _parse_deep_retrohunt_counts(deep_retrohunt_json)
         run["phases"] = phases
@@ -1453,6 +1588,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         run["sanitized_ioc_count"] = sanitized_count
         run["removed_ioc_count"] = removed_count
         run["has_report"] = run["id"] in report_run_ids
+        run["run_id_display"] = format_run_id(hunt_id_display, run_seq)
         result.append(run)
     return result
 
@@ -1552,6 +1688,59 @@ async def get_hunt_report_by_run(run_id: str) -> dict[str, Any] | None:
     if not row:
         return None
     return _decode_report_row(dict(row))
+
+
+# ── Run Comments CRUD (issue-local-018) ───────────────────────────────────────
+# Durable analyst free-text notes tied to a specific run. Mirrors the
+# hunt_reports shape (id/hunt_package_id/run_id/created_at/created_by) — the
+# closest existing precedent for a simple per-run child record.
+
+
+async def create_run_comment(
+    hunt_package_id: str,
+    run_id: str,
+    body: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    comment_id = _new_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO run_comments
+               (id, hunt_package_id, run_id, body, created_by, created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (comment_id, hunt_package_id, run_id, body, created_by, now),
+        )
+        await db.commit()
+    return {
+        "id": comment_id,
+        "hunt_package_id": hunt_package_id,
+        "run_id": run_id,
+        "body": body,
+        "created_by": created_by,
+        "created_at": now,
+    }
+
+
+async def list_run_comments(run_id: str) -> list[dict[str, Any]]:
+    """Return all comments for a run, oldest first (reads like a conversation)."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM run_comments WHERE run_id = ? ORDER BY created_at ASC",
+            (run_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    return [dict(row) for row in rows]
+
+
+async def delete_run_comment(comment_id: str) -> bool:
+    """Delete a comment by id. Returns True if a row was actually deleted."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM run_comments WHERE id = ?", (comment_id,))
+        await db.commit()
+        return cur.rowcount > 0
 
 
 # ── Run-level step_log helpers (issue-local-009) ─────────────────────────────

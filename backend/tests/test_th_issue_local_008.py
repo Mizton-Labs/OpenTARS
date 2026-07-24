@@ -41,6 +41,7 @@ async def test_list_hunt_packages_includes_run_created_at() -> None:
         "created_at": "2026-06-21T09:00:00",
         "updated_at": "2026-06-21T09:00:00",
         "evidence_count": 0,
+        "hunt_seq": 1,
     }
 
     class _DictRow(dict):

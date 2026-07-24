@@ -23,12 +23,13 @@ from backend.config.loader import (
     load_app_pagination_max,
     load_app_title,
     load_default_theme,
-    load_logo_path,
+    load_hunt_id_prefix,
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
+    resolve_logo_file,
     save_agent_show_subtasks,
     save_agent_tools,
     save_agent_verbosity,
@@ -37,6 +38,7 @@ from backend.config.loader import (
     save_app_pagination_max,
     save_app_title,
     save_default_theme,
+    save_hunt_id_prefix,
     save_logo_path,
     save_th_llm_max_retries,
     save_th_llm_retry_backoff_seconds,
@@ -177,7 +179,7 @@ async def set_default_theme(
 ) -> dict[str, str]:
     """Set the instance-wide default theme.
 
-    Body: {"theme": "classic" | "energy" | "light"}
+    Body: {"theme": "classic" | "energy" | "light" | "ocean"}
 
     A signed-in user with a personal theme override (see PUT /api/auth/me/theme)
     is unaffected by this — it only changes what everyone else (and logged-out
@@ -430,6 +432,37 @@ async def set_th_research_effort(
     return {"th_research_effort": value}
 
 
+# ── Threat Hunting HuntID prefix (issue-local-018) ────────────────────────────
+
+
+@router.get("/hunt-id-prefix")
+async def get_hunt_id_prefix() -> dict[str, str]:
+    """Return the configured HuntID prefix (default 'TH')."""
+    return {"hunt_id_prefix": load_hunt_id_prefix()}
+
+
+@router.put("/hunt-id-prefix")
+async def set_hunt_id_prefix(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the HuntID prefix.
+
+    Body: {"hunt_id_prefix": "TH"}
+    """
+    value = body.get("hunt_id_prefix")
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'hunt_id_prefix' as a string",
+        )
+    try:
+        save_hunt_id_prefix(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"hunt_id_prefix": value}
+
+
 # ── Threat Hunting report formats (issue-local-004) ──────────────────────────
 
 
@@ -517,21 +550,8 @@ async def get_agent_tools_catalog() -> dict[str, Any]:
 
 
 def _resolved_logo_file() -> Path | None:
-    """Return the on-disk logo path if configured and present, else None.
-
-    Defends in depth against a tampered application.yaml: the stored path must
-    resolve to a real file inside data/branding/ (no traversal escape).
-    """
-    rel = load_logo_path()
-    if not rel:
-        return None
-    fp = (_PROJECT_ROOT / rel).resolve()
-    branding = _BRANDING_DIR.resolve()
-    try:
-        fp.relative_to(branding)
-    except ValueError:
-        return None
-    return fp if fp.is_file() else None
+    """Return the on-disk logo path if configured and present, else None."""
+    return resolve_logo_file()
 
 
 @router.get("/logo-info")

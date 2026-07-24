@@ -1117,3 +1117,40 @@ async def download_run_report_pdf(pkg_id: str, run_id: str) -> StreamingResponse
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Run Comments (issue-local-018) ────────────────────────────────────────────
+
+
+class RunCommentCreateBody(BaseModel):
+    body: str
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/comments")
+async def list_run_comments(pkg_id: str, run_id: str) -> list[dict]:
+    """List analyst comments for a specific run, oldest first."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_run_comments(run_id)
+
+
+@router.post("/packages/{pkg_id}/runs/{run_id}/comments", status_code=201)
+async def create_run_comment(
+    pkg_id: str, run_id: str, body: RunCommentCreateBody, request: Request
+) -> dict:
+    """Post a new analyst comment on a specific run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    if not body.body.strip():
+        raise HTTPException(status_code=400, detail="Comment body must not be empty")
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    return await th_db.create_run_comment(pkg_id, run_id, body.body.strip(), created_by=created_by)
+
+
+@router.delete("/packages/{pkg_id}/runs/{run_id}/comments/{comment_id}", status_code=204)
+async def delete_run_comment(pkg_id: str, run_id: str, comment_id: str) -> None:
+    """Delete an analyst comment."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    deleted = await th_db.delete_run_comment(comment_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Comment not found")

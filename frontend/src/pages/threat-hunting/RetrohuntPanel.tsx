@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import type { THDeepRetrohuntLead, THSanitizedIOC } from '../../api/client'
 import IocVerdictToggle, { type IocVerdict } from './IocVerdictToggle'
+import IocApplyBar, { type IocApplyBarProps } from './IocApplyBar'
 
 // Must match NOISE_THRESHOLD / HIGH_NOISE_THRESHOLD in backend/threat_hunting/iocs.py.
 const NOISE_THRESHOLD = 0.7
@@ -284,6 +285,7 @@ export default function RetrohuntPanel({
   pkgId,
   pendingFor,
   onStageVerdict,
+  iocApplyBar,
 }: {
   retrohunt: THDeepRetrohuntLead
   pkgId: string
@@ -291,6 +293,10 @@ export default function RetrohuntPanel({
    *  interactive Keep/Remove toggle — omitted for read-only draft views. */
   pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
   onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
+  /** issue-local-018 follow-up: rendered next to the All/Sanitized/Removed
+   *  filter buttons below — omitted for read-only draft views, same as
+   *  pendingFor/onStageVerdict. */
+  iocApplyBar?: IocApplyBarProps
 }) {
   // issue-local-016: default view is the actionable set ('sanitized' — what
   // actually feeds the SPL query). 'all' is a true union of every IOC seen,
@@ -369,30 +375,43 @@ export default function RetrohuntPanel({
             <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
               Sanitized IOCs ({filteredIocs.length}/{retrohunt.sanitized_iocs.length})
             </h4>
-            {/* Filter buttons — default 'sanitized' (actionable set that
-                feeds the SPL query); 'all' is a true union, 'removed' is
-                opt-in — no bucket is a misleading mix of the other two. */}
-            <div className="flex gap-1">
-              {(
-                [
-                  ['all', 'All'],
-                  ['sanitized', 'Sanitized'],
-                  ['removed', `Removed${removedIocs.length ? ` (${removedIocs.length})` : ''}`],
-                ] as const
-              ).map(([f, label]) => (
-                <button
-                  key={f}
-                  onClick={() => setIocFilter(f)}
-                  className={clsx(
-                    'text-[11px] px-2 py-0.5 rounded transition-colors',
-                    iocFilter === f
-                      ? 'bg-brand-600/30 text-brand-300 border border-brand-700/40'
-                      : 'text-gray-500 hover:text-gray-300',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              {/* Filter buttons — default 'sanitized' (actionable set that
+                  feeds the SPL query); 'all' is a true union, 'removed' is
+                  opt-in — no bucket is a misleading mix of the other two. */}
+              <div className="flex gap-1">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['sanitized', 'Sanitized'],
+                    ['removed', `Removed${removedIocs.length ? ` (${removedIocs.length})` : ''}`],
+                  ] as const
+                ).map(([f, label]) => (
+                  <button
+                    key={f}
+                    onClick={() => setIocFilter(f)}
+                    className={clsx(
+                      'text-[11px] px-2 py-0.5 rounded transition-colors',
+                      iocFilter === f
+                        ? 'bg-brand-600/30 text-brand-300 border border-brand-700/40'
+                        : 'text-gray-500 hover:text-gray-300',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* issue-local-018 follow-up: Apply changes, right next to the
+                  filter it affects rather than a detached page banner. */}
+              {iocApplyBar && (
+                <IocApplyBar
+                  isDirty={iocApplyBar.isDirty}
+                  pendingCount={iocApplyBar.pendingCount}
+                  isApplying={iocApplyBar.isApplying}
+                  justApplied={iocApplyBar.justApplied}
+                  onApply={iocApplyBar.onApply}
+                />
+              )}
             </div>
           </div>
 

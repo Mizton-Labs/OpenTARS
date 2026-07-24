@@ -279,6 +279,15 @@ def test_set_own_theme_accepts_light(auth_env):
     assert c.get("/api/auth/me").json()["user"]["theme"] == "light"
 
 
+def test_set_own_theme_accepts_ocean(auth_env):
+    """issue-local-018 follow-up: 'ocean' is a valid fourth personal theme override."""
+    c = _login("admin", "Adminpass1")
+    r = c.put("/api/auth/me/theme", json={"theme": "ocean"})
+    assert r.status_code == 200
+    assert r.json()["theme"] == "ocean"
+    assert c.get("/api/auth/me").json()["user"]["theme"] == "ocean"
+
+
 def test_set_own_theme_null_clears_override(auth_env):
     c = _login("admin", "Adminpass1")
     c.put("/api/auth/me/theme", json={"theme": "energy"})

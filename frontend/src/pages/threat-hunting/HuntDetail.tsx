@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X, Save } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type LLMProviderSummary } from '../../api/client'
+import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
@@ -10,21 +10,34 @@ import ExecutionPanel from './ExecutionPanel'
 import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
 import ConfirmDialog from '../../components/ConfirmDialog'
-import { runStatusClass, runLabel } from './runStatusUtils'
+import { runStatusClass, runLabel, HUNT_ID_BADGE } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
+import IocApplyBar from './IocApplyBar'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
 import RunsStatusTable from './RunsStatusTable'
 
-type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report'
+type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report' | 'comments'
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high'] as const
 
-export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: () => void }) {
-  const { isResearcher } = useAuth()
+export default function HuntDetail({
+  pkgId,
+  onBack,
+  initialRunId,
+}: {
+  pkgId: string
+  onBack: () => void
+  /** issue-local-018: deep-link to a specific run (e.g. from the hunt-package
+   *  list's Table density mode). Falls back to the newest run when absent
+   *  or when it doesn't match any run in this package (stale deep-link). */
+  initialRunId?: string
+}) {
+  const { isResearcher, isAdmin } = useAuth()
   const qc = useQueryClient()
   const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
+  const [newComment, setNewComment] = useState('')
 
   // Part 4: evidence delete confirmation
   const [confirmEvidenceId, setConfirmEvidenceId] = useState<string | null>(null)
@@ -97,6 +110,13 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
     enabled: !!activeRunId,
   })
 
+  // issue-local-018: per-run analyst comments
+  const { data: comments = [] } = useQuery({
+    queryKey: ['th-comments', pkgId, activeRunId],
+    queryFn: () => api.threatHunting.listRunComments(pkgId, activeRunId!),
+    enabled: activeTab === 'comments' && !!activeRunId,
+  })
+
   // issue-006-G: LLM providers for re-run dialog model selector
   const { data: rerunProviders = [] } = useQuery({
     queryKey: ['llm-providers'],
@@ -121,12 +141,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
   const rerunChosenModel = rerunModelChoice !== '' ? (rerunModelOptions[Number(rerunModelChoice)] ?? null) : null
 
-  // Auto-select the latest run when runs load/change
+  // Auto-select the requested run (issue-local-018 deep-link) or else the
+  // latest run when runs load/change. Falls back to newest if initialRunId
+  // doesn't match any run in this package (e.g. a stale deep-link).
   useEffect(() => {
     if (runs.length > 0 && !activeRunId) {
-      setActiveRunId(runs[0].id)
+      const requested = initialRunId && runs.some((r) => r.id === initialRunId) ? initialRunId : undefined
+      setActiveRunId(requested ?? runs[0].id)
     }
-  }, [runs, activeRunId])
+  }, [runs, activeRunId, initialRunId])
 
   // issue-local-016: manual IOC verdict overrides, staged until "Apply
   // changes" — lifted here (parent of both the IOCs tab and the Analysis
@@ -140,6 +163,21 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
       qc.invalidateQueries({ queryKey: ['th-evidence', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-packages'] })
+    },
+  })
+
+  // issue-local-018: per-run analyst comments
+  const createCommentMut = useMutation({
+    mutationFn: (body: string) => api.threatHunting.createRunComment(pkgId, activeRunId!, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-comments', pkgId, activeRunId] })
+      setNewComment('')
+    },
+  })
+  const deleteCommentMut = useMutation({
+    mutationFn: (commentId: string) => api.threatHunting.deleteRunComment(pkgId, activeRunId!, commentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-comments', pkgId, activeRunId] })
     },
   })
 
@@ -174,6 +212,11 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
   const removedCount = (iocs as THExtractedIOC[]).filter((i) => i.action === 'remove').length
 
+  // issue-local-018 follow-up: hoisted so the header indicator card and the
+  // run-selector status pill share one lookup instead of each re-scanning
+  // `runs` inline.
+  const activeRun = runs.find((r) => r.id === activeRunId)
+
   const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
   // issue-local-014: re-run is available regardless of any run's status —
   // including while a run is still active — so parallel runs (e.g. a
@@ -189,7 +232,15 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-100 truncate">{pkg?.name ?? '…'}</h1>
+          <h1 className="text-lg font-semibold text-gray-100 truncate flex items-center gap-2">
+            {pkg?.hunt_id_display && (
+              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>
+            )}
+            {activeRun?.run_id_display && (
+              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{activeRun.run_id_display}</span>
+            )}
+            {pkg?.name ?? '…'}
+          </h1>
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
         <div className="flex items-center gap-2">
@@ -213,25 +264,6 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           )}
         </div>
       </div>
-
-      {/* issue-local-016: staged IOC verdict changes — visible regardless of
-          active tab, since a change can be staged from either the IOCs tab
-          or the Analysis tab's Sanitized IOCs table. */}
-      {iocStaging.isDirty && (
-        <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-brand-700/50 bg-brand-900/10">
-          <p className="text-sm text-brand-300">
-            {iocStaging.pendingCount} IOC verdict change{iocStaging.pendingCount !== 1 ? 's' : ''} staged for this run.
-          </p>
-          <button
-            className="btn-primary flex items-center gap-2 text-sm shrink-0"
-            disabled={iocStaging.isApplying}
-            onClick={() => iocStaging.apply()}
-          >
-            <Save className="w-3.5 h-3.5" />
-            {iocStaging.isApplying ? 'Applying...' : 'Apply changes'}
-          </button>
-        </div>
-      )}
 
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
@@ -260,9 +292,9 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             </div>
             <span className={clsx(
               'text-[11px] px-2 py-0.5 rounded shrink-0',
-              runStatusClass(runs.find(r => r.id === activeRunId)?.generation_status),
+              runStatusClass(activeRun?.generation_status),
             )}>
-              {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
+              {activeRun?.generation_status ?? '—'}
             </span>
           </div>
           {/* issue-local-015: progress-block stepper for the selected run */}
@@ -283,7 +315,7 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
             All runs
           </p>
-          <RunsStatusTable pkgId={pkgId} runs={runs} />
+          <RunsStatusTable pkgId={pkgId} runs={runs} onSelectRun={(runId) => setActiveRunId(runId)} />
         </div>
       )}
 
@@ -329,6 +361,13 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
               Report
             </button>
           )}
+          {/* Comments tab (issue-local-018) — always visible, per-run free-text notes */}
+          <button
+            onClick={() => setActiveTab('comments')}
+            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'comments' ? 'tab-active' : 'tab-inactive')}
+          >
+            Comments{comments.length > 0 ? ` (${comments.length})` : ''}
+          </button>
         </nav>
       </div>
 
@@ -384,11 +423,22 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
             <p className="text-sm text-gray-500 text-center py-8">No IOCs extracted yet.</p>
           ) : (
             <>
-              <div className="flex gap-4 text-sm text-gray-500">
-                <span className="text-green-400">{cleanCount} actionable</span>
-                <span className="text-amber-400">{noisyCount} noisy / flagged</span>
-                {removedCount > 0 && (
-                  <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex gap-4 text-sm text-gray-500">
+                  <span className="text-green-400">{cleanCount} actionable</span>
+                  <span className="text-amber-400">{noisyCount} noisy / flagged</span>
+                  {removedCount > 0 && (
+                    <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+                  )}
+                </div>
+                {isResearcher && (
+                  <IocApplyBar
+                    isDirty={iocStaging.isDirty}
+                    pendingCount={iocStaging.pendingCount}
+                    isApplying={iocStaging.isApplying}
+                    justApplied={iocStaging.justApplied}
+                    onApply={iocStaging.apply}
+                  />
                 )}
               </div>
               {/* Column headers */}
@@ -470,6 +520,18 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
           onShowIocs={() => setActiveTab('iocs')}
           pendingVerdictFor={isResearcher ? iocStaging.pendingFor : undefined}
           onStageVerdict={isResearcher ? iocStaging.stage : undefined}
+          iocVerdictsDirty={iocStaging.isDirty}
+          iocApplyBar={
+            isResearcher
+              ? {
+                  isDirty: iocStaging.isDirty,
+                  pendingCount: iocStaging.pendingCount,
+                  isApplying: iocStaging.isApplying,
+                  justApplied: iocStaging.justApplied,
+                  onApply: iocStaging.apply,
+                }
+              : undefined
+          }
         />
       )}
 
@@ -484,6 +546,59 @@ export default function HuntDetail({ pkgId, onBack }: { pkgId: string; onBack: (
 
       {/* Report tab */}
       {activeTab === 'report' && <ReportPanel pkgId={pkgId} runId={activeRunId} />}
+
+      {/* Comments tab (issue-local-018) — free-text analyst notes on the active run */}
+      {activeTab === 'comments' && (
+        <div className="space-y-3">
+          {isResearcher && (
+            <div className="flex items-start gap-2">
+              <textarea
+                className="input flex-1 text-sm min-h-[70px] resize-y"
+                placeholder="Add a comment about this run…"
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+              />
+              <button
+                className="btn-primary flex items-center gap-2 text-sm shrink-0"
+                disabled={!newComment.trim() || createCommentMut.isPending}
+                onClick={() => createCommentMut.mutate(newComment.trim())}
+              >
+                <Send className="w-3.5 h-3.5" />
+                Post
+              </button>
+            </div>
+          )}
+          {(comments as THRunComment[]).length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-8 flex flex-col items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-gray-700" />
+              No comments yet.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(comments as THRunComment[]).map((c) => (
+                <div key={c.id} className="card flex items-start gap-3">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                      <span className="font-medium text-gray-300">{c.created_by ?? 'unknown'}</span>
+                      <span>{c.created_at.slice(0, 19).replace('T', ' ')}</span>
+                    </div>
+                    <p className="text-sm text-gray-200 whitespace-pre-wrap">{c.body}</p>
+                  </div>
+                  {(isResearcher || isAdmin) && (
+                    <button
+                      className="btn-ghost p-1 text-gray-600 hover:text-red-400 shrink-0"
+                      onClick={() => deleteCommentMut.mutate(c.id)}
+                      title="Delete comment"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add item modal */}
       {showAddItem && (

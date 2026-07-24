@@ -99,6 +99,21 @@ describe('ThemeProvider (issue-local-016)', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('light')
   })
 
+  it('accepts "ocean" as a valid instance default (issue-local-018 follow-up)', async () => {
+    vi.mocked(api.getDefaultTheme).mockResolvedValue({ theme: 'ocean' })
+    mockUser({ id: 1, username: 'bob', role: 'threat-viewer', enabled: true, theme: null })
+
+    render(
+      <ThemeProvider>
+        <Probe />
+      </ThemeProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('default')).toHaveTextContent('ocean'))
+    expect(screen.getByTestId('theme')).toHaveTextContent('ocean')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('ocean')
+  })
+
   it("prefers the user's personal override over the instance default", async () => {
     vi.mocked(api.getDefaultTheme).mockResolvedValue({ theme: 'classic' })
     mockUser({ id: 1, username: 'bob', role: 'threat-viewer', enabled: true, theme: 'energy' })

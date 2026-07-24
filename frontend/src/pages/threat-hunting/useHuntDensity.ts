@@ -1,9 +1,8 @@
 /**
  * useHuntDensity — compact/detailed density selector for the Threat Hunting
  * list view (issue-local-016). Persists the user's choice in localStorage
- * under 'sfi.th.cardDensity'. Independent of useHuntTheme (that toggle
- * controls card COLOR STYLE — Classic vs Modern — this one controls how
- * much per-card detail renders — the 16-step stage rail hides in 'compact').
+ * under 'sfi.th.cardDensity'. Controls how much per-card detail renders —
+ * the 16-step stage rail hides in 'compact'.
  */
 import { useState, useEffect } from 'react'
 

@@ -89,6 +89,29 @@ def _evidence_summary(evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _evidence_items_full(evidence_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-item detail for every extracted/parsed evidence item.
+
+    The report previously only surfaced an aggregate count/type summary
+    (``_evidence_summary``) — the underlying parsed content never appeared
+    anywhere in the report, so a reader had no way to see what the hunt was
+    actually built from. This keeps the report consistent with how
+    thoroughly every other section (hypotheses, leads, TTPs) is documented.
+    """
+    return [
+        {
+            "id": e.get("id", ""),
+            "label": e.get("label") or e.get("source_ref") or e.get("item_type") or "Evidence item",
+            "item_type": e.get("item_type", "unknown"),
+            "source_ref": e.get("source_ref", ""),
+            "parser_used": e.get("parser_used", ""),
+            "parse_status": e.get("parse_status", ""),
+            "extracted_text": e.get("extracted_text") or "",
+        }
+        for e in evidence_items
+    ]
+
+
 def _retrohunt_summary(deep_retrohunt: dict[str, Any] | None) -> dict[str, Any] | None:
     if not deep_retrohunt:
         return None
@@ -159,6 +182,7 @@ def assemble_report(
         "generated_by": None,
         "package_status": hunt_package.get("status", ""),
         "evidence_summary": _evidence_summary(evidence_items),
+        "evidence_items": _evidence_items_full(evidence_items),
         "threat_context": threat_context,
         "hypotheses": hypotheses,
         "hunting_leads": hunting_leads,
@@ -674,6 +698,26 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
     lines.append(f"- IOCs extracted: {ev.get('ioc_count', 0)}")
     lines.append(f"- Item types: {', '.join(ev.get('item_types', []) or [])}\n")
 
+    evidence_items = full_report.get("evidence_items") or []
+    if evidence_items:
+        _h(2, f"Evidence Items ({len(evidence_items)})")
+        for item in evidence_items:
+            _h(3, str(item.get("label", "Evidence item")))
+            meta_bits = [
+                f"Type: {item['item_type']}" if item.get("item_type") else "",
+                f"Parser: {item['parser_used']}" if item.get("parser_used") else "",
+                f"Status: {item['parse_status']}" if item.get("parse_status") else "",
+            ]
+            meta_line = "  |  ".join(b for b in meta_bits if b)
+            if meta_line:
+                lines.append(f"*{meta_line}*\n")
+            if item.get("source_ref"):
+                lines.append(f"Source: `{item['source_ref']}`\n")
+            if item.get("extracted_text"):
+                _code(item["extracted_text"])
+            else:
+                _p("(no extracted text)")
+
     tc = full_report.get("threat_context") or {}
     if tc and not tc.get("parse_error"):
         _h(2, "Threat Context")
@@ -783,12 +827,17 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
 def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     """Render the full_report dict as a PDF byte string using reportlab.
 
-    issue-006-F additions:
-    - Cover header block with colored rule and metadata row
-    - Page numbers via onFirstPage/onLaterPages callbacks (bottom-center)
-    - Tables for Evidence Summary, TTP Techniques, and Execution Results
-    - Relevance/priority cells use color (red=high, amber=medium, gray=low)
-    - Colored dark-blue rule above each H2 section header
+    Print-oriented light theme (previously used a dark-UI color scheme —
+    near-white headings and dark table fills — which is illegible/ugly on a
+    printed white page). Cover includes the configured branding logo and app
+    title when set (backend.config.loader.resolve_logo_file/load_app_title).
+
+    - Cover: logo + app title (if configured), report title, colored rule,
+      metadata row.
+    - Running footer on every page: app title (left) + page number (center).
+    - Tables: light header fill with dark text, subtle alternating rows,
+      thin borders, header row repeats across a page break.
+    - Colored accent rule above each H2 section header.
     """
     from io import BytesIO
 
@@ -796,14 +845,18 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
     from reportlab.platypus import (
         HRFlowable,
+        Image,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
         Table,
         TableStyle,
     )
+
+    from backend.config.loader import load_app_title, resolve_logo_file
 
     PAGE_W, PAGE_H = A4
     LEFT_MARGIN = 2 * cm
@@ -813,13 +866,42 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
 
     buf = BytesIO()
 
-    # ── Page callbacks for page numbers ──────────────────────────────────────
-    def _add_page_number(canvas, doc):  # type: ignore[no-untyped-def]
+    app_title = load_app_title().strip()
+    logo_path = resolve_logo_file()
+    logo_flowable: Image | None = None
+    if logo_path is not None:
+        try:
+            reader = ImageReader(str(logo_path))
+            iw, ih = reader.getSize()
+            target_h = 1.3 * cm
+            target_w = iw * (target_h / ih) if ih else target_h
+            logo_flowable = Image(str(logo_path), width=target_w, height=target_h)
+        except Exception:  # noqa: BLE001
+            logo_flowable = None
+
+    # ── Print-friendly color palette ─────────────────────────────────────────
+    _COL_H1 = colors.HexColor("#0f172a")  # slate-900 — cover title
+    _COL_H2 = colors.HexColor("#1e293b")  # slate-800 — section headings
+    _COL_ACCENT_RULE = colors.HexColor("#2f58f0")  # brand blue — section/cover rules
+    _COL_META = colors.HexColor("#64748b")  # slate-500 — metadata/footer text
+    _COL_TABLE_HEADER_BG = colors.HexColor("#e0e7ff")  # indigo-100
+    _COL_TABLE_HEADER_FG = colors.HexColor("#1e293b")  # slate-800
+    _COL_TABLE_ROW_ALT = colors.HexColor("#f8fafc")  # slate-50
+    _COL_TABLE_ROW_NORM = colors.white
+    _COL_TABLE_BORDER = colors.HexColor("#cbd5e1")  # slate-300
+    _COL_EVIDENCE_BG = colors.HexColor("#f8fafc")  # slate-50 — extracted-text box
+
+    # ── Page callbacks: running footer (app title + page number) ────────────
+    def _footer(canvas, doc):  # type: ignore[no-untyped-def]
         canvas.saveState()
+        canvas.setStrokeColor(_COL_TABLE_BORDER)
+        canvas.setLineWidth(0.5)
+        canvas.line(LEFT_MARGIN, BOT_MARGIN * 0.75, PAGE_W - RIGHT_MARGIN, BOT_MARGIN * 0.75)
         canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#6b7280"))
-        page_num = canvas.getPageNumber()
-        canvas.drawCentredString(PAGE_W / 2.0, BOT_MARGIN * 0.5, f"Page {page_num}")
+        canvas.setFillColor(_COL_META)
+        if app_title:
+            canvas.drawString(LEFT_MARGIN, BOT_MARGIN * 0.4, app_title)
+        canvas.drawCentredString(PAGE_W / 2.0, BOT_MARGIN * 0.4, f"Page {canvas.getPageNumber()}")
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
@@ -829,30 +911,49 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         leftMargin=LEFT_MARGIN,
         topMargin=TOP_MARGIN,
         bottomMargin=BOT_MARGIN,
+        title=full_report.get("hunt_name", "Threat Hunt Report"),
     )
     styles = getSampleStyleSheet()
     h1_style = ParagraphStyle(
         "CoverH1",
         parent=styles["Heading1"],
-        fontSize=18,
+        fontSize=19,
         spaceAfter=4,
-        textColor=colors.HexColor("#e5e7eb"),
+        textColor=_COL_H1,
     )
     h2_style = ParagraphStyle(
         "SectionH2",
         parent=styles["Heading2"],
         fontSize=13,
-        spaceAfter=4,
-        textColor=colors.HexColor("#d1d5db"),
-        spaceBefore=8,
+        spaceAfter=6,
+        textColor=_COL_H2,
+        spaceBefore=10,
     )
-    h3_style = styles["Heading3"]
-    body_style = styles["BodyText"]
+    h3_style = ParagraphStyle(
+        "SectionH3",
+        parent=styles["Heading3"],
+        fontSize=11,
+        textColor=_COL_H2,
+        spaceBefore=6,
+        spaceAfter=2,
+    )
+    body_style = ParagraphStyle(
+        "Body",
+        parent=styles["BodyText"],
+        textColor=colors.HexColor("#1f2937"),
+        leading=14,
+    )
     meta_style = ParagraphStyle(
         "Meta",
         parent=body_style,
         fontSize=9,
-        textColor=colors.HexColor("#9ca3af"),
+        textColor=_COL_META,
+    )
+    branding_style = ParagraphStyle(
+        "Branding",
+        parent=body_style,
+        fontSize=10,
+        textColor=_COL_META,
     )
     code_style = ParagraphStyle(
         "Code",
@@ -862,17 +963,13 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         leftIndent=12,
         spaceAfter=4,
     )
-
-    # Color constants for tables/priority cells
-    _COL_HEADER_BG = colors.HexColor("#1e3a5f")
-    _COL_HEADER_FG = colors.HexColor("#bfdbfe")
-    _COL_ROW_ALT = colors.HexColor("#111827")
-    _COL_ROW_NORM = colors.HexColor("#1f2937")
-    _COL_HIGH = colors.HexColor("#7f1d1d")
-    _COL_MED = colors.HexColor("#78350f")
-    _COL_LOW = colors.HexColor("#374151")
-    _COL_BORDER = colors.HexColor("#374151")
-    _COL_DARK_RULE = colors.HexColor("#1e3a5f")
+    evidence_text_style = ParagraphStyle(
+        "EvidenceText",
+        parent=body_style,
+        fontSize=8.5,
+        fontName="Courier",
+        leading=11,
+    )
 
     story: list = []
 
@@ -884,8 +981,8 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         story.append(Paragraph(_esc(text), h1_style))
 
     def _h2(text: str) -> None:
-        story.append(Spacer(1, 6))
-        story.append(HRFlowable(width="100%", thickness=2, color=_COL_DARK_RULE))
+        story.append(Spacer(1, 8))
+        story.append(HRFlowable(width="100%", thickness=1.5, color=_COL_ACCENT_RULE))
         story.append(Paragraph(_esc(text), h2_style))
 
     def _h3(text: str) -> None:
@@ -903,10 +1000,55 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     def _sp(h: int = 4) -> None:
         story.append(Spacer(1, h))
 
-    # ── Cover header ─────────────────────────────────────────────────────────
+    def _styled_table(
+        rows: list[list[str]], col_widths: list, extra_style: list | None = None
+    ) -> Table:  # type: ignore[type-arg]
+        table = Table(rows, colWidths=col_widths, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COL_TABLE_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_TABLE_HEADER_FG),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_TABLE_ROW_NORM, _COL_TABLE_ROW_ALT]),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_TABLE_BORDER),
+                    ("BOX", (0, 0), (-1, -1), 0.75, _COL_TABLE_BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    *(extra_style or []),
+                ]
+            )
+        )
+        return table
+
+    # ── Cover: branding (logo + app title), report title, metadata ──────────
+    if logo_flowable is not None or app_title:
+        brand_cells = [
+            logo_flowable or "",
+            Paragraph(_esc(app_title), branding_style) if app_title else "",
+        ]
+        brand_row = Table([brand_cells], colWidths=[3 * cm, None])
+        brand_row.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(brand_row)
+        _sp(10)
+
     hunt_name = full_report.get("hunt_name", "Unnamed Hunt")
     _h1(f"Threat Hunt Report: {hunt_name}")
-    story.append(HRFlowable(width="100%", thickness=3, color=_COL_DARK_RULE))
+    story.append(HRFlowable(width="100%", thickness=2.5, color=_COL_ACCENT_RULE))
     _sp(6)
 
     meta_parts = []
@@ -937,26 +1079,55 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             ["IOCs Extracted", str(ev.get("ioc_count", 0))],
             ["Evidence Types", ", ".join(ev.get("item_types", []) or [])],
         ]
-        ev_table = Table(ev_rows, colWidths=[5 * cm, None])
-        ev_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ]
-            )
-        )
-        story.append(ev_table)
+        story.append(_styled_table(ev_rows, [5 * cm, None]))
     except Exception:  # noqa: BLE001
         _p(f"Items: {ev.get('total_items', 0)}  |  IOCs: {ev.get('ioc_count', 0)}")
+
+    # ── Evidence Items — full extracted/parsed content ───────────────────────
+    evidence_items = full_report.get("evidence_items") or []
+    if evidence_items:
+        _h2(f"Evidence Items ({len(evidence_items)})")
+        for item in evidence_items:
+            _h3(str(item.get("label", "Evidence item")))
+            meta_bits = [
+                f"<b>Type:</b> {_esc(str(item['item_type']))}" if item.get("item_type") else "",
+                f"<b>Parser:</b> {_esc(str(item['parser_used']))}"
+                if item.get("parser_used")
+                else "",
+                f"<b>Status:</b> {_esc(str(item['parse_status']))}"
+                if item.get("parse_status")
+                else "",
+            ]
+            meta_line = "  &nbsp;|&nbsp;  ".join(b for b in meta_bits if b)
+            if meta_line:
+                _p_raw(meta_line, meta_style)
+            if item.get("source_ref"):
+                story.append(Paragraph(f"Source: {_esc(str(item['source_ref']))}", code_style))
+            extracted = item.get("extracted_text") or ""
+            if extracted:
+                try:
+                    box = Table(
+                        [[Paragraph(_esc(extracted), evidence_text_style)]],
+                        colWidths=[None],
+                    )
+                    box.setStyle(
+                        TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, -1), _COL_EVIDENCE_BG),
+                                ("BOX", (0, 0), (-1, -1), 0.5, _COL_TABLE_BORDER),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                            ]
+                        )
+                    )
+                    story.append(box)
+                except Exception:  # noqa: BLE001
+                    _p(extracted, evidence_text_style)
+            else:
+                _p("(no extracted text)", meta_style)
+            _sp(6)
 
     # ── Threat Context ────────────────────────────────────────────────────────
     tc = full_report.get("threat_context") or {}
@@ -1045,25 +1216,13 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                             t.get("description", "")[:80],
                         ]
                     )
-                ttp_table = Table(ttp_rows, colWidths=[2.2 * cm, 4 * cm, 3 * cm, None])
-                ttp_style = TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-                        ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (-1, -1), 8),
-                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-                        ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                        ("TOPPADDING", (0, 0), (-1, -1), 3),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("WORDWRAP", (3, 1), (3, -1), "CJK"),
-                    ]
+                story.append(
+                    _styled_table(
+                        ttp_rows,
+                        [2.2 * cm, 4 * cm, 3 * cm, None],
+                        extra_style=[("WORDWRAP", (3, 1), (3, -1), "CJK")],
+                    )
                 )
-                ttp_table.setStyle(ttp_style)
-                story.append(ttp_table)
             except Exception:  # noqa: BLE001
                 for t in techniques:
                     _p_raw(
@@ -1091,24 +1250,7 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                         (r.get("interpreted_findings") or "")[:80],
                     ]
                 )
-            er_table = Table(er_rows, colWidths=[3 * cm, 2.5 * cm, 2 * cm, None])
-            er_style = TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), _COL_HEADER_BG),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_HEADER_FG),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_ROW_NORM, _COL_ROW_ALT]),
-                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_BORDER),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ]
-            )
-            er_table.setStyle(er_style)
-            story.append(er_table)
+            story.append(_styled_table(er_rows, [3 * cm, 2.5 * cm, 2 * cm, None]))
         except Exception:  # noqa: BLE001
             for r in exec_results:
                 _p_raw(
@@ -1136,7 +1278,7 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                 _p(_esc(para))
         _sp(8)
 
-    doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
 
 

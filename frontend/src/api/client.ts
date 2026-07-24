@@ -368,7 +368,7 @@ export interface AuthUser {
    * Per-user theme override (issue-local-016). `null`/`undefined` means "use
    * the instance default" (see `getDefaultTheme`/`setDefaultTheme`).
    */
-  theme?: 'classic' | 'energy' | 'light' | null
+  theme?: 'classic' | 'energy' | 'light' | 'ocean' | null
 }
 
 export interface CreateUserPayload {
@@ -435,7 +435,7 @@ export const api = {
     // issue-local-016: any authenticated user may set their own theme
     // override. `theme: null` clears the override (falls back to the
     // instance default set via setDefaultTheme).
-    setOwnTheme: (theme: 'classic' | 'energy' | 'light' | null) =>
+    setOwnTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean' | null) =>
       request<AuthUser>('/auth/me/theme', {
         method: 'PUT',
         body: JSON.stringify({ theme }),
@@ -697,7 +697,7 @@ export const api = {
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
   getDefaultTheme: () => request<{ theme: string }>('/app/theme'),
-  setDefaultTheme: (theme: 'classic' | 'energy' | 'light') =>
+  setDefaultTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean') =>
     request<{ theme: string }>('/app/theme', {
       method: 'PUT',
       body: JSON.stringify({ theme }),
@@ -764,6 +764,13 @@ export const api = {
     request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats', {
       method: 'PUT',
       body: JSON.stringify({ th_report_formats: value }),
+    }),
+  // issue-local-018: HuntID prefix (e.g. "TH" -> "TH01")
+  getHuntIdPrefix: () => request<{ hunt_id_prefix: string }>('/app/hunt-id-prefix'),
+  setHuntIdPrefix: (value: string) =>
+    request<{ hunt_id_prefix: string }>('/app/hunt-id-prefix', {
+      method: 'PUT',
+      body: JSON.stringify({ hunt_id_prefix: value }),
     }),
 
   // Agent tools + document parsers toggles (issue-007)
@@ -1230,6 +1237,21 @@ export const api = {
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report/markdown`,
     downloadRunReportPdf: (pkgId: string, runId: string) =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/report/pdf`,
+    // issue-local-018: analyst comments on a specific run
+    listRunComments: (pkgId: string, runId: string) =>
+      request<THRunComment[]>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/comments`,
+      ),
+    createRunComment: (pkgId: string, runId: string, body: string) =>
+      request<THRunComment>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/comments`,
+        { method: 'POST', body: JSON.stringify({ body }) },
+      ),
+    deleteRunComment: (pkgId: string, runId: string, commentId: string) =>
+      request<void>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' },
+      ),
   },
 }
 
@@ -1733,6 +1755,9 @@ export interface THuntPackage {
   runs?: THuntPackageRun[]
   /** Convenience count of `runs`. */
   run_count?: number
+  /** issue-local-018: human-readable HuntID (e.g. "TH01"), computed
+   *  dynamically from the configured prefix. Empty string if not yet backfilled. */
+  hunt_id_display?: string
 }
 
 export interface THEvidenceItem {
@@ -1844,6 +1869,20 @@ export interface THuntPackageRun extends THRunSummary {
   /** issue-local-017: whether a hunt_reports row exists for this run — drives
    *  the report-download links in the all-runs status table. */
   has_report?: boolean
+  /** issue-local-018: human-readable Run ID (e.g. "TH01-X02"), prefixed by
+   *  the owning package's HuntID. Named *_display (not run_id) to avoid
+   *  colliding with THGenerationRecord.run_id, which carries the internal UUID. */
+  run_id_display?: string
+}
+
+/** issue-local-018: an analyst's free-text note on a specific run. */
+export interface THRunComment {
+  id: string
+  hunt_package_id: string
+  run_id: string
+  body: string
+  created_by: string | null
+  created_at: string
 }
 
 export interface THGenerationRecord {

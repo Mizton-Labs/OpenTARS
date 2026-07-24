@@ -18,9 +18,14 @@ def client(tmp_path, monkeypatch):
     fake.write_text(yaml.safe_dump({"app_base_prefix": ""}), encoding="utf-8")
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", fake)
     # Redirect branding storage + root into tmp so logo tests never touch the
-    # real repo tree.
+    # real repo tree. loader.resolve_logo_file() has its own _PROJECT_ROOT/
+    # _BRANDING_DIR (independent of routes_app's, computed at import time),
+    # so both module's copies need redirecting for the upload -> resolve
+    # round trip to agree on where the file actually landed.
     monkeypatch.setattr(routes_app, "_PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(routes_app, "_BRANDING_DIR", tmp_path / "data" / "branding")
+    monkeypatch.setattr(loader, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(loader, "_BRANDING_DIR", tmp_path / "data" / "branding")
     return TestClient(app)
 
 
@@ -276,6 +281,14 @@ def test_put_default_theme_accepts_light(client):
     assert resp.status_code == 200
     assert resp.json() == {"theme": "light"}
     assert client.get("/api/app/theme").json() == {"theme": "light"}
+
+
+def test_put_default_theme_accepts_ocean(client):
+    """issue-local-018 follow-up: 'ocean' is a valid fourth instance-default theme."""
+    resp = client.put("/api/app/theme", json={"theme": "ocean"})
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "ocean"}
+    assert client.get("/api/app/theme").json() == {"theme": "ocean"}
 
 
 def test_put_default_theme_rejects_invalid_value(client):

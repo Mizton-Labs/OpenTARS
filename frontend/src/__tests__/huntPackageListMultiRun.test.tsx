@@ -7,7 +7,7 @@
  *     both density modes, and clicking a chip switches which run's rail is
  *     shown.
  */
-import { render, screen, fireEvent, renderHook, act } from '@testing-library/react'
+import { render, screen, fireEvent, renderHook, act, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { THuntPackage } from '../api/client'
@@ -102,6 +102,59 @@ describe('useHuntDensity', () => {
   })
 })
 
+describe('ThreatHunting list — pagination (issue-local-018 follow-up)', () => {
+  function makeManyPkgs(n: number): THuntPackage[] {
+    return Array.from({ length: n }, (_, i) =>
+      makePkg({ id: `pkg-${i}`, name: `Package ${i}`, hunt_id_display: `TH${String(i + 1).padStart(2, '0')}` }),
+    )
+  }
+
+  it('shows only the first page (default size 20) and a page footer when there are more packages', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue(makeManyPkgs(45))
+    renderList()
+
+    await screen.findByText('Package 0')
+    expect(screen.getByText('Package 19')).toBeInTheDocument()
+    expect(screen.queryByText('Package 20')).not.toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 3 · 45 total')).toBeInTheDocument()
+  })
+
+  it('does not show pagination controls when everything fits on one page', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue(makeManyPkgs(5))
+    renderList()
+
+    await screen.findByText('Package 0')
+    expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument()
+  })
+
+  it('advances to the next page and back', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue(makeManyPkgs(45))
+    renderList()
+    await screen.findByText('Package 0')
+
+    fireEvent.click(screen.getByLabelText('Next page'))
+    await screen.findByText('Package 20')
+    expect(screen.queryByText('Package 0')).not.toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 3 · 45 total')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Previous page'))
+    await screen.findByText('Package 0')
+    expect(screen.queryByText('Package 20')).not.toBeInTheDocument()
+  })
+
+  it('changing the page-size dropdown re-pages the list and persists to localStorage', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue(makeManyPkgs(45))
+    renderList()
+    await screen.findByText('Package 0')
+
+    fireEvent.change(screen.getByLabelText('Show'), { target: { value: '50' } })
+
+    await waitFor(() => expect(screen.getByText('Package 44')).toBeInTheDocument())
+    expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument()
+    expect(localStorage.getItem('sfi.th.pageSize')).toBe('50')
+  })
+})
+
 describe('runStatusUtils', () => {
   it('maps known statuses to their classes and falls back for unknown ones', () => {
     expect(runStatusClass('completed')).toContain('green')
@@ -129,12 +182,10 @@ describe('runStatusUtils', () => {
 })
 
 describe('ThreatHunting list — density toggle + run chips (issue-local-016)', () => {
-  it('renders the Compact/Detailed/Table toggle alongside Classic/Modern', async () => {
+  it('renders the Compact/Detailed/Table toggle', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([])
     renderList()
-    expect(await screen.findByRole('button', { name: /^classic$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^modern$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^compact$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^table$/i })).toBeInTheDocument()
   })

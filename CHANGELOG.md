@@ -9,6 +9,106 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Track workflow, full evidence in reports, professional branded PDF (issue-local-018 follow-up)
+
+**New "Track workflow" checkbox** next to "Show subtasks" in the workflow graph toolbar — when
+enabled, the React Flow chart re-centers on whichever agent/task node is currently active every
+time it changes (smooth animated pan, generous padding for a readable zoom), instead of staying at
+its initial fit for the rest of the run.
+
+**Reports now include the full extracted/parsed evidence**, not just an aggregate count. Every
+evidence item's label, type, parser, status, and full parsed text now appears as its own section in
+both the Markdown and PDF reports, consistent with how thoroughly every other section (hypotheses,
+leads, TTPs) is already documented.
+
+**Overhauled PDF report generation** — replaced the dark-UI color scheme (near-invisible light-gray
+headings and dark table fills on a printed white page) with a professional light palette: dark
+slate headings, a brand-blue accent rule, light indigo table headers with dark text, alternating
+rows, consistent borders, and header rows that repeat across page breaks. The configured branding
+logo and app title (when set in Configuration) now appear on the cover and in a running footer.
+
+### Changed — IOC apply placement, run header dedup, graph focus/colors, Ocean re-hue (issue-local-018 follow-up)
+
+**"Apply changes" for staged IOC verdicts moved next to the filter it affects** — instead of a
+page-wide banner detached from context, it now sits directly beside the All/Sanitized/Removed
+filter (Analysis tab) and the IOC counts row (IOCs tab), with a visible amber staged-count + Apply
+button and a brief green "Applied" confirmation after saving.
+
+**Removed the duplicated "currently viewing" run info** in HuntDetail — the standalone "Viewing
+`TH01` / `TH01-X01`" indicator card is gone; the active run's RunID now appears alongside the
+HuntID directly in the main title (next to the back arrow and re-run button) instead of being
+shown twice.
+
+**The workflow graph now focuses on where an analysis starts**: on mount, both the ReactFlow and
+Mermaid visualizers center tightly on the Evidence nodes + the root `intake_classifier` node,
+instead of fitting the entire ~1800px-tall pipeline (which zoomed out so far the starting point was
+barely visible). Evidence nodes' "ok" state also no longer reuses the exact green Agent nodes use
+for "completed" — it's now a distinct teal, consistent with Evidence's other states, so a completed
+Evidence node never reads as a completed Agent node at a glance.
+
+**Ocean theme re-hued** — previously a darkened copy of Classic's indigo-blue accent, it now uses a
+cyan/sky-blue accent with a teal-tinted gray ramp, so it reads as a genuinely different blue tone
+rather than just a dimmer Classic.
+
+### Added — HuntID emphasis, run indicator, pagination, IOC approval gate, Ocean theme (issue-local-018 follow-up)
+
+**HuntID now renders as an emphasized badge** (bordered, brand-accented) everywhere it appears —
+the package list (all density modes) and the HuntDetail header — instead of a plain gray label,
+since it's the primary way analysts refer to a package. **HuntDetail also shows a "Viewing `TH01` /
+`TH01-X02`" indicator** above the run selector, so which run is currently open is unambiguous at a
+glance.
+
+**Fixed Light theme's plain-white cards**: `.card` had no Light override at all and fell through to
+a near-white background on a near-white page; it now gets a subtle slate-blue tint, matching the
+mechanism already used for Energy's card bump. Also extended the earlier Light-theme color-contrast
+fix to cover gaps it missed: the app's own `brand-900` accent idiom (re-run/IOC-mode selectors,
+SmartMappings/Configuration filter toggles), a `text-blue-200` case, and the workflow phase chips'
+one-shade-darker `-800` tier.
+
+**The hunt-package list gained pagination** — a "Show 10/20/50/100" page-size dropdown (persisted,
+default 20) plus Prev/Next controls, applied uniformly across Compact/Detailed/Table density modes.
+
+**Approve is now gated on unsaved IOC verdict changes**: if there are staged-but-unapplied IOC
+keep/remove overrides for a run, the Approve button is disabled with an explanatory message,
+preventing a package from moving into Execution using stale IOC data.
+
+**New "Ocean" theme** — a fourth UI theme, a slightly darker and more blue-biased variant of
+Classic's ramp (same accent, same construction method as Light's ramp-mirror), selectable
+everywhere Classic/Energy/Light already were (Account's personal override, Configuration's instance
+default).
+
+### Added — HuntID/RunID, run-table polish, theme fixes, per-run comments (issue-local-018)
+
+**Every Hunt Package now gets an automatic HuntID** (e.g. `TH01`, `TH02`) — a configurable prefix
+(default `TH`, editable in Threat Hunting settings) plus a monotonic sequence, shown to the left of
+the package title everywhere it appears. **Runs get a matching Run ID** (e.g. `TH01-X01`), shown as
+the leftmost column of the run summary tables. Both IDs are computed dynamically from the current
+prefix at read time (not baked into stored strings), so changing the prefix relabels everything
+consistently. The 44 pre-existing hunt packages/runs were backfilled by creation order (oldest =
+01) via a v6 schema migration.
+
+**The run summary table gained a Duration column**, and its Run ID/Model cells are now clickable —
+opening that exact run's detail view (previously only the newest run could be reached without
+manually switching the run selector).
+
+**The Classic/Modern card-color toggle was removed** — only the Classic card design remains, and
+the hunt-package list's Table density mode now gets the same card chrome (border/background) as
+Compact/Detailed mode, closing a visual gap where Table mode rendered with no card styling at all.
+
+**Fixed Light theme contrast**: badges, chips, and buttons using Tailwind's stock
+`{color}-900/NN` + `{color}-300`/`-400` pairing (severity badges, status pills, the IOC Keep/Remove
+toggle, workflow phase chips) previously stayed dark-tinted with pastel text even in Light mode,
+since those literal color classes never participated in Light's CSS-variable ramp-mirroring — a
+scoped `[data-theme='light']` CSS override flips the idiom to light-background/dark-text for
+green/red/blue/amber/yellow, without touching any component. The sidebar's Threat Intel/Threat
+Hunting section titles are also now visually emphasized (brand-colored, bold) to separate them from
+Home and the utility items.
+
+**New Comments tab** on each run in `HuntDetail` — free-text analyst notes with author/timestamp,
+gated by role (post: researcher, delete: researcher/admin). Previously the closest thing,
+`approval_notes`, was accepted by the API but silently discarded — there was no durable place to
+record analyst commentary on a specific run.
+
 ### Added — Table density mode, Light theme, run-summary IOC counts and report links (issue-local-017)
 
 **New "Table" density mode for the hunt-package list**, alongside the existing Compact/Detailed

@@ -51,6 +51,10 @@ class HuntPackageOut(BaseModel):
     # fields above (see the comment at line 41) — must be declared here.
     runs: list[dict[str, Any]] = []
     run_count: int = 0
+    # issue-local-018: human-readable HuntID (e.g. "TH01"), computed
+    # dynamically from the configured prefix — same declare-or-get-stripped
+    # trap as the fields above.
+    hunt_id_display: str = ""
 
 
 # ── Evidence ──────────────────────────────────────────────────────────────────

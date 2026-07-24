@@ -50,10 +50,15 @@ export default function ThreatHuntingSettingsTab() {
     queryKey: ['th-report-formats'],
     queryFn: () => api.getThReportFormats(),
   })
+  const { data: prefixData, isLoading: prefixLoading } = useQuery({
+    queryKey: ['hunt-id-prefix'],
+    queryFn: () => api.getHuntIdPrefix(),
+  })
 
   const [effort, setEffort] = useState<ResearchEffort>('high')
   const [pdfEnabled, setPdfEnabled] = useState(true)
   const [markdownEnabled, setMarkdownEnabled] = useState(true)
+  const [huntIdPrefix, setHuntIdPrefix] = useState('TH')
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -69,24 +74,33 @@ export default function ThreatHuntingSettingsTab() {
     }
   }, [formatsData])
 
+  useEffect(() => {
+    if (prefixData?.hunt_id_prefix) {
+      setHuntIdPrefix(prefixData.hunt_id_prefix)
+    }
+  }, [prefixData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setThResearchEffort(effort)
       await api.setThReportFormats({ pdf: pdfEnabled, markdown: markdownEnabled })
+      await api.setHuntIdPrefix(huntIdPrefix)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['th-research-effort'] })
       qc.invalidateQueries({ queryKey: ['th-report-formats'] })
+      qc.invalidateQueries({ queryKey: ['hunt-id-prefix'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
-  const isLoading = effortLoading || formatsLoading
+  const isLoading = effortLoading || formatsLoading || prefixLoading
   const isDirty =
     effort !== (effortData?.th_research_effort ?? 'high') ||
     pdfEnabled !== (formatsData?.th_report_formats?.pdf ?? true) ||
-    markdownEnabled !== (formatsData?.th_report_formats?.markdown ?? true)
+    markdownEnabled !== (formatsData?.th_report_formats?.markdown ?? true) ||
+    huntIdPrefix !== (prefixData?.hunt_id_prefix ?? 'TH')
 
   if (isLoading) {
     return (
@@ -109,6 +123,26 @@ export default function ThreatHuntingSettingsTab() {
           Configure the default behaviour for hunt generation and report export. Individual hunt
           runs may override Research Effort at generation time.
         </p>
+      </div>
+
+      {/* HuntID Prefix (issue-local-018) */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+          HuntID Prefix
+        </p>
+        <p className="text-xs text-gray-500">
+          Each Hunt Package gets an automatic HuntID: this prefix plus a consecutive number, e.g.{' '}
+          <span className="font-mono text-gray-400">{huntIdPrefix || 'TH'}01</span>. Runs are then
+          numbered under their package's HuntID, e.g.{' '}
+          <span className="font-mono text-gray-400">{huntIdPrefix || 'TH'}01-X01</span>.
+        </p>
+        <input
+          type="text"
+          className="input w-32 font-mono"
+          maxLength={8}
+          value={huntIdPrefix}
+          onChange={(e) => setHuntIdPrefix(e.target.value.toUpperCase())}
+        />
       </div>
 
       {/* Research Effort */}
