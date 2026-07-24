@@ -24,12 +24,12 @@ from backend.config.loader import (
     load_app_title,
     load_default_theme,
     load_hunt_id_prefix,
-    load_logo_path,
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
+    resolve_logo_file,
     save_agent_show_subtasks,
     save_agent_tools,
     save_agent_verbosity,
@@ -550,21 +550,8 @@ async def get_agent_tools_catalog() -> dict[str, Any]:
 
 
 def _resolved_logo_file() -> Path | None:
-    """Return the on-disk logo path if configured and present, else None.
-
-    Defends in depth against a tampered application.yaml: the stored path must
-    resolve to a real file inside data/branding/ (no traversal escape).
-    """
-    rel = load_logo_path()
-    if not rel:
-        return None
-    fp = (_PROJECT_ROOT / rel).resolve()
-    branding = _BRANDING_DIR.resolve()
-    try:
-        fp.relative_to(branding)
-    except ValueError:
-        return None
-    return fp if fp.is_file() else None
+    """Return the on-disk logo path if configured and present, else None."""
+    return resolve_logo_file()
 
 
 @router.get("/logo-info")

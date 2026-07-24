@@ -890,6 +890,27 @@ def save_logo_path(value: str) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+_BRANDING_DIR = _PROJECT_ROOT / "data" / "branding"
+
+
+def resolve_logo_file() -> Path | None:
+    """Return the on-disk branding logo Path if configured and present, else None.
+
+    Shared by the /api/app/logo route and PDF report generation. Defends
+    against a tampered application.yaml: the stored path must resolve to a
+    real file inside data/branding/ (no traversal escape).
+    """
+    rel = load_logo_path()
+    if not rel:
+        return None
+    fp = (_PROJECT_ROOT / rel).resolve()
+    try:
+        fp.relative_to(_BRANDING_DIR.resolve())
+    except ValueError:
+        return None
+    return fp if fp.is_file() else None
+
+
 # ── Password policy (prompts-046) ────────────────────────────────────────────
 #
 # The password strength rules are operator-configurable. Two knobs:
