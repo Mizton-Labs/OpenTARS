@@ -318,4 +318,46 @@ describe('Configuration tab groups (issue-local-016)', () => {
     await user.click(screen.getByText('Energy'))
     await waitFor(() => expect(setDefaultTheme).toHaveBeenCalledWith('energy'))
   })
+
+  it('shows Global Field Defaults under Threat Intel, not General', async () => {
+    const userEventModule = await import('@testing-library/user-event')
+    const user = userEventModule.default.setup()
+
+    vi.doMock('../auth/useAuth', () => ({
+      useAuth: () => ({
+        authEnabled: false,
+        isAdmin: true,
+        isResearcher: true,
+        isViewer: true,
+        isAuthenticated: true,
+        loading: false,
+        user: null,
+      }),
+    }))
+
+    vi.doMock('../api/client', async () => {
+      const original = await vi.importActual<typeof import('../api/client')>('../api/client')
+      return {
+        ...original,
+        api: {
+          ...original.api,
+          getAppTitle: vi.fn().mockResolvedValue({ app_title: '' }),
+          getAppBasePrefix: vi.fn().mockResolvedValue({ app_base_prefix: '' }),
+          getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
+          getDefaultTheme: vi.fn().mockResolvedValue({ theme: 'classic' }),
+        },
+      }
+    })
+
+    const { default: Configuration } = await import('../pages/Configuration')
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+
+    // Default landing group is Threat Intel — the tab should already be there.
+    expect(await screen.findByRole('button', { name: /global field defaults/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^general$/i }))
+    expect(screen.queryByRole('button', { name: /global field defaults/i })).not.toBeInTheDocument()
+  })
 })
