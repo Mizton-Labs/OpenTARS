@@ -9,6 +9,58 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Sidebar module grouping, forced password change, multi-run indicators, manual IOC verdict overrides (issue-local-017)
+
+**Sidebar now visually separates the Threat Intel and Threat Hunting modules from Home and the
+utility items.** Both sections are wrapped in one bordered/tinted container (`.nav-module-group`,
+subtle inset accent in the Energy theme, no-op in Classic), distinguishing the app's two product
+modules from everything else in the nav — a pure layout/CSS change, no navigation behavior change.
+
+**Admin-created users are now forced to change their password on first login, not just after an
+admin reset.** `POST /api/auth/users` now sets `must_change_password=True` unconditionally — the
+existing forced-change middleware gate and reset screen needed no new code, since the flag is read
+generically off any user row regardless of how it was set.
+
+**Hunt-package cards now show every run, not just the latest, with a compact/detailed density
+toggle.** `list_hunt_packages()` bulk-fetches every non-archived package's full run history
+(phases, status, model/effort, elapsed time) in one extra query — no N+1 — and each card renders a
+tab strip of its runs when there's more than one. Runs default to the newest; clicking a tab
+switches that card's 16-step stage rail to the selected run's data. A new Compact/Detailed toggle
+(sibling to the existing Classic/Modern control, `sfi.th.cardDensity` in localStorage) hides the
+heavy stage rail in Compact mode — the run tabs themselves stay visible in both modes, since
+they're the actual payoff of the multi-run feature. The run tabs read as real tabs (bigger font,
+a status-color dot, model/effort-or-date label, and the status word itself — not just a color —
+so the active tab and each run's identity are both unambiguous at a glance, addressing feedback
+that the first pass only showed a bare status pill with a barely-visible selection ring).
+
+**Manual per-IOC keep/remove verdict overrides**, closing a gap against the original issue-local-015
+ask: IOC review previously only supported the *automated* active-cleaning decision, with no way for
+an analyst to override an individual IOC. A new `PATCH /packages/{pkg_id}/runs/{run_id}/iocs` route
+updates both IOC data stores in one call — `extracted_iocs` (the real table backing the IOCs tab)
+and the `deep_retrohunt` JSON blob's `sanitized_iocs` (backing the Sanitized IOCs table and its
+CSV/count summary, matched by `(ioc, ioc_type)` since it has no independent id) — recomputing the
+canonical CSV and noise counts from the updated kept set. The Sanitized IOCs table gained a true
+three-way All/Sanitized/Removed filter (previously "all" silently meant "kept only"), and both IOC
+tables gained a Keep/Remove segmented toggle per row. Changes are staged locally (mirroring
+`AgentsConfigTab.tsx`'s dirty-gated Save pattern) and only sent on an explicit "Apply changes"
+click, shared across the IOCs tab and the Analysis tab's embedded Sanitized IOCs table so a change
+survives switching tabs. A manually-removed IOC is visually flagged (struck through, not hidden)
+everywhere it's cited as a hypothesis's evidence basis — no auto-discard of the hypothesis itself.
+
+**About page now also shows the build's commit date**, alongside the existing commit hash and
+branch — same build-time-injection pattern (`GIT_COMMIT_DATE` from `git log -1 --format=%cI`,
+wired through Vite's `define` as `__GIT_COMMIT_DATE__`), so it's obvious at a glance how stale a
+running deployment is.
+
+**Tests:** sidebar module-group grouping/collapse coverage; forced-change-on-creation coverage
+plus fixes for three pre-existing tests whose freshly-created accounts were newly blocked by the
+gate; real-SQLite coverage for `list_hunt_packages()`'s per-run bulk fetch across 0/1/N-run
+packages; `useHuntDensity` persistence and the run-tab strip's default-newest-selection/click-to-
+switch/compact-mode-survival behavior; DB- and route-level coverage for the new IOC verdict route
+(both stores updated together, invalid-action rejection, unknown-package 404, run-scoping); staged-
+edit hook coverage (stage/unstage-on-match/dirty-count/apply-clears-pending); the three-way
+Sanitized-IOCs filter; and the evidence-chip strike-through flag.
+
 ### Added — User Management relocation, admin password reset hardening, per-user themes (issue-local-016)
 
 **User Management moved from Threat Intel to General Configuration.** It's an instance-wide
