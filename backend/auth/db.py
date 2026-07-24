@@ -75,7 +75,7 @@ VALID_ROLES = frozenset({"admin", "threat-researcher", "threat-viewer", "feed-se
 # issue-local-016: per-user UI theme override. NULL in the DB means "use the
 # instance-wide default" (backend/config/loader.load_default_theme) — see
 # users.theme column, added in the v4->v5 migration below.
-VALID_THEMES = frozenset({"classic", "energy"})
+VALID_THEMES = frozenset({"classic", "energy", "light"})
 
 
 CREATE_USERS_TABLE = """

@@ -69,6 +69,7 @@ def _pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     import base64
+
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
 
@@ -256,9 +257,7 @@ async def handle_callback(
         auto_provision=cfg.get("auto_provision", True),
     )
     if user is None:
-        raise ValueError(
-            "SSO login failed: user not found and auto-provisioning is disabled"
-        )
+        raise ValueError("SSO login failed: user not found and auto-provisioning is disabled")
     if not user.get("enabled"):
         raise ValueError("SSO login failed: account is disabled")
 
@@ -301,6 +300,7 @@ async def _verify_id_token(
         )
         import base64
         import json as _json
+
         parts = id_token_jwt.split(".")
         if len(parts) < 2:
             raise ValueError("Malformed ID token") from exc

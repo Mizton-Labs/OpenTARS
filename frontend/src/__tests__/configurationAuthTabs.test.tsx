@@ -314,6 +314,7 @@ describe('Configuration tab groups (issue-local-016)', () => {
     expect(await screen.findByText('Default Theme')).toBeInTheDocument()
     expect(screen.getByText('Classic')).toBeInTheDocument()
     expect(screen.getByText('Energy')).toBeInTheDocument()
+    expect(screen.getByText('Light')).toBeInTheDocument()
 
     await user.click(screen.getByText('Energy'))
     await waitFor(() => expect(setDefaultTheme).toHaveBeenCalledWith('energy'))

@@ -460,6 +460,29 @@ def _parse_step_logs(
     return (phases if phases else None), (round(total_elapsed, 2) if phases else None)
 
 
+def _parse_deep_retrohunt_counts(
+    deep_retrohunt_json: str | None,
+) -> tuple[int | None, int | None]:
+    """Parse a run's ``deep_retrohunt`` JSON blob into (sanitized_count,
+    removed_count) — the post-action-filter kept/removed split of
+    ``sanitized_iocs`` (issue-local-017: shown alongside each run's model in
+    the compact all-runs status table). Counted directly from each item's
+    ``action`` rather than trusting the blob's own ``total_ioc_count`` field,
+    so this stays correct even if that field is ever stale.
+    """
+    import json as _json
+
+    try:
+        retro: dict[str, Any] = _json.loads(deep_retrohunt_json or "")
+        sanitized_iocs: list[dict[str, Any]] = retro.get("sanitized_iocs") or []
+    except Exception:  # noqa: BLE001
+        return None, None
+    if not sanitized_iocs:
+        return None, None
+    removed = sum(1 for s in sanitized_iocs if s.get("action") == "remove")
+    return len(sanitized_iocs) - removed, removed
+
+
 async def list_hunt_packages() -> list[dict[str, Any]]:
     """List all non-archived hunt packages with evidence counts and latest run summary.
 
@@ -506,17 +529,30 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
         # the whole list, not per-package.
         pkg_ids = tuple(row["id"] for row in rows)
         all_run_rows: list[Any] = []
+        report_run_ids: set[str] = set()
         if pkg_ids:
             placeholders = ",".join("?" for _ in pkg_ids)
             cur3 = await db.execute(
                 "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
-                "       research_effort, created_at, step_logs "
+                "       research_effort, created_at, step_logs, deep_retrohunt "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY hunt_package_id, created_at DESC",
                 pkg_ids,
             )
             all_run_rows = await cur3.fetchall()
             await cur3.close()
+
+            # issue-local-017: which of these runs already have a generated
+            # report — for the Table density view's report-download links.
+            run_ids = tuple(r["id"] for r in all_run_rows)
+            if run_ids:
+                run_placeholders = ",".join("?" for _ in run_ids)
+                cur4 = await db.execute(
+                    f"SELECT DISTINCT run_id FROM hunt_reports WHERE run_id IN ({run_placeholders})",
+                    run_ids,
+                )
+                report_run_ids = {r[0] for r in await cur4.fetchall()}
+                await cur4.close()
 
     # Build lookup: hunt_package_id → {generation_status, step_logs_json, run_created_at}
     run_by_pkg: dict[str, dict[str, Any]] = {}
@@ -531,6 +567,7 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
     runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
     for r in all_run_rows:
         phases, total_elapsed_s = _parse_step_logs(r["step_logs"])
+        sanitized_count, removed_count = _parse_deep_retrohunt_counts(r["deep_retrohunt"])
         runs_by_pkg.setdefault(r["hunt_package_id"], []).append(
             {
                 "id": r["id"],
@@ -542,6 +579,9 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
                 "created_at": r["created_at"],
                 "phases": phases,
                 "total_elapsed_s": total_elapsed_s,
+                "sanitized_ioc_count": sanitized_count,
+                "removed_ioc_count": removed_count,
+                "has_report": r["id"] in report_run_ids,
             }
         )
 
@@ -1367,18 +1407,21 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
     """Return all generation runs for a hunt package, newest first.
 
     Returns lightweight summaries (id, hunt_package_id, generation_status,
-    llm_provider, llm_model, research_effort, created_at) plus each run's
-    ``phases``/``total_elapsed_s`` projection (issue-local-017: needed for
-    HuntDetail's compact all-runs status table) via the same
-    ``_parse_step_logs`` helper ``list_hunt_packages`` uses — no separate
-    per-run fetch required.
+    llm_provider, llm_model, research_effort, created_at) plus, per run
+    (issue-local-017, needed for HuntDetail's compact all-runs status
+    table — no separate per-run fetch required):
+      - ``phases``/``total_elapsed_s``, via the same ``_parse_step_logs``
+        helper ``list_hunt_packages`` uses.
+      - ``sanitized_ioc_count``/``removed_ioc_count``, via
+        ``_parse_deep_retrohunt_counts``.
+      - ``has_report``, whether a hunt_reports row exists for this run.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs
+                      step_logs, deep_retrohunt
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -1386,13 +1429,30 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         )
         rows = await cur.fetchall()
         await cur.close()
+
+        run_ids = tuple(row["id"] for row in rows)
+        report_run_ids: set[str] = set()
+        if run_ids:
+            placeholders = ",".join("?" for _ in run_ids)
+            cur2 = await db.execute(
+                f"SELECT DISTINCT run_id FROM hunt_reports WHERE run_id IN ({placeholders})",
+                run_ids,
+            )
+            report_run_ids = {r[0] for r in await cur2.fetchall()}
+            await cur2.close()
+
     result: list[dict[str, Any]] = []
     for row in rows:
         run = dict(row)
         step_logs_json = run.pop("step_logs")
+        deep_retrohunt_json = run.pop("deep_retrohunt")
         phases, total_elapsed_s = _parse_step_logs(step_logs_json)
+        sanitized_count, removed_count = _parse_deep_retrohunt_counts(deep_retrohunt_json)
         run["phases"] = phases
         run["total_elapsed_s"] = total_elapsed_s
+        run["sanitized_ioc_count"] = sanitized_count
+        run["removed_ioc_count"] = removed_count
+        run["has_report"] = run["id"] in report_run_ids
         result.append(run)
     return result
 

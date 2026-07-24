@@ -3,8 +3,9 @@
  *   - useHuntDensity: localStorage-backed compact/detailed selector.
  *   - runStatusUtils: status→class + label helpers.
  *   - ThreatHunting.tsx: density toggle hides/shows the stage rail; the
- *     per-run chip row appears only for multi-run packages, in both density
- *     modes, and clicking a chip switches which run's rail is shown.
+ *     per-run chip row appears for any package with at least one run, in
+ *     both density modes, and clicking a chip switches which run's rail is
+ *     shown.
  */
 import { render, screen, fireEvent, renderHook, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -20,6 +21,9 @@ vi.mock('../api/client', async () => {
       threatHunting: {
         ...actual.api.threatHunting,
         listPackages: vi.fn(),
+        getPackage: vi.fn(),
+        listEvidence: vi.fn(),
+        listRuns: vi.fn(),
       },
     },
   }
@@ -73,6 +77,9 @@ function makePkg(overrides: Partial<THuntPackage> = {}): THuntPackage {
 beforeEach(() => {
   localStorage.clear()
   vi.mocked(api.threatHunting.listPackages).mockReset()
+  vi.mocked(api.threatHunting.getPackage).mockReset()
+  vi.mocked(api.threatHunting.listEvidence).mockReset().mockResolvedValue([])
+  vi.mocked(api.threatHunting.listRuns).mockReset().mockResolvedValue([])
 })
 
 describe('useHuntDensity', () => {
@@ -122,13 +129,14 @@ describe('runStatusUtils', () => {
 })
 
 describe('ThreatHunting list — density toggle + run chips (issue-local-016)', () => {
-  it('renders the Compact/Detailed toggle alongside Classic/Modern', async () => {
+  it('renders the Compact/Detailed/Table toggle alongside Classic/Modern', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([])
     renderList()
     expect(await screen.findByRole('button', { name: /^classic$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^modern$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^compact$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^table$/i })).toBeInTheDocument()
   })
 
   it('shows the stage rail by default (detailed) and hides it in compact mode', async () => {
@@ -143,7 +151,7 @@ describe('ThreatHunting list — density toggle + run chips (issue-local-016)', 
     expect(screen.queryByText('Intake')).not.toBeInTheDocument()
   })
 
-  it('does not show a run-chip row for a single-run package', async () => {
+  it('shows a run tab even for a single-run package (issue-local-017 follow-up)', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
       makePkg({ runs: [{ id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' }], run_count: 1 }),
     ])
@@ -151,8 +159,15 @@ describe('ThreatHunting list — density toggle + run chips (issue-local-016)', 
     await screen.findByText('Test Package')
     // Run tabs render as <button>s; the package-status badge and the
     // ProcessArrow status row are plain <span>s — so a button-role query is
-    // a precise signal that no chip row rendered for a single-run package.
-    expect(screen.queryAllByRole('button', { name: /completed/ })).toHaveLength(0)
+    // a precise signal the chip row rendered even with a single run.
+    expect(screen.getByRole('button', { name: /completed/ })).toBeInTheDocument()
+  })
+
+  it('does not show a run-chip row for a package with zero runs', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([makePkg({ runs: [], run_count: 0 })])
+    renderList()
+    await screen.findByText('Test Package')
+    expect(screen.queryByText('Runs')).not.toBeInTheDocument()
   })
 
   it('shows a run chip per run for a multi-run package, in both density modes, and switches the rail on click', async () => {
@@ -198,5 +213,58 @@ describe('ThreatHunting list — density toggle + run chips (issue-local-016)', 
     fireEvent.click(screen.getByRole('button', { name: /^compact$/i }))
     expect(screen.getByRole('button', { name: /error/ })).toBeInTheDocument()
     expect(screen.queryByText('Context')).not.toBeInTheDocument()
+  })
+})
+
+describe('ThreatHunting list — Table density mode (issue-local-017)', () => {
+  it('switching to Table mode replaces the card list with a per-package runs table', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        name: 'Test Package',
+        runs: [
+          { id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', llm_model: 'gpt-oss', created_at: '2026-01-01T00:00:00Z' },
+        ],
+        run_count: 1,
+      }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    // Card mode: no table headers present.
+    expect(screen.queryByText('Model')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+
+    expect(await screen.findByText('Model')).toBeInTheDocument()
+    expect(screen.getByText('Workflow')).toBeInTheDocument()
+    expect(screen.getByText('gpt-oss')).toBeInTheDocument()
+  })
+
+  it('shows a "No runs yet" fallback for a package with no runs in Table mode', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([makePkg({ runs: [], run_count: 0 })])
+    renderList()
+    await screen.findByText('Test Package')
+
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+    expect(await screen.findByText('No runs yet.')).toBeInTheDocument()
+  })
+
+  it('clicking a package name in Table mode opens its detail view', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        name: 'Test Package',
+        runs: [{ id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' }],
+        run_count: 1,
+      }),
+    ])
+    vi.mocked(api.threatHunting.getPackage).mockResolvedValue(makePkg({ id: 'pkg-1' }))
+    renderList()
+    await screen.findByText('Test Package')
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+    await screen.findByText('Model')
+
+    fireEvent.click(screen.getByRole('button', { name: /Test Package/ }))
+
+    // HuntDetail renders a back arrow / evidence tab once a package is selected.
+    expect(await screen.findByText('Evidence (0)')).toBeInTheDocument()
   })
 })

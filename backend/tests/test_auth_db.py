@@ -139,6 +139,16 @@ async def test_set_theme_round_trip():
 
 
 @pytest.mark.asyncio
+async def test_set_theme_light_round_trip():
+    """issue-local-017: 'light' is a valid third theme value alongside
+    'classic'/'energy'."""
+    await init_users_db()
+    uid = await create_user("u", "h")
+    assert await set_theme(uid, "light") is True
+    assert (await get_user_by_id(uid))["theme"] == "light"
+
+
+@pytest.mark.asyncio
 async def test_set_theme_none_clears_override():
     await init_users_db()
     uid = await create_user("u", "h")

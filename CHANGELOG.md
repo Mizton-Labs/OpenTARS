@@ -9,6 +9,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Table density mode, Light theme, run-summary IOC counts and report links (issue-local-017)
+
+**New "Table" density mode for the hunt-package list**, alongside the existing Compact/Detailed
+toggle — renders each package's runs via the same all-runs status table `HuntDetail` already
+shows, under a clickable package-name heading that opens the detail view. Packages with no runs
+yet show a "No runs yet" placeholder instead of an empty table.
+
+**The all-runs status table gained two columns.** "IOCs" shows each run's sanitized/removed
+counts, parsed server-side from the `deep_retrohunt` blob (`list_generation_runs()`/
+`list_hunt_packages()` now return `sanitized_ioc_count`/`removed_ioc_count` per run). "Report"
+shows MD/PDF/JSON download links once a report exists for that run (`has_report`, bulk-checked
+against `hunt_reports` — no per-run extra fetch). MD/PDF link directly to the existing download
+routes; JSON fetches the report on click and builds the download client-side, mirroring
+`ReportPanel.tsx`'s existing export pattern (no server-side JSON route exists).
+
+**New "Light" theme**, alongside Classic/Energy — a professional light mode built by mirroring
+Classic's gray ramp (gray-950↔gray-50, gray-900↔gray-100, ...) rather than a hand-picked scale,
+so every existing component flips from dark-surface/light-text to light-surface/dark-text while
+keeping every contrast relationship already tuned for Classic — the same mechanism Energy already
+uses, zero component changes needed. The blue accent (`brand-*`) is reused verbatim from Classic.
+Threaded through backend validation (`auth/db.py` and `config/loader.py`, both now generating
+their error messages dynamically from the valid-theme set instead of a hardcoded string) and both
+frontend theme pickers (Account page personal override, General Configuration instance default).
+
+**Energy theme cards are now visibly lighter, not just outlined.** Cards previously only got a
+colored ring on `:hover`, with no difference in their resting state — `.card` now gets its own
+slightly lighter background in Energy (independent of the shared `gray-900` variable used by 30+
+other elements), so cards read as distinct from the page at rest.
+
+**Fixed: the per-run tab row on the hunt-package list only showed for packages with more than one
+run.** A single-run package now shows its tab too, so its model/status is visible without opening
+the detail view.
+
+**Fixed the GitHub Actions ruff format check** — two files (`backend/auth/oidc.py`,
+`backend/tests/test_th_issue_local_004.py`) needed reformatting.
+
+**Tests:** coverage for the Table density mode (toggle presence, per-package table rendering,
+zero-runs fallback, click-to-open); `list_generation_runs()`/`list_hunt_packages()` IOC-count and
+`has_report` projections; `RunsStatusTable`'s new columns including the JSON-download fetch path;
+`"light"` accepted end-to-end at every validation/persistence layer (DB round-trip, both API
+routes, `ThemeProvider`, both pickers); and the single-run tab-row regression.
+
 ### Fixed — Run-tab clarity, larger Threat Hunting text, all-runs status table, LLM array-field crash (issue-local-017 follow-up)
 
 **Fixed a live page-crash bug (minified React error #31).** Confirmed on the test deployment: the

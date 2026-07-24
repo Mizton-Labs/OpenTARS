@@ -181,6 +181,109 @@ async def test_list_generation_runs_no_step_logs_yields_none_phases(tmp_path: Pa
 
     assert runs[0]["phases"] is None
     assert runs[0]["total_elapsed_s"] is None
+    assert runs[0]["sanitized_ioc_count"] is None
+    assert runs[0]["removed_ioc_count"] is None
+    assert runs[0]["has_report"] is False
+
+
+# ── issue-local-017: sanitized/removed IOC counts + has_report ──────────────
+
+
+def _sanitized_ioc(action: str) -> dict:
+    return {
+        "ioc": f"{action}-ioc.com",
+        "ioc_type": "domain",
+        "ioc_description": "",
+        "noise_score": 0.0,
+        "noise_reasons": [],
+        "search_token": f"{action}-ioc.com",
+        "action": action,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_generation_runs_includes_sanitized_removed_counts(tmp_path: Path) -> None:
+    from backend.threat_hunting import db as th_db
+
+    db_path = tmp_path / "th.db"
+    with patch.object(th_db, "_TH_DB_PATH", db_path):
+        await th_db.init_threat_hunting_db()
+        pkg = await th_db.create_hunt_package("ioc-counts", "")
+        await _insert_run(
+            db_path,
+            pkg["id"],
+            run_id="run-1",
+            created_at="2026-01-01T00:00:00+00:00",
+            deep_retrohunt={
+                "sanitized_iocs": [
+                    _sanitized_ioc("keep"),
+                    _sanitized_ioc("keep"),
+                    _sanitized_ioc("remove"),
+                ]
+            },
+        )
+
+        runs = await th_db.list_generation_runs(pkg["id"])
+
+    assert runs[0]["sanitized_ioc_count"] == 2
+    assert runs[0]["removed_ioc_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_generation_runs_has_report_reflects_hunt_reports_table(tmp_path: Path) -> None:
+    from backend.threat_hunting import db as th_db
+
+    db_path = tmp_path / "th.db"
+    with patch.object(th_db, "_TH_DB_PATH", db_path):
+        await th_db.init_threat_hunting_db()
+        pkg = await th_db.create_hunt_package("report-flag", "")
+        await _insert_run(
+            db_path, pkg["id"], run_id="run-with-report", created_at="2026-01-01T00:00:00+00:00"
+        )
+        await _insert_run(
+            db_path, pkg["id"], run_id="run-without-report", created_at="2026-01-02T00:00:00+00:00"
+        )
+        await th_db.create_hunt_report(
+            pkg["id"],
+            run_id="run-with-report",
+            executive_summary="s",
+            full_report={},
+        )
+
+        runs = await th_db.list_generation_runs(pkg["id"])
+
+    by_id = {r["id"]: r for r in runs}
+    assert by_id["run-with-report"]["has_report"] is True
+    assert by_id["run-without-report"]["has_report"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_hunt_packages_runs_include_sanitized_removed_and_has_report(
+    tmp_path: Path,
+) -> None:
+    from backend.threat_hunting import db as th_db
+
+    db_path = tmp_path / "th.db"
+    with patch.object(th_db, "_TH_DB_PATH", db_path):
+        await th_db.init_threat_hunting_db()
+        pkg = await th_db.create_hunt_package("table-mode", "")
+        await _insert_run(
+            db_path,
+            pkg["id"],
+            run_id="run-1",
+            created_at="2026-01-01T00:00:00+00:00",
+            deep_retrohunt={"sanitized_iocs": [_sanitized_ioc("keep"), _sanitized_ioc("remove")]},
+        )
+        await th_db.create_hunt_report(
+            pkg["id"], run_id="run-1", executive_summary="s", full_report={}
+        )
+
+        packages = await th_db.list_hunt_packages()
+
+    run = packages[0]["runs"][0]
+    assert run["sanitized_ioc_count"] == 1
+    assert run["removed_ioc_count"] == 1
+    assert run["has_report"] is True
 
 
 async def _insert_run(
@@ -194,6 +297,7 @@ async def _insert_run(
     llm_model: str = "gpt-oss",
     research_effort: str = "medium",
     step_logs: list[dict] | None = None,
+    deep_retrohunt: dict | None = None,
 ) -> None:
     """Directly INSERT a run row (bypassing the full agent pipeline) —
     mirrors the raw-sqlite3-insert pattern already used by
@@ -204,8 +308,8 @@ async def _insert_run(
         await conn.execute(
             "INSERT INTO hunting_packages "
             "(id, hunt_package_id, generation_status, llm_provider, llm_model, "
-            " research_effort, created_at, step_logs) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " research_effort, created_at, step_logs, deep_retrohunt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 hunt_package_id,
@@ -215,6 +319,7 @@ async def _insert_run(
                 research_effort,
                 created_at,
                 json.dumps(step_logs or []),
+                json.dumps(deep_retrohunt) if deep_retrohunt is not None else None,
             ),
         )
         await conn.commit()

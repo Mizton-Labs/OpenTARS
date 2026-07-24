@@ -7,7 +7,7 @@
  */
 import { createContext } from 'react'
 
-export type ThemeName = 'classic' | 'energy'
+export type ThemeName = 'classic' | 'energy' | 'light'
 
 export interface ThemeContextValue {
   /** Effective theme actually applied — userOverride if set, else instanceDefault. */

@@ -270,6 +270,14 @@ def test_put_default_theme_round_trip(client):
     assert client.get("/api/app/theme").json() == {"theme": "energy"}
 
 
+def test_put_default_theme_accepts_light(client):
+    """issue-local-017: 'light' is a valid third instance-default theme."""
+    resp = client.put("/api/app/theme", json={"theme": "light"})
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "light"}
+    assert client.get("/api/app/theme").json() == {"theme": "light"}
+
+
 def test_put_default_theme_rejects_invalid_value(client):
     resp = client.put("/api/app/theme", json={"theme": "not-a-real-theme"})
     assert resp.status_code == 400

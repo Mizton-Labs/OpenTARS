@@ -306,7 +306,7 @@ def save_app_title(value: str) -> None:
 
 # ── Instance-wide default UI theme (issue-local-016) ─────────────────────────
 
-_VALID_THEMES = {"classic", "energy"}
+_VALID_THEMES = {"classic", "energy", "light"}
 
 
 def load_default_theme() -> str:
