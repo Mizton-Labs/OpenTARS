@@ -175,3 +175,121 @@ class TestPdfGeneration:
         empty_report = _base_report(evidence_items=[])
         empty_pdf = render_report_pdf(empty_report)
         assert len(pdf_bytes) > len(empty_pdf)
+
+
+SANITIZED_IOCS = [
+    {
+        "ioc": "evil.example",
+        "ioc_type": "domain",
+        "ioc_description": "C2 domain observed beaconing to known Cobalt Strike infrastructure.",
+        "noise_score": 0.1,
+        "noise_reasons": [],
+        "action": "keep",
+        "search_token": "tok1",
+    },
+    {
+        "ioc": "cdn.example",
+        "ioc_type": "domain",
+        "ioc_description": "Legitimate CDN edge node.",
+        "noise_score": 0.95,
+        "noise_reasons": [
+            "Known CDN — excluded by active cleaning (remove_cdn_ranges)",
+            "Appears in Tranco top 1000 — very unlikely to be malicious infrastructure",
+        ],
+        "action": "remove",
+        "search_token": "tok2",
+    },
+]
+
+
+class TestReportHuntIdRunId:
+    """issue-local-019: reports show the human-readable HuntID/RunID
+    alongside the internal UUID, not just the UUID."""
+
+    def _report_with_ids(self) -> dict:
+        return assemble_report(
+            hunt_package={
+                "name": "Test Hunt",
+                "id": "pkg-uuid-1",
+                "status": "completed",
+                "hunt_id_display": "TH55",
+            },
+            generation_record={"run_seq": 2},
+            evidence_items=[],
+            task_results=[],
+            executive_summary="Summary.",
+        )
+
+    def test_assemble_report_includes_hunt_id_and_run_id_display(self) -> None:
+        report = self._report_with_ids()
+        assert report["hunt_id_display"] == "TH55"
+        assert report["run_id_display"] == "TH55-X02"
+        # Internal UUID is still present, unchanged.
+        assert report["hunt_id"] == "pkg-uuid-1"
+
+    def test_display_ids_blank_when_not_yet_backfilled(self) -> None:
+        report = assemble_report(
+            hunt_package={"name": "Old Hunt", "id": "pkg-uuid-2", "status": "completed"},
+            generation_record={},
+            evidence_items=[],
+            task_results=[],
+        )
+        assert report["hunt_id_display"] == ""
+        assert report["run_id_display"] == ""
+
+    def test_markdown_shows_huntid_runid_and_internal_id(self) -> None:
+        md = render_report_markdown(self._report_with_ids())
+        assert "**HuntID:** TH55" in md
+        assert "**RunID:** TH55-X02" in md
+        assert "**Internal ID:** pkg-uuid-1" in md
+        assert "[TH55]" in md  # title prefix
+
+    def test_pdf_generates_with_huntid_runid(self) -> None:
+        pdf_bytes = render_report_pdf(self._report_with_ids())
+        assert pdf_bytes[:4] == b"%PDF"
+
+
+class TestReportIocTable:
+    """issue-local-019: reports include the full All/Sanitized/Removed IOC
+    table, not just the aggregate deep_retrohunt_summary counts."""
+
+    def _report_with_iocs(self) -> dict:
+        return assemble_report(
+            hunt_package={"name": "Test Hunt", "id": "pkg-1", "status": "completed"},
+            generation_record={"deep_retrohunt": {"sanitized_iocs": SANITIZED_IOCS}},
+            evidence_items=[],
+            task_results=[],
+        )
+
+    def test_assemble_report_includes_full_sanitized_iocs(self) -> None:
+        report = self._report_with_iocs()
+        assert len(report["sanitized_iocs"]) == 2
+        assert report["sanitized_iocs"][1]["action"] == "remove"
+
+    def test_empty_when_no_deep_retrohunt(self) -> None:
+        report = assemble_report(
+            hunt_package={"name": "Test Hunt", "id": "pkg-1", "status": "completed"},
+            generation_record={},
+            evidence_items=[],
+            task_results=[],
+        )
+        assert report["sanitized_iocs"] == []
+
+    def test_markdown_ioc_table_includes_full_reasons_uncut(self) -> None:
+        md = render_report_markdown(self._report_with_iocs())
+        assert "IOC Table (2 total, 1 kept, 1 removed)" in md
+        assert "evil.example" in md
+        assert "cdn.example" in md
+        assert "Removed" in md
+        # Both reasons present in full, not truncated.
+        assert "Known CDN — excluded by active cleaning (remove_cdn_ranges)" in md
+        assert "Appears in Tranco top 1000 — very unlikely to be malicious infrastructure" in md
+
+    def test_pdf_generates_with_ioc_table(self) -> None:
+        report = self._report_with_iocs()
+        pdf_bytes = render_report_pdf(report)
+        assert pdf_bytes[:4] == b"%PDF"
+        no_iocs_report = self._report_with_iocs()
+        no_iocs_report["sanitized_iocs"] = []
+        smaller_pdf = render_report_pdf(no_iocs_report)
+        assert len(pdf_bytes) > len(smaller_pdf)

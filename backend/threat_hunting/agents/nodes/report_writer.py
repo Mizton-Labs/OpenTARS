@@ -23,14 +23,13 @@ This node can be called:
 
 from __future__ import annotations
 
-import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm
-
-logger = logging.getLogger(__name__)
+from backend.threat_hunting.agents.logging_utils import get_run_logger
+from backend.threat_hunting.db import format_run_id
 
 
 def _clean_prose_response(text: str) -> str:
@@ -156,6 +155,13 @@ def assemble_report(
     query_drafts = generation_record.get("query_drafts") or []
     threat_context = generation_record.get("threat_context")
 
+    # issue-local-019: the human-readable HuntID/RunID (e.g. "TH55"/"TH55-X02")
+    # alongside the internal UUID (`hunt_id`, kept unchanged below) — computed
+    # the same way list_hunt_packages()/list_generation_runs() do, from data
+    # already present on hunt_package/generation_record (no extra DB query).
+    hunt_id_display = hunt_package.get("hunt_id_display") or ""
+    run_id_display = format_run_id(hunt_id_display, generation_record.get("run_seq"))
+
     # Derive recommendations from hypotheses and execution results
     recommendations: list[str] = []
     for h in hypotheses[:3]:
@@ -178,11 +184,17 @@ def assemble_report(
         "executive_summary": executive_summary,
         "hunt_name": hunt_package.get("name", ""),
         "hunt_id": hunt_package.get("id", ""),
+        "hunt_id_display": hunt_id_display,
+        "run_id_display": run_id_display,
         "generated_at": _utc_now(),
         "generated_by": None,
         "package_status": hunt_package.get("status", ""),
         "evidence_summary": _evidence_summary(evidence_items),
         "evidence_items": _evidence_items_full(evidence_items),
+        # issue-local-019: full per-IOC list (same shape RetrohuntPanel.tsx's
+        # All/Sanitized/Removed table uses), not just the aggregate counts in
+        # deep_retrohunt_summary below.
+        "sanitized_iocs": (deep_retrohunt or {}).get("sanitized_iocs") or [],
         "threat_context": threat_context,
         "hypotheses": hypotheses,
         "hunting_leads": hunting_leads,
@@ -375,7 +387,8 @@ async def _generate_findings(
         )
         return _clean_prose_response(raw)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("report_writer: findings generation failed: %s", exc)
+        log = get_run_logger(__name__, full_report.get("hunt_id"), None)
+        log.warning("report_writer: findings generation failed: %s", exc)
         return _build_fallback_findings(full_report)
 
 
@@ -452,7 +465,9 @@ async def _report_step_log(
             entry["decision"] = decision
         await th_db.append_run_step_log(run_id, entry)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("_report_step_log soft-fail step=%s: %s", step, exc)
+        get_run_logger(__name__, None, run_id).debug(
+            "_report_step_log soft-fail step=%s: %s", step, exc
+        )
 
 
 async def write_report(
@@ -480,6 +495,7 @@ async def write_report(
     Returns the persisted report dict.
     """
     start = time.monotonic()
+    log = get_run_logger(__name__, hunt_package_id, run_id)
     from backend.threat_hunting import db as th_db
 
     # Signal reporting phase on the run row (soft-fail)
@@ -549,9 +565,9 @@ async def write_report(
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.info("report_writer: LLM disabled — skipping executive summary")
+            log.info("report_writer: LLM disabled — skipping executive summary")
         else:
-            logger.exception("report_writer: executive summary generation failed: %s", exc)
+            log.exception("report_writer: executive summary generation failed: %s", exc)
         executive_summary = _build_fallback_summary(full_report)
         await _report_step_log(
             run_id,
@@ -586,9 +602,9 @@ async def write_report(
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.info("report_writer: LLM disabled — using templated findings")
+            log.info("report_writer: LLM disabled — using templated findings")
         else:
-            logger.warning("report_writer: findings generation failed: %s", exc)
+            log.warning("report_writer: findings generation failed: %s", exc)
         findings = _build_fallback_findings(full_report)
         await _report_step_log(
             run_id,
@@ -618,7 +634,7 @@ async def write_report(
         try:
             markdown_content = render_report_markdown(full_report)
         except Exception as exc:
-            logger.warning("report_writer: markdown render failed: %s", exc)
+            log.warning("report_writer: markdown render failed: %s", exc)
 
     # PDF is generated on-demand at the download endpoint (not stored as a blob)
     # to keep DB lean. We still note whether it was requested.
@@ -656,7 +672,7 @@ async def write_report(
         except Exception:  # noqa: BLE001
             pass
 
-    logger.info("report_writer: report generated for %s in %.2fs", hunt_package_id[:8], elapsed)
+    log.info("report_writer: report generated for %s in %.2fs", hunt_package_id[:8], elapsed)
     return report
 
 
@@ -682,8 +698,15 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
         lines.append(text)
         lines.append("```\n")
 
-    _h(1, f"Threat Hunt Report: {full_report.get('hunt_name', 'Unnamed Hunt')}")
-    lines.append(f"**Hunt ID:** {full_report.get('hunt_id', '')}")
+    hunt_id_display = full_report.get("hunt_id_display", "")
+    run_id_display = full_report.get("run_id_display", "")
+    title_prefix = f"[{hunt_id_display}] " if hunt_id_display else ""
+    _h(1, f"{title_prefix}Threat Hunt Report: {full_report.get('hunt_name', 'Unnamed Hunt')}")
+    if hunt_id_display:
+        lines.append(f"**HuntID:** {hunt_id_display}")
+    if run_id_display:
+        lines.append(f"**RunID:** {run_id_display}")
+    lines.append(f"**Internal ID:** {full_report.get('hunt_id', '')}")
     lines.append(f"**Generated At:** {full_report.get('generated_at', '')}")
     lines.append(f"**Status:** {full_report.get('package_status', '')}\n")
 
@@ -778,6 +801,32 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
             lines.append(f"- SPL Macro: `{retro['spl_macro_name']}`")
         if retro.get("search_hint"):
             lines.append(f"- Search hint: {retro['search_hint']}")
+        lines.append("")
+
+    # issue-local-019: full IOC table — the same All/Sanitized/Removed data
+    # RetrohuntPanel.tsx's review table shows, not just the aggregate counts
+    # above. One combined table (every IOC, a Verdict column distinguishes
+    # kept vs. removed) rather than split tables, since Markdown has no
+    # interactive filter to switch between them.
+    sanitized_iocs = full_report.get("sanitized_iocs") or []
+    if sanitized_iocs:
+        removed_n = sum(1 for i in sanitized_iocs if i.get("action") == "remove")
+        _h(
+            2,
+            f"IOC Table ({len(sanitized_iocs)} total, {len(sanitized_iocs) - removed_n} kept, {removed_n} removed)",
+        )
+        lines.append("| IOC | Type | Verdict | Noise | Description | Reasons |")
+        lines.append("|---|---|---|---|---|---|")
+        for ioc in sanitized_iocs:
+            verdict = "Removed" if ioc.get("action") == "remove" else "Keep"
+            noise_pct = f"{round(float(ioc.get('noise_score', 0)) * 100)}%"
+            desc = str(ioc.get("ioc_description", "") or "").replace("|", "\\|").replace("\n", " ")
+            reasons = "; ".join(str(r) for r in (ioc.get("noise_reasons") or [])).replace(
+                "|", "\\|"
+            )
+            lines.append(
+                f"| `{ioc.get('ioc', '')}` | {ioc.get('ioc_type', '')} | {verdict} | {noise_pct} | {desc} | {reasons} |"
+            )
         lines.append("")
 
     ttp = full_report.get("ttp_analysis") or {}
@@ -1047,13 +1096,20 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         _sp(10)
 
     hunt_name = full_report.get("hunt_name", "Unnamed Hunt")
-    _h1(f"Threat Hunt Report: {hunt_name}")
+    hunt_id_display = full_report.get("hunt_id_display", "")
+    run_id_display = full_report.get("run_id_display", "")
+    title_prefix = f"[{hunt_id_display}] " if hunt_id_display else ""
+    _h1(f"{title_prefix}Threat Hunt Report: {hunt_name}")
     story.append(HRFlowable(width="100%", thickness=2.5, color=_COL_ACCENT_RULE))
     _sp(6)
 
     meta_parts = []
+    if hunt_id_display:
+        meta_parts.append(f"HuntID: {hunt_id_display}")
+    if run_id_display:
+        meta_parts.append(f"RunID: {run_id_display}")
     if full_report.get("hunt_id"):
-        meta_parts.append(f"Hunt ID: {full_report['hunt_id']}")
+        meta_parts.append(f"Internal ID: {full_report['hunt_id']}")
     if full_report.get("generated_at"):
         meta_parts.append(f"Generated: {full_report['generated_at']}")
     if full_report.get("package_status"):
@@ -1196,6 +1252,50 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             story.append(Paragraph(_esc(str(retro["spl_macro_name"])), code_style))
         if retro.get("search_hint"):
             _p(str(retro["search_hint"]))
+
+    # ── IOC Table — full All/Sanitized/Removed data ──────────────────────────
+    # issue-local-019: mirrors RetrohuntPanel.tsx's review table (one combined
+    # table, a Verdict column distinguishes kept vs. removed — no interactive
+    # filter in a PDF). Description/Reasons cells use Paragraph flowables so
+    # the LLM's rationale wraps across lines instead of being cut off.
+    sanitized_iocs = full_report.get("sanitized_iocs") or []
+    if sanitized_iocs:
+        removed_n = sum(1 for i in sanitized_iocs if i.get("action") == "remove")
+        _h2(
+            f"IOC Table ({len(sanitized_iocs)} total, {len(sanitized_iocs) - removed_n} kept, {removed_n} removed)"
+        )
+        ioc_cell_style = ParagraphStyle("IocCell", parent=body_style, fontSize=7.5, leading=9.5)
+        ioc_mono_style = ParagraphStyle("IocMono", parent=ioc_cell_style, fontName="Courier")
+        try:
+            ioc_rows: list[list] = [["IOC", "Type", "Verdict", "Description", "Reasons"]]
+            for ioc in sanitized_iocs:
+                removed = ioc.get("action") == "remove"
+                noise_pct = round(float(ioc.get("noise_score", 0)) * 100)
+                verdict = f"Removed ({noise_pct}%)" if removed else f"Keep ({noise_pct}%)"
+                reasons = "; ".join(str(r) for r in (ioc.get("noise_reasons") or []))
+                ioc_rows.append(
+                    [
+                        Paragraph(_esc(str(ioc.get("ioc", ""))), ioc_mono_style),
+                        str(ioc.get("ioc_type", "")),
+                        verdict,
+                        Paragraph(_esc(str(ioc.get("ioc_description", "") or "—")), ioc_cell_style),
+                        Paragraph(_esc(reasons) if reasons else "—", ioc_cell_style),
+                    ]
+                )
+            story.append(
+                _styled_table(
+                    ioc_rows,
+                    [3 * cm, 1.8 * cm, 2.2 * cm, 4.2 * cm, None],
+                )
+            )
+        except Exception:  # noqa: BLE001
+            for ioc in sanitized_iocs:
+                removed = ioc.get("action") == "remove"
+                _p_raw(
+                    f"• <b>{_esc(str(ioc.get('ioc', '')))}</b> "
+                    f"({_esc(str(ioc.get('ioc_type', '')))}) — "
+                    f"{'Removed' if removed else 'Keep'}: {_esc(str(ioc.get('ioc_description', '')))}"
+                )
 
     # ── TTP Analysis — Table ──────────────────────────────────────────────────
     ttp = full_report.get("ttp_analysis") or {}
