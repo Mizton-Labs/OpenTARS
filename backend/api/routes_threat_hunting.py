@@ -588,6 +588,19 @@ async def reject_run(pkg_id: str, run_id: str, body: RejectBody) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/packages/{pkg_id}/runs/{run_id}/cancel")
+async def cancel_run(pkg_id: str, run_id: str) -> dict:
+    """Cancel a currently-running generation run (issue-local-019)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    from backend.threat_hunting.agents.runner import cancel_generation as _cancel
+
+    try:
+        return await _cancel(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.patch("/packages/{pkg_id}/runs/{run_id}/hypotheses/{hypothesis_id}")
 async def discard_hypothesis(
     pkg_id: str, run_id: str, hypothesis_id: str, body: HypothesisDiscardBody

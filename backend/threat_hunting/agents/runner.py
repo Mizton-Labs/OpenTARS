@@ -37,15 +37,27 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 # In-memory job registry — maps run_id → generation task handle
 _ACTIVE_JOBS: dict[str, asyncio.Task] = {}
+
+# issue-local-019: run_ids whose active job was cancelled via the explicit
+# cancel_generation() API — distinguishes an operator-requested cancel from
+# approve_generation()'s internal "supersede the old task to resume" cancel,
+# so _run_pipeline's CancelledError handler only persists status='cancelled'
+# for the former (the latter is immediately followed by a new task writing
+# status='running' for the same run_id, which a naive handler would race).
+_CANCEL_REQUESTED: set[str] = set()
+
+# issue-local-019: wall-clock ceiling for a single LangGraph node (covers
+# every hang scenario uniformly — an unresponsive LLM backend, a stuck
+# Playwright/URL fetch, a hung tool call — rather than threading a timeout
+# into each individual call site. Generous: normal nodes complete in well
+# under a minute even on 'high' effort with retries.
+_NODE_TIMEOUT_SECONDS = 600
 
 
 def _utc_now() -> str:
@@ -290,16 +302,20 @@ async def _run_pipeline(
     resume: bool = False,
 ) -> None:
     """Background task: run the LangGraph pipeline and persist results."""
+    from backend.threat_hunting.agents.logging_utils import get_run_logger
     from backend.threat_hunting.agents.pipeline import (
         get_compiled_graph,
         get_post_approval_graph,
     )
+
+    log = get_run_logger(__name__, pkg_id, run_id)
 
     # issue-local-015: nodes (e.g. intake_classifier) need run_id to scope
     # extracted_iocs rows per-run — inject it into the graph state itself,
     # since node functions only ever see HuntPipelineState, not this
     # function's own run_id parameter.
     initial_state = {**initial_state, "run_id": run_id}
+    final_state = dict(initial_state)
 
     try:
         await _save_generation_state(run_id, pkg_id, initial_state, status="running")
@@ -309,21 +325,25 @@ async def _run_pipeline(
         else:
             graph = get_compiled_graph()
 
-        # Stream execution so we can persist after each step
-        final_state = dict(initial_state)
-        async for chunk in graph.astream(initial_state):
+        # Stream execution so we can persist after each step. Each iteration
+        # is bounded by _NODE_TIMEOUT_SECONDS (issue-local-019) — without
+        # this, a single hung node (unresponsive LLM backend, a stuck
+        # Playwright/URL fetch, ...) leaves the run at 'running' forever,
+        # with no error ever recorded (nothing raises, it just never returns).
+        graph_iter = graph.astream(initial_state).__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    graph_iter.__anext__(), timeout=_NODE_TIMEOUT_SECONDS
+                )
+            except StopAsyncIteration:
+                break
             for node_name, updates in chunk.items():
                 if isinstance(updates, dict):
                     final_state.update(updates)
                     status = final_state.get("generation_status", "running")
                     await _save_generation_state(run_id, pkg_id, final_state, status=status)
-                    logger.info(
-                        "TH pipeline run=%s [%s] node=%s status=%s",
-                        run_id[:8],
-                        pkg_id[:8],
-                        node_name,
-                        status,
-                    )
+                    log.info("TH pipeline node=%s status=%s", node_name, status)
 
         final_status = final_state.get("generation_status", "completed")
         await _save_generation_state(run_id, pkg_id, final_state, status=final_status)
@@ -351,23 +371,48 @@ async def _run_pipeline(
                     provider_name=provider,
                     model_name=model,
                 )
-                logger.info(
-                    "TH pipeline run=%s: auto-report generated (run-scoped)",
-                    run_id[:8],
-                )
+                log.info("TH pipeline: auto-report generated (run-scoped)")
             except Exception as report_exc:  # noqa: BLE001
-                logger.warning(
-                    "TH pipeline run=%s: auto-report generation failed (non-fatal): %s",
-                    run_id[:8],
-                    report_exc,
+                log.warning(
+                    "TH pipeline: auto-report generation failed (non-fatal): %s", report_exc
                 )
 
-    except Exception as exc:
-        logger.exception("TH pipeline error run=%s pkg=%s: %s", run_id[:8], pkg_id[:8], exc)
+    except asyncio.CancelledError:
+        # issue-local-019: only persist status='cancelled' for an operator-
+        # requested cancel (see _CANCEL_REQUESTED's docstring above) — a
+        # supersede-cancel from approve_generation() is immediately followed
+        # by a new task writing status='running' for the same run_id, and
+        # writing 'cancelled' here would race it.
+        if run_id in _CANCEL_REQUESTED:
+            _CANCEL_REQUESTED.discard(run_id)
+            log.warning("TH pipeline cancelled by operator")
+            await _save_generation_state(
+                run_id,
+                pkg_id,
+                {**final_state, "errors": [*(final_state.get("errors") or []), "Cancelled by operator"]},
+                status="cancelled",
+            )
+        else:
+            log.info("TH pipeline task cancelled (superseded by resume)")
+        raise
+    except TimeoutError:
+        msg = (
+            f"Pipeline step timed out after {_NODE_TIMEOUT_SECONDS}s — the LLM backend or a "
+            "fetch may be unresponsive"
+        )
+        log.error("TH pipeline: %s", msg)
         await _save_generation_state(
             run_id,
             pkg_id,
-            {**initial_state, "errors": [str(exc)]},
+            {**final_state, "errors": [*(final_state.get("errors") or []), msg]},
+            status="error",
+        )
+    except Exception as exc:
+        log.exception("TH pipeline error: %s", exc)
+        await _save_generation_state(
+            run_id,
+            pkg_id,
+            {**final_state, "errors": [*(final_state.get("errors") or []), str(exc)]},
             status="error",
         )
     finally:
@@ -444,6 +489,47 @@ async def get_generation_status(
     record["is_running"] = effective_run_id in _ACTIVE_JOBS
     record["run_id"] = effective_run_id
     return record
+
+
+async def cancel_generation(run_id: str) -> dict[str, Any]:
+    """Cancel a currently-running generation run (issue-local-019).
+
+    If the run's LangGraph pipeline task is still alive in this process,
+    requests cooperative cancellation — since every await point (an LLM
+    call, a tool call, a URL/Playwright fetch) is inside that one task,
+    `.cancel()` interrupts whatever subtask is currently in flight too, no
+    separate subtask bookkeeping needed. `_run_pipeline`'s own
+    CancelledError handler then persists status='cancelled' once the task
+    actually unwinds.
+
+    If no in-process task is tracked for this run_id (`_ACTIVE_JOBS` is an
+    in-memory registry — it doesn't survive an app restart, so a run left at
+    'running' from before the last restart has no live task to stop), there
+    is nothing left to actually cancel; the stale DB status is corrected
+    directly instead.
+    """
+    state = await _load_pipeline_state(run_id)
+    if not state:
+        raise ValueError(f"No generation run found for run_id {run_id!r}")
+
+    status = state.get("generation_status")
+    if status != "running":
+        raise ValueError(f"Run {run_id!r} is not currently running (status={status!r})")
+
+    pkg_id = state.get("hunt_package_id", "")
+
+    task = _ACTIVE_JOBS.get(run_id)
+    if task is not None and not task.done():
+        _CANCEL_REQUESTED.add(run_id)
+        task.cancel()
+        return {"run_id": run_id, "hunt_package_id": pkg_id, "generation_status": "cancelling"}
+
+    state["errors"] = [
+        *(state.get("errors") or []),
+        "Cancelled by operator (no active worker found — likely orphaned by a server restart)",
+    ]
+    await _save_generation_state(run_id, pkg_id, state, status="cancelled")
+    return {"run_id": run_id, "hunt_package_id": pkg_id, "generation_status": "cancelled"}
 
 
 async def approve_generation(run_id: str, notes: str = "") -> dict[str, Any]:
