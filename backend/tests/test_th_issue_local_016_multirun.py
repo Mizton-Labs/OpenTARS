@@ -131,6 +131,58 @@ async def test_runs_scoped_to_their_own_package(tmp_path: Path) -> None:
     assert {r["id"] for r in by_id[pkg_b["id"]]["runs"]} == {"b-run-1"}
 
 
+# ── issue-local-017: list_generation_runs() phase enrichment ────────────────
+# (needed for HuntDetail's compact all-runs status table, which shows each
+# run's model + status + workflow progress without a per-run extra fetch)
+
+
+@pytest.mark.asyncio
+async def test_list_generation_runs_includes_phases_and_elapsed(tmp_path: Path) -> None:
+    from backend.threat_hunting import db as th_db
+
+    db_path = tmp_path / "th.db"
+    with patch.object(th_db, "_TH_DB_PATH", db_path):
+        await th_db.init_threat_hunting_db()
+        pkg = await th_db.create_hunt_package("phase-enrichment", "")
+        await _insert_run(
+            db_path,
+            pkg["id"],
+            run_id="run-1",
+            created_at="2026-01-01T00:00:00+00:00",
+            llm_model="gpt-oss",
+            step_logs=[
+                {"step": "intake_classifier", "status": "ok", "elapsed_s": 1.5},
+                {"step": "threat_context_builder", "status": "error", "elapsed_s": 0.5},
+            ],
+        )
+
+        runs = await th_db.list_generation_runs(pkg["id"])
+
+    assert len(runs) == 1
+    assert runs[0]["llm_model"] == "gpt-oss"
+    assert runs[0]["total_elapsed_s"] == 2.0
+    steps = {p["step"]: p["status"] for p in runs[0]["phases"]}
+    assert steps == {"intake_classifier": "ok", "threat_context_builder": "error"}
+
+
+@pytest.mark.asyncio
+async def test_list_generation_runs_no_step_logs_yields_none_phases(tmp_path: Path) -> None:
+    from backend.threat_hunting import db as th_db
+
+    db_path = tmp_path / "th.db"
+    with patch.object(th_db, "_TH_DB_PATH", db_path):
+        await th_db.init_threat_hunting_db()
+        pkg = await th_db.create_hunt_package("no-step-logs", "")
+        await _insert_run(
+            db_path, pkg["id"], run_id="run-1", created_at="2026-01-01T00:00:00+00:00"
+        )
+
+        runs = await th_db.list_generation_runs(pkg["id"])
+
+    assert runs[0]["phases"] is None
+    assert runs[0]["total_elapsed_s"] is None
+
+
 async def _insert_run(
     db_path: Path,
     hunt_package_id: str,

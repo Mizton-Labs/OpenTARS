@@ -1194,8 +1194,11 @@ export const api = {
     downloadReportPdf: (pkgId: string) =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/pdf`,
     // ── issue-local-005: Run-scoped methods ─────────────────────────────────
+    // issue-local-017: returns THuntPackageRun[] (THRunSummary + each run's
+    // phases/total_elapsed_s), needed for HuntDetail's compact all-runs
+    // status table without a per-run extra fetch.
     listRuns: (pkgId: string) =>
-      request<THRunSummary[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs`),
+      request<THuntPackageRun[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs`),
     getRunStatus: (pkgId: string, runId: string) =>
       request<THGenerationRecord>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/status`,

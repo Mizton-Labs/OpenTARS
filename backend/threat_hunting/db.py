@@ -1366,14 +1366,19 @@ async def get_generation_run(run_id: str) -> dict[str, Any] | None:
 async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
     """Return all generation runs for a hunt package, newest first.
 
-    Returns lightweight summaries: id, hunt_package_id, generation_status,
-    llm_provider, llm_model, research_effort, created_at.
+    Returns lightweight summaries (id, hunt_package_id, generation_status,
+    llm_provider, llm_model, research_effort, created_at) plus each run's
+    ``phases``/``total_elapsed_s`` projection (issue-local-017: needed for
+    HuntDetail's compact all-runs status table) via the same
+    ``_parse_step_logs`` helper ``list_hunt_packages`` uses — no separate
+    per-run fetch required.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
-                      llm_provider, llm_model, research_effort, created_at
+                      llm_provider, llm_model, research_effort, created_at,
+                      step_logs
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -1381,7 +1386,15 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         )
         rows = await cur.fetchall()
         await cur.close()
-    return [dict(row) for row in rows]
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        run = dict(row)
+        step_logs_json = run.pop("step_logs")
+        phases, total_elapsed_s = _parse_step_logs(step_logs_json)
+        run["phases"] = phases
+        run["total_elapsed_s"] = total_elapsed_s
+        result.append(run)
+    return result
 
 
 # ── Hunt Report CRUD ──────────────────────────────────────────────────────────
