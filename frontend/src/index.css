@@ -107,6 +107,40 @@
     --color-brand-900: 26 39 134;
   }
 
+  /* Ocean — a slightly-darker, more blue-biased variant of Classic (dark
+   * theme requests: "just slightly darker" + "based on the Classic theme").
+   * Same construction method as Light's ramp-mirror above: every stop is
+   * Classic's value made a bit darker and nudged toward blue (B channel
+   * held higher relative to R/G) rather than a hand-picked new palette, so
+   * every component's existing dark-surface/light-text contrast pairing
+   * (already tuned for Classic) still holds. brand-* (accent) is reused
+   * verbatim from Classic — same reasoning as Light reusing it for its
+   * accent: the blue accent already reads as "Ocean" on its own. */
+  :root[data-theme='ocean'] {
+    --color-gray-50:  245 248 252;
+    --color-gray-100: 231 238 247;
+    --color-gray-200: 209 221 237;
+    --color-gray-300: 178 195 219;
+    --color-gray-400: 130 148 175;
+    --color-gray-500: 90 106 132;
+    --color-gray-600: 62 76 99;
+    --color-gray-700: 42 53 71;
+    --color-gray-800: 22 30 44;
+    --color-gray-900: 11 17 28;
+    --color-gray-950: 2 5 13;
+
+    --color-brand-50:  240 244 255;
+    --color-brand-100: 221 230 255;
+    --color-brand-200: 184 205 255;
+    --color-brand-300: 135 170 255;
+    --color-brand-400: 84 128 250;
+    --color-brand-500: 47 88 240;
+    --color-brand-600: 28 61 230;
+    --color-brand-700: 24 45 209;
+    --color-brand-800: 25 39 170;
+    --color-brand-900: 26 39 134;
+  }
+
   :root {
     --sidebar-width: 220px;
   }
@@ -253,6 +287,21 @@
   box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.45);
 }
 
+/* issue-local-018 follow-up: Light theme's `.card` had no override at all —
+ * it fell through to the mirrored `gray-900` (243 244 246, near-white) on a
+ * `gray-950` page background (249 250 251, also near-white), a ~6-unit gap:
+ * cards read as plain white with no visible separation from the page. Give
+ * Light its own subtle slate-blue tint (same mechanism as Energy's bump
+ * above), distinct enough from the page to read as a card without looking
+ * like a colored alert box. */
+:root[data-theme='light'] .card {
+  background-color: rgb(226 232 240);
+  border-color: rgb(203 213 225);
+}
+:root[data-theme='light'] .card:hover {
+  background-color: rgb(214 221 232);
+}
+
 /* Sidebar module-group box (Threat Intel + Threat Hunting), separating the
  * app's two product modules from Home and the utility items. Same
  * no-op-in-Classic / accent-in-Energy pattern as .nav-item-active above. */
@@ -286,6 +335,7 @@
 :root[data-theme='light'] .text-green-400  { color: rgb(21 128 61); }
 :root[data-theme='light'] .text-red-300,
 :root[data-theme='light'] .text-red-400    { color: rgb(185 28 28); }
+:root[data-theme='light'] .text-blue-200,
 :root[data-theme='light'] .text-blue-300,
 :root[data-theme='light'] .text-blue-400   { color: rgb(29 78 216); }
 :root[data-theme='light'] .text-amber-300,
@@ -295,3 +345,30 @@
 :root[data-theme='light'] .text-yellow-300,
 :root[data-theme='light'] .text-yellow-400 { color: rgb(161 98 7); }
 :root[data-theme='light'] .text-orange-300 { color: rgb(194 65 12); }
+
+/* issue-local-018 follow-up: the fix above only covered Tailwind's *stock*
+ * color scale. Two more idioms had the identical dark-bg/pastel-text problem
+ * in Light theme but used different hues/shades, so the selectors above
+ * never matched them:
+ *   (a) the app's own `brand` accent scale (border-brand-500 bg-brand-900/NN
+ *       text-brand-200/300 "selected" chips — AnalysisTab's IOC-mode toggle,
+ *       HuntDetail's re-run/IOC selectors, Configuration/SmartMappings
+ *       filter toggles) — brand-900 is intentionally NOT remapped for Light
+ *       (kept as Classic's accent per the theme block's own comment above),
+ *       so an opacity overlay of it read as a barely-tinted pale chip.
+ *   (b) PhaseCard's workflow-step chips (ThreatHunting.tsx) use one shade
+ *       darker (`bg-{color}-800` + `text-{color}-100`) than every other
+ *       component's `-900`/`-300` pairing, so the `-900` selectors above
+ *       missed them by shade tier, not just by color family. */
+:root[data-theme='light'] [class*='bg-brand-900'] { background-color: rgb(219 234 254); }
+:root[data-theme='light'] .text-brand-200,
+:root[data-theme='light'] .text-brand-300 { color: rgb(29 78 216); }
+
+:root[data-theme='light'] [class*='bg-green-800'] { background-color: rgb(220 252 231); }
+:root[data-theme='light'] [class*='bg-red-800']   { background-color: rgb(254 226 226); }
+:root[data-theme='light'] [class*='bg-blue-800']  { background-color: rgb(219 234 254); }
+:root[data-theme='light'] [class*='bg-amber-800'] { background-color: rgb(254 243 199); }
+:root[data-theme='light'] .text-green-100 { color: rgb(21 128 61); }
+:root[data-theme='light'] .text-red-100   { color: rgb(185 28 28); }
+:root[data-theme='light'] .text-blue-100  { color: rgb(29 78 216); }
+:root[data-theme='light'] .text-amber-100 { color: rgb(180 83 9); }

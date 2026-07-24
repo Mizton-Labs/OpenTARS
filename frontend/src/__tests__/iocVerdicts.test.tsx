@@ -189,11 +189,11 @@ describe('RetrohuntPanel — three-way filter + verdict column', () => {
 })
 
 describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
-  function renderTab() {
+  function renderTab(props: Partial<React.ComponentProps<typeof AnalysisTab>> = {}) {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     return render(
       <QueryClientProvider client={qc}>
-        <AnalysisTab pkgId="pkg-1" runId="run-1" />
+        <AnalysisTab pkgId="pkg-1" runId="run-1" {...props} />
       </QueryClientProvider>,
     )
   }
@@ -233,5 +233,29 @@ describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
     await screen.findByText('evil.com')
     await waitFor(() => expect(screen.getByText('evil.com')).toHaveClass('line-through'))
     expect(screen.getByText('good.com')).not.toHaveClass('line-through')
+  })
+
+  describe('Approve gating on unapplied IOC verdict changes (issue-local-018 follow-up)', () => {
+    beforeEach(() => {
+      vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+        hunt_package_id: 'pkg-1',
+        run_id: 'run-1',
+        generation_status: 'awaiting_approval',
+        hypotheses: [],
+      })
+      vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+      vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+    })
+
+    it('enables Approve when there are no staged IOC verdict changes', async () => {
+      renderTab({ iocVerdictsDirty: false })
+      expect(await screen.findByRole('button', { name: 'Approve' })).not.toBeDisabled()
+    })
+
+    it('disables Approve and shows a warning while IOC verdict changes are unapplied', async () => {
+      renderTab({ iocVerdictsDirty: true })
+      expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(screen.getByText(/unapplied IOC verdict changes/i)).toBeInTheDocument()
+    })
   })
 })

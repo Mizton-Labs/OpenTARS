@@ -10,7 +10,7 @@ import ExecutionPanel from './ExecutionPanel'
 import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
 import ConfirmDialog from '../../components/ConfirmDialog'
-import { runStatusClass, runLabel } from './runStatusUtils'
+import { runStatusClass, runLabel, HUNT_ID_BADGE } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
 import RunsStatusTable from './RunsStatusTable'
@@ -211,6 +211,11 @@ export default function HuntDetail({
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
   const removedCount = (iocs as THExtractedIOC[]).filter((i) => i.action === 'remove').length
 
+  // issue-local-018 follow-up: hoisted so the header indicator card and the
+  // run-selector status pill share one lookup instead of each re-scanning
+  // `runs` inline.
+  const activeRun = runs.find((r) => r.id === activeRunId)
+
   const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
   // issue-local-014: re-run is available regardless of any run's status —
   // including while a run is still active — so parallel runs (e.g. a
@@ -228,7 +233,7 @@ export default function HuntDetail({
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-semibold text-gray-100 truncate flex items-center gap-2">
             {pkg?.hunt_id_display && (
-              <span className="font-mono text-sm text-gray-500 shrink-0">{pkg.hunt_id_display}</span>
+              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>
             )}
             {pkg?.name ?? '…'}
           </h1>
@@ -278,6 +283,20 @@ export default function HuntDetail({
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
         <div className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
+          {/* issue-local-018 follow-up: unambiguous "which run is open"
+              indicator — HuntID + RunID together, since the dropdown below
+              can otherwise be scrolled/changed without a clear at-a-glance
+              confirmation of what's currently loaded. */}
+          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-brand-700/40 bg-brand-900/15">
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0">Viewing</span>
+            {pkg?.hunt_id_display && <span className={HUNT_ID_BADGE}>{pkg.hunt_id_display}</span>}
+            {activeRun?.run_id_display && (
+              <>
+                <span className="text-gray-600">/</span>
+                <span className={HUNT_ID_BADGE}>{activeRun.run_id_display}</span>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500 shrink-0">Run:</span>
             <div className="relative flex-1 max-w-xs">
@@ -302,9 +321,9 @@ export default function HuntDetail({
             </div>
             <span className={clsx(
               'text-[11px] px-2 py-0.5 rounded shrink-0',
-              runStatusClass(runs.find(r => r.id === activeRunId)?.generation_status),
+              runStatusClass(activeRun?.generation_status),
             )}>
-              {runs.find(r => r.id === activeRunId)?.generation_status ?? '—'}
+              {activeRun?.generation_status ?? '—'}
             </span>
           </div>
           {/* issue-local-015: progress-block stepper for the selected run */}
@@ -519,6 +538,7 @@ export default function HuntDetail({
           onShowIocs={() => setActiveTab('iocs')}
           pendingVerdictFor={isResearcher ? iocStaging.pendingFor : undefined}
           onStageVerdict={isResearcher ? iocStaging.stage : undefined}
+          iocVerdictsDirty={iocStaging.isDirty}
         />
       )}
 

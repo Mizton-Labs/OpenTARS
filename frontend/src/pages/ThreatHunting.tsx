@@ -16,7 +16,7 @@
  */
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Shield, Trash2, ChevronRight, Timer, Copy, UserCircle } from 'lucide-react'
+import { Plus, Shield, Trash2, ChevronRight, ChevronLeft, Timer, Copy, UserCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THuntPackage, type THPhaseEntry, type THuntPackageRun } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -24,8 +24,10 @@ import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useHuntDensity, type HuntDensity } from './threat-hunting/useHuntDensity'
+import { useHuntPageSize, HUNT_PAGE_SIZE_OPTIONS } from './threat-hunting/useHuntPageSize'
 import RunStatusBadge from './threat-hunting/RunStatusBadge'
 import RunsStatusTable from './threat-hunting/RunsStatusTable'
+import { HUNT_ID_BADGE } from './threat-hunting/runStatusUtils'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -341,6 +343,7 @@ function ProcessArrow({ run: pkg }: ProcessArrowProps) {
 // scope since it's static, shared by PackageCard below.
 const CLASSIC_CARD = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
 
+
 /**
  * One hunt-package list card (issue-local-016: extracted from the inline
  * `.map()` body so each card can own its own "which run is selected" state
@@ -397,7 +400,7 @@ function PackageCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {pkg.hunt_id_display && (
-              <span className="font-mono text-xs text-gray-500 shrink-0">{pkg.hunt_id_display}</span>
+              <span className={clsx(HUNT_ID_BADGE, 'text-[11px]')}>{pkg.hunt_id_display}</span>
             )}
             <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
             <span className={clsx('badge text-[11px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
@@ -516,6 +519,10 @@ export default function ThreatHunting() {
   // issue-local-016: compact/detailed/table density toggle.
   const { density, setDensity } = useHuntDensity()
 
+  // issue-local-018 follow-up: pagination over the hunt-package list.
+  const { pageSize, setPageSize } = useHuntPageSize()
+  const [page, setPage] = useState(1)
+
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
     queryFn: api.threatHunting.listPackages,
@@ -545,6 +552,16 @@ export default function ThreatHunting() {
       setSelectedId(newPkg.id)
     },
   })
+
+  // issue-local-018 follow-up: client-side pagination — the list-fetch has
+  // no limit/offset support server-side, and package counts are small
+  // enough (dozens, not thousands) that slicing the already-fetched array
+  // is simpler than adding backend pagination.
+  const totalPages = Math.max(1, Math.ceil(packages.length / pageSize))
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+  const pagedPackages = packages.slice((page - 1) * pageSize, page * pageSize)
 
   if (selectedId) {
     return (
@@ -614,6 +631,24 @@ export default function ThreatHunting() {
               Table
             </button>
           </div>
+          {/* issue-local-018 follow-up: page-size selector for the
+              pagination controls below the list. */}
+          <div className="flex items-center gap-1.5 text-sm">
+            <label htmlFor="th-page-size" className="text-gray-500 text-xs shrink-0">Show</label>
+            <select
+              id="th-page-size"
+              className="input py-1 text-sm w-auto"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value) as (typeof HUNT_PAGE_SIZE_OPTIONS)[number])
+                setPage(1)
+              }}
+            >
+              {HUNT_PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
           {isResearcher && (
             <button className="btn-primary flex items-center gap-2" onClick={() => setShowWizard(true)}>
               <Plus className="w-4 h-4" />
@@ -637,7 +672,7 @@ export default function ThreatHunting() {
         </div>
       ) : density === 'table' ? (
         <div className="space-y-5">
-          {packages.map((pkg: THuntPackage) => (
+          {pagedPackages.map((pkg: THuntPackage) => (
             <div key={pkg.id} className="card space-y-1.5">
               <button
                 type="button"
@@ -645,7 +680,7 @@ export default function ThreatHunting() {
                 className="flex items-center gap-2 text-left group"
               >
                 {pkg.hunt_id_display && (
-                  <span className="font-mono text-xs text-gray-500 shrink-0">{pkg.hunt_id_display}</span>
+                  <span className={clsx(HUNT_ID_BADGE, 'text-[11px]')}>{pkg.hunt_id_display}</span>
                 )}
                 <p className="text-sm font-semibold text-gray-100 group-hover:text-brand-400 transition-colors">
                   {pkg.name}
@@ -672,7 +707,7 @@ export default function ThreatHunting() {
         </div>
       ) : (
         <div className="space-y-2">
-          {packages.map((pkg: THuntPackage) => (
+          {pagedPackages.map((pkg: THuntPackage) => (
             <PackageCard
               key={pkg.id}
               pkg={pkg}
@@ -683,6 +718,30 @@ export default function ThreatHunting() {
               onArchive={() => setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })}
             />
           ))}
+        </div>
+      )}
+
+      {/* issue-local-018 follow-up: pagination footer — only shown once
+          there's more than one page, matching NormalizedTable.tsx's pattern. */}
+      {!isLoading && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 text-sm text-gray-500">
+          <button
+            className="btn btn-secondary px-2 py-1"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span>Page {page} of {totalPages} · {packages.length} total</span>
+          <button
+            className="btn btn-secondary px-2 py-1"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            aria-label="Next page"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
         </div>
       )}
 
