@@ -429,6 +429,16 @@ class HuntingLeadDiscardBody(BaseModel):
     discarded: bool
 
 
+class IocVerdictItem(BaseModel):
+    ioc: str
+    ioc_type: str
+    action: str  # 'keep' | 'remove'
+
+
+class IocVerdictUpdateBody(BaseModel):
+    updates: list[IocVerdictItem]
+
+
 @router.post("/packages/{pkg_id}/generate", status_code=202)
 async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
     """Start the LLM agent pipeline for a hunt package.
@@ -608,6 +618,37 @@ async def discard_hunting_lead(
     if updated is None:
         raise HTTPException(status_code=404, detail="Run or hunting lead not found.")
     return updated
+
+
+@router.patch("/packages/{pkg_id}/runs/{run_id}/iocs")
+async def update_ioc_verdicts(pkg_id: str, run_id: str, body: IocVerdictUpdateBody) -> dict:
+    """Batch-apply manual keep/remove verdict overrides for this run's IOCs.
+
+    issue-local-016: analyst-driven override of the automated (noise-scoring
+    + active-cleaning) keep/remove decision from issue-local-015. Updates
+    BOTH IOC data stores this app maintains — ``extracted_iocs`` (the real
+    table backing HuntDetail's IOCs tab) and the ``deep_retrohunt`` JSON
+    blob's ``sanitized_iocs`` (which has no independent id, matched by
+    ``(ioc, ioc_type)`` — backing RetrohuntPanel's Sanitized IOCs table) —
+    so every IOC view stays consistent without re-running the pipeline. The
+    deep_retrohunt half also recomputes its derived ``ioc_csv``/count
+    fields; see ``db.update_deep_retrohunt_ioc_actions``. Scoped to this run
+    only — other runs of the same package are untouched.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    invalid = [u.action for u in body.updates if u.action not in ("keep", "remove")]
+    if invalid:
+        raise HTTPException(status_code=400, detail="action must be 'keep' or 'remove'")
+
+    updates = [(u.ioc, u.ioc_type, u.action) for u in body.updates]
+    await th_db.update_ioc_actions(run_id, updates)
+    deep_retrohunt = await th_db.update_deep_retrohunt_ioc_actions(run_id, updates)
+
+    return {
+        "status": "ok",
+        "updated_count": len(updates),
+        "deep_retrohunt": deep_retrohunt,
+    }
 
 
 # ── SIEM Connector endpoints (Phase 5) ────────────────────────────────────────

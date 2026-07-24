@@ -1109,6 +1109,20 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/hunting-leads/${encodeURIComponent(leadId)}`,
         { method: 'PATCH', body: JSON.stringify({ discarded }) },
       ),
+    // issue-local-016: batch-apply manual keep/remove verdict overrides for
+    // this run's IOCs. Updates both extracted_iocs and the deep_retrohunt
+    // blob's sanitized_iocs server-side — the response's `deep_retrohunt`
+    // field is the updated lead, ready to swap into the run-record cache
+    // without a second fetch.
+    updateIocVerdicts: (
+      pkgId: string,
+      runId: string,
+      updates: { ioc: string; ioc_type: string; action: 'keep' | 'remove' }[],
+    ) =>
+      request<{ status: string; updated_count: number; deep_retrohunt: THDeepRetrohuntLead | null }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/iocs`,
+        { method: 'PATCH', body: JSON.stringify({ updates }) },
+      ),
 
     // Generation (Phase 3)
     startGeneration: (pkgId: string, body: { provider_name?: string; model_name?: string; research_effort?: string; run_config?: THIocRunConfig } = {}) =>
@@ -1180,8 +1194,11 @@ export const api = {
     downloadReportPdf: (pkgId: string) =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/report/pdf`,
     // ── issue-local-005: Run-scoped methods ─────────────────────────────────
+    // issue-local-017: returns THuntPackageRun[] (THRunSummary + each run's
+    // phases/total_elapsed_s), needed for HuntDetail's compact all-runs
+    // status table without a per-run extra fetch.
     listRuns: (pkgId: string) =>
-      request<THRunSummary[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs`),
+      request<THuntPackageRun[]>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs`),
     getRunStatus: (pkgId: string, runId: string) =>
       request<THGenerationRecord>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/status`,
@@ -1712,6 +1729,10 @@ export interface THuntPackage {
   total_elapsed_s?: number | null
   /** ISO timestamp when the latest run started — used for the live timer (issue-008-2A). */
   run_created_at?: string | null
+  /** Every generation run for this package, newest first (issue-local-016). */
+  runs?: THuntPackageRun[]
+  /** Convenience count of `runs`. */
+  run_count?: number
 }
 
 export interface THEvidenceItem {
@@ -1804,6 +1825,18 @@ export interface THRunSummary {
   llm_model?: string | null
   research_effort?: string | null
   created_at: string
+}
+
+/**
+ * A run summary as returned inline on the hunt-package LIST endpoint
+ * (issue-local-016) — extends THRunSummary with the phase data needed to
+ * drive that run's stage rail when selected via a run chip. HuntDetail's
+ * own lightweight run-selector dropdown keeps using plain THRunSummary
+ * (it doesn't need per-run phases).
+ */
+export interface THuntPackageRun extends THRunSummary {
+  phases?: THPhaseEntry[] | null
+  total_elapsed_s?: number | null
 }
 
 export interface THGenerationRecord {

@@ -40,6 +40,9 @@ export default defineConfig({
     // page always shows the explicit version (commit) AND its branch —
     // same env-var-at-build-time pattern as __GIT_COMMIT__.
     __GIT_BRANCH__: JSON.stringify(process.env.GIT_BRANCH || 'unknown'),
+    // When the commit itself was made (ISO-8601), so the About page can show
+    // how stale a deployment is at a glance — same pattern as __GIT_BRANCH__.
+    __GIT_COMMIT_DATE__: JSON.stringify(process.env.GIT_COMMIT_DATE || 'unknown'),
     __APP_VERSION__: JSON.stringify('0.1.0'),
   },
   test: {

@@ -9,6 +9,99 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Run-tab clarity, larger Threat Hunting text, all-runs status table, LLM array-field crash (issue-local-017 follow-up)
+
+**Fixed a live page-crash bug (minified React error #31).** Confirmed on test-server: the
+"issue-015 bugfix2 verification" package's Mistral-Large-3 run has
+`threat_context.key_observations` entries shaped as `{observation, confidence, evidence}` objects
+instead of the plain strings the schema asks for — rendering an object directly as a React child
+blanks the whole page. The same risk existed for hypothesis `suggested_actions` and
+`ttp_analysis.detection_opportunities`. Fixed at both ends: backend nodes
+(`threat_context_builder`, `hypothesis_generator`, `ttp_analyst`) now normalize these arrays to
+strings at the source via a new `coerce_string_list()` helper in `llm_bridge.py`, so future runs
+are clean; the frontend also gained a defensive `asDisplayText()` coercion at every render site in
+`AnalysisTab.tsx`/`ReportPanel.tsx` (mirroring the existing `asQueryText` pattern for the same
+failure class), since a backend-only fix can't repair already-persisted historical runs without a
+re-run — this is what actually makes the Mistral run viewable again.
+
+**Run tabs on the hunt-package list now read as actual tabs.** The previous pass gave inactive
+tabs a transparent border (invisible until active) and only a faint ring to mark selection — hard
+to tell which run was selected or that the row was clickable at all. Inactive tabs now get a
+visible border, the active tab uses a stronger fill plus a brand-colored border, and a small
+"Runs" label identifies the row without hovering.
+
+**Larger text across the whole Threat Hunting module.** Bumped the smallest text a step each
+(9px→10px, 10px→11px, 11px→12px, `text-xs`→`text-sm`) across all `ThreatHunting.tsx` and
+`threat-hunting/` components — left `text-sm` and larger alone to limit layout-breakage risk
+without a visual QA pass.
+
+**New compact all-runs status table in HuntDetail**, shown below the run-selector dropdown: one
+row per run showing the model used, its status, and the same coarse workflow-with-arrows
+visualization (Evidence → IOC → Analysis → Execution → Report) `PipelineStepper` shows for the
+single selected run — so the whole run history's progress is visible at a glance without
+switching the selector back and forth. `list_generation_runs()` now returns each run's
+`phases`/`total_elapsed_s` (the same `_parse_step_logs` projection `list_hunt_packages()` already
+uses), so this needs no per-run extra fetch.
+
+**Tests:** `coerce_string_list()` unit coverage plus per-node coercion tests (object-shaped items
+flattened to strings, missing fields default to an empty list); a frontend regression test
+rendering the exact live-observed `{observation, confidence, evidence}` shape end-to-end through
+`AnalysisTab`; DB-layer coverage for `list_generation_runs()`'s new phase/elapsed projection; and
+`RunsStatusTable` coverage (model/effort display, provider fallback, status text, coarse-phase
+done/error states, one row per run).
+
+### Added — Sidebar module grouping, forced password change, multi-run indicators, manual IOC verdict overrides (issue-local-017)
+
+**Sidebar now visually separates the Threat Intel and Threat Hunting modules from Home and the
+utility items.** Both sections are wrapped in one bordered/tinted container (`.nav-module-group`,
+subtle inset accent in the Energy theme, no-op in Classic), distinguishing the app's two product
+modules from everything else in the nav — a pure layout/CSS change, no navigation behavior change.
+
+**Admin-created users are now forced to change their password on first login, not just after an
+admin reset.** `POST /api/auth/users` now sets `must_change_password=True` unconditionally — the
+existing forced-change middleware gate and reset screen needed no new code, since the flag is read
+generically off any user row regardless of how it was set.
+
+**Hunt-package cards now show every run, not just the latest, with a compact/detailed density
+toggle.** `list_hunt_packages()` bulk-fetches every non-archived package's full run history
+(phases, status, model/effort, elapsed time) in one extra query — no N+1 — and each card renders a
+tab strip of its runs when there's more than one. Runs default to the newest; clicking a tab
+switches that card's 16-step stage rail to the selected run's data. A new Compact/Detailed toggle
+(sibling to the existing Classic/Modern control, `sfi.th.cardDensity` in localStorage) hides the
+heavy stage rail in Compact mode — the run tabs themselves stay visible in both modes, since
+they're the actual payoff of the multi-run feature. The run tabs read as real tabs (bigger font,
+a status-color dot, model/effort-or-date label, and the status word itself — not just a color —
+so the active tab and each run's identity are both unambiguous at a glance, addressing feedback
+that the first pass only showed a bare status pill with a barely-visible selection ring).
+
+**Manual per-IOC keep/remove verdict overrides**, closing a gap against the original issue-local-015
+ask: IOC review previously only supported the *automated* active-cleaning decision, with no way for
+an analyst to override an individual IOC. A new `PATCH /packages/{pkg_id}/runs/{run_id}/iocs` route
+updates both IOC data stores in one call — `extracted_iocs` (the real table backing the IOCs tab)
+and the `deep_retrohunt` JSON blob's `sanitized_iocs` (backing the Sanitized IOCs table and its
+CSV/count summary, matched by `(ioc, ioc_type)` since it has no independent id) — recomputing the
+canonical CSV and noise counts from the updated kept set. The Sanitized IOCs table gained a true
+three-way All/Sanitized/Removed filter (previously "all" silently meant "kept only"), and both IOC
+tables gained a Keep/Remove segmented toggle per row. Changes are staged locally (mirroring
+`AgentsConfigTab.tsx`'s dirty-gated Save pattern) and only sent on an explicit "Apply changes"
+click, shared across the IOCs tab and the Analysis tab's embedded Sanitized IOCs table so a change
+survives switching tabs. A manually-removed IOC is visually flagged (struck through, not hidden)
+everywhere it's cited as a hypothesis's evidence basis — no auto-discard of the hypothesis itself.
+
+**About page now also shows the build's commit date**, alongside the existing commit hash and
+branch — same build-time-injection pattern (`GIT_COMMIT_DATE` from `git log -1 --format=%cI`,
+wired through Vite's `define` as `__GIT_COMMIT_DATE__`), so it's obvious at a glance how stale a
+running deployment is.
+
+**Tests:** sidebar module-group grouping/collapse coverage; forced-change-on-creation coverage
+plus fixes for three pre-existing tests whose freshly-created accounts were newly blocked by the
+gate; real-SQLite coverage for `list_hunt_packages()`'s per-run bulk fetch across 0/1/N-run
+packages; `useHuntDensity` persistence and the run-tab strip's default-newest-selection/click-to-
+switch/compact-mode-survival behavior; DB- and route-level coverage for the new IOC verdict route
+(both stores updated together, invalid-action rejection, unknown-package 404, run-scoping); staged-
+edit hook coverage (stage/unstage-on-match/dirty-count/apply-clears-pending); the three-way
+Sanitized-IOCs filter; and the evidence-chip strike-through flag.
+
 ### Added — User Management relocation, admin password reset hardening, per-user themes (issue-local-016)
 
 **User Management moved from Threat Intel to General Configuration.** It's an instance-wide

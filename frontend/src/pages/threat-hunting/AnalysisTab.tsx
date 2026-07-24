@@ -17,6 +17,8 @@ import {
 import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
+import type { IocVerdict } from './IocVerdictToggle'
+import { asDisplayText } from './llmTextUtils'
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
 // hypothesis or hunting-lead card — a standalone button card rather than a
@@ -36,7 +38,7 @@ function DiscardButtonCard({
       onClick={onClick}
       disabled={disabled}
       className={clsx(
-        'w-full flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2 text-xs font-semibold transition-colors mt-1.5',
+        'w-full flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2 text-sm font-semibold transition-colors mt-1.5',
         discarded
           ? 'border-green-700/60 bg-green-900/15 text-green-400 hover:bg-green-900/25'
           : 'border-red-800/50 bg-red-900/15 text-red-400 hover:bg-red-900/25',
@@ -69,12 +71,18 @@ export default function AnalysisTab({
   runId,
   onRunCreated,
   onShowIocs,
+  pendingVerdictFor,
+  onStageVerdict,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
   /** Called when the user clicks "View IOCs" in the workflow timeline. */
   onShowIocs?: () => void
+  /** issue-local-016: manual IOC verdict staging, lifted to HuntDetail.tsx so
+   *  a change staged here survives switching to the IOCs tab and back. */
+  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -197,7 +205,7 @@ export default function AnalysisTab({
     return (
       <div className="space-y-4">
         {status === 'error' && (
-          <div className="rounded-lg border border-red-800/40 bg-red-900/10 p-3 text-xs text-red-400">
+          <div className="rounded-lg border border-red-800/40 bg-red-900/10 p-3 text-sm text-red-400">
             <p className="font-medium mb-1">Generation failed</p>
             {genRecord?.generation_errors?.map((e: string, i: number) => (
               <p key={i}>• {e}</p>
@@ -208,7 +216,7 @@ export default function AnalysisTab({
           <Brain className="w-10 h-10 text-gray-600 mx-auto" />
           <div>
             <p className="text-sm font-medium text-gray-200">Generate Hunting Package</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 mt-1">
               The LLM agent pipeline will analyze all evidence items and produce:
               threat context, hunting hypotheses, leads, TTP analysis, and SIEM query drafts.
             </p>
@@ -216,7 +224,7 @@ export default function AnalysisTab({
           {isResearcher ? (
             <div className="space-y-3">
               {/* Research effort selector */}
-              <div className="flex items-center gap-2 justify-center text-xs">
+              <div className="flex items-center gap-2 justify-center text-sm">
                 <span className="text-gray-500">Research effort:</span>
                 {(['low', 'medium', 'high'] as const).map((e) => {
                   const active = (selectedEffort || effortData?.th_research_effort || 'high') === e
@@ -225,7 +233,7 @@ export default function AnalysisTab({
                       key={e}
                       onClick={() => setSelectedEffort(e)}
                       className={clsx(
-                        'px-2.5 py-1 rounded text-xs border transition-colors capitalize',
+                        'px-2.5 py-1 rounded text-sm border transition-colors capitalize',
                         active
                           ? 'border-brand-500 bg-brand-900/20 text-brand-300'
                           : 'border-gray-700 text-gray-500 hover:border-gray-500',
@@ -237,11 +245,11 @@ export default function AnalysisTab({
                 })}
               </div>
               {/* Model selector (mirrors SmartProposalConfirmModal) */}
-              <div className="flex items-center gap-2 justify-center text-xs">
+              <div className="flex items-center gap-2 justify-center text-sm">
                 <label htmlFor="th-model-select" className="text-gray-500 shrink-0">Model:</label>
                 <select
                   id="th-model-select"
-                  className="input text-xs max-w-xs"
+                  className="input text-sm max-w-xs"
                   value={modelChoice}
                   onChange={(e) => setModelChoice(e.target.value)}
                 >
@@ -254,14 +262,14 @@ export default function AnalysisTab({
                 </select>
               </div>
               {/* issue-local-015: IOC handling mode */}
-              <div className="flex flex-col items-center gap-1.5 text-xs">
+              <div className="flex flex-col items-center gap-1.5 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">IOC handling:</span>
                   {(['tagging_only', 'active_cleaning'] as const).map((m) => (
                     <button
                       key={m}
                       className={clsx(
-                        'px-2.5 py-1 rounded text-xs border transition-colors',
+                        'px-2.5 py-1 rounded text-sm border transition-colors',
                         iocMode === m
                           ? 'border-brand-500 bg-brand-900/20 text-brand-300'
                           : 'border-gray-700 text-gray-500 hover:border-gray-500',
@@ -282,7 +290,7 @@ export default function AnalysisTab({
                         ['remove_legit_services', 'Legit services'],
                       ] as const
                     ).map(([key, label]) => (
-                      <label key={key} className="flex items-center gap-1 text-[11px] text-gray-400">
+                      <label key={key} className="flex items-center gap-1 text-[12px] text-gray-400">
                         <input
                           type="checkbox"
                           checked={iocCleaningOptions[key]}
@@ -307,7 +315,7 @@ export default function AnalysisTab({
               </button>
             </div>
           ) : (
-            <p className="text-xs text-gray-600">Requires threat-researcher or admin role.</p>
+            <p className="text-sm text-gray-600">Requires threat-researcher or admin role.</p>
           )}
         </div>
       </div>
@@ -323,7 +331,7 @@ export default function AnalysisTab({
           <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
           <div>
             <p className="text-sm font-medium text-gray-200">Generating hunt package...</p>
-            <p className="text-xs text-gray-500">
+            <p className="text-sm text-gray-500">
               Current step: <span className="text-blue-400">{currentStep.replace(/_/g, ' ')}</span>
               {genRecord?.research_effort && (
                 <span className="ml-2 text-gray-600">· effort: {genRecord.research_effort}</span>
@@ -351,14 +359,14 @@ export default function AnalysisTab({
           {isResearcher && (
             <div className="flex gap-2">
               <button
-                className="btn-ghost text-xs text-red-400 hover:text-red-300"
+                className="btn-ghost text-sm text-red-400 hover:text-red-300"
                 disabled={rejectMut.isPending}
                 onClick={() => rejectMut.mutate()}
               >
                 {rejectMut.isPending ? 'Rejecting...' : 'Reject'}
               </button>
               <button
-                className="btn-primary text-xs"
+                className="btn-primary text-sm"
                 onClick={() => setShowApproveForm(!showApproveForm)}
               >
                 Approve
@@ -369,17 +377,17 @@ export default function AnalysisTab({
 
         {showApproveForm && isResearcher && (
           <div className="border border-green-800/40 bg-green-900/10 rounded-lg p-3 space-y-2">
-            <p className="text-xs text-gray-400">Approval notes (optional):</p>
+            <p className="text-sm text-gray-400">Approval notes (optional):</p>
             <textarea
-              className="input w-full h-16 resize-none text-xs"
+              className="input w-full h-16 resize-none text-sm"
               placeholder="Add notes about this approval..."
               value={approvalNotes}
               onChange={(e) => setApprovalNotes(e.target.value)}
             />
             <div className="flex gap-2 justify-end">
-              <button className="btn-ghost text-xs" onClick={() => setShowApproveForm(false)}>Cancel</button>
+              <button className="btn-ghost text-sm" onClick={() => setShowApproveForm(false)}>Cancel</button>
               <button
-                className="btn-primary text-xs"
+                className="btn-primary text-sm"
                 disabled={approveMut.isPending}
                 onClick={() => approveMut.mutate()}
               >
@@ -389,7 +397,13 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
+        <HuntingPackageDraft
+          record={genRecord}
+          pkgId={pkgId}
+          runId={runId}
+          pendingVerdictFor={pendingVerdictFor}
+          onStageVerdict={onStageVerdict}
+        />
       </div>
     )
   }
@@ -413,11 +427,15 @@ function HuntingPackageDraft({
   pkgId,
   runId,
   readOnly = false,
+  pendingVerdictFor,
+  onStageVerdict,
 }: {
   record: THGenerationRecord
   pkgId: string
   runId?: string
   readOnly?: boolean
+  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
   const qc = useQueryClient()
 
@@ -445,6 +463,17 @@ function HuntingPackageDraft({
     }
     return map
   }, [iocsForChips, evidenceForChips])
+
+  // issue-local-016: manual IOC verdict overrides are visible on hypothesis
+  // evidence chips as a struck-through flag, not an auto-discard — the
+  // analyst should still see an IOC WAS cited, just that it's no longer
+  // considered valid. Hunting leads only reference IOCs transitively via
+  // their hypothesis, so no separate lead-level flag is needed.
+  const iocActionByValue = useMemo(() => {
+    const map = new Map<string, string | undefined>()
+    for (const ioc of iocsForChips) map.set(ioc.ioc, ioc.action)
+    return map
+  }, [iocsForChips])
 
   const discardMut = useMutation({
     mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
@@ -474,7 +503,12 @@ function HuntingPackageDraft({
           icon={Radar}
           defaultOpen
         >
-          <RetrohuntPanel retrohunt={record.deep_retrohunt} pkgId={pkgId} />
+          <RetrohuntPanel
+            retrohunt={record.deep_retrohunt}
+            pkgId={pkgId}
+            pendingFor={!readOnly ? pendingVerdictFor : undefined}
+            onStageVerdict={!readOnly ? onStageVerdict : undefined}
+          />
         </CollapsibleSection>
       )}
 
@@ -497,21 +531,21 @@ function HuntingPackageDraft({
                   )}
                 >
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-brand-400 font-mono">{h.id}</span>
-                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', h.relevance === 'high' ? 'bg-red-900/30 text-red-400' : h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
+                    <span className="text-[11px] text-brand-400 font-mono">{h.id}</span>
+                    <span className={clsx('text-[11px] px-1.5 py-0.5 rounded', h.relevance === 'high' ? 'bg-red-900/30 text-red-400' : h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
                       {h.relevance}
                     </span>
                     {/* issue-local-015: confidence score */}
                     {h.confidence != null && (
                       <span
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400"
+                        className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400"
                         title="LLM-assessed confidence this hypothesis is correct"
                       >
                         {h.confidence}% confidence
                       </span>
                     )}
                     {h.discarded && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
                         Discarded
                       </span>
                     )}
@@ -519,24 +553,36 @@ function HuntingPackageDraft({
                   <p className={clsx('text-sm font-medium', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                     {h.title}
                   </p>
-                  <p className="text-xs text-gray-400">{h.description}</p>
-                  {h.justification && <p className="text-xs text-gray-500 italic">{h.justification}</p>}
+                  <p className="text-sm text-gray-400">{h.description}</p>
+                  {h.justification && <p className="text-sm text-gray-500 italic">{h.justification}</p>}
                   {/* issue-006-E: ioc_basis */}
                   {h.ioc_basis && h.ioc_basis.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-0.5">
-                      {h.ioc_basis.map((ioc) => (
-                        <span key={ioc} className="text-[9px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
-                          {ioc}
-                        </span>
-                      ))}
+                      {h.ioc_basis.map((ioc) => {
+                        const removed = iocActionByValue.get(ioc) === 'remove'
+                        return (
+                          <span
+                            key={ioc}
+                            className={clsx(
+                              'text-[10px] font-mono border rounded px-1',
+                              removed
+                                ? 'bg-red-950/20 text-red-500/70 border-red-900/40 line-through'
+                                : 'bg-gray-800 text-gray-400 border-gray-700',
+                            )}
+                            title={removed ? 'This IOC was manually removed and is no longer part of the sanitized set' : undefined}
+                          >
+                            {ioc}
+                          </span>
+                        )
+                      })}
                     </div>
                   )}
                   {/* issue-local-015: evidence-source cards */}
                   {evidenceLabels.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-0.5">
-                      <span className="text-[9px] text-gray-600 uppercase tracking-wider self-center mr-1">From:</span>
+                      <span className="text-[10px] text-gray-600 uppercase tracking-wider self-center mr-1">From:</span>
                       {evidenceLabels.map((label) => (
-                        <span key={label} className="text-[9px] bg-blue-900/20 text-blue-400 border border-blue-800/30 rounded px-1.5 py-0.5">
+                        <span key={label} className="text-[10px] bg-blue-900/20 text-blue-400 border border-blue-800/30 rounded px-1.5 py-0.5">
                           {label}
                         </span>
                       ))}
@@ -545,9 +591,11 @@ function HuntingPackageDraft({
                   {/* issue-006-E: suggested_actions */}
                   {h.suggested_actions && h.suggested_actions.length > 0 && (
                     <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-0.5">
-                      <p className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+                      <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
                       {h.suggested_actions.map((action, i) => (
-                        <p key={i} className="text-[10px] text-gray-400 font-mono leading-relaxed">{action}</p>
+                        <p key={i} className="text-[11px] text-gray-400 font-mono leading-relaxed">
+                          {asDisplayText(action, ['action', 'text', 'description'])}
+                        </p>
                       ))}
                     </div>
                   )}
@@ -585,13 +633,13 @@ function HuntingPackageDraft({
                 )}
               >
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] text-brand-400 font-mono">{lead.id}</span>
-                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded', lead.priority === 'high' ? 'bg-red-900/30 text-red-400' : lead.priority === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
+                  <span className="text-[11px] text-brand-400 font-mono">{lead.id}</span>
+                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded', lead.priority === 'high' ? 'bg-red-900/30 text-red-400' : lead.priority === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500')}>
                     {lead.priority}
                   </span>
                   {lead.hypothesis_id && (
                     <span
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900/20 text-brand-400 border border-brand-800/30"
+                      className="text-[11px] px-1.5 py-0.5 rounded bg-brand-900/20 text-brand-400 border border-brand-800/30"
                       title={sourceHypothesis?.title}
                     >
                       Derived from: {lead.hypothesis_id}
@@ -599,7 +647,7 @@ function HuntingPackageDraft({
                     </span>
                   )}
                   {lead.discarded && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">
                       Discarded
                     </span>
                   )}
@@ -607,14 +655,14 @@ function HuntingPackageDraft({
                 <p className={clsx('text-sm font-medium', lead.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                   {lead.title}
                 </p>
-                <p className="text-xs text-gray-400">{lead.description}</p>
+                <p className="text-sm text-gray-400">{lead.description}</p>
                 {lead.tasks && lead.tasks.length > 0 && (
                   <div className="pl-3 border-l border-gray-700 space-y-1.5 mt-2">
                     {lead.tasks.map((task: THHuntTask) => (
                       <div key={task.id}>
-                        <p className="text-xs text-gray-300 font-medium">{task.id}: {task.title}</p>
-                        <p className="text-[10px] text-gray-500">{task.description}</p>
-                        {task.query_hint && <p className="text-[10px] text-gray-600 font-mono">Hint: {task.query_hint}</p>}
+                        <p className="text-sm text-gray-300 font-medium">{task.id}: {task.title}</p>
+                        <p className="text-[11px] text-gray-500">{task.description}</p>
+                        {task.query_hint && <p className="text-[11px] text-gray-600 font-mono">Hint: {task.query_hint}</p>}
                       </div>
                     ))}
                   </div>
@@ -640,24 +688,27 @@ function HuntingPackageDraft({
         <CollapsibleSection title="Behavioral TTP Analysis" icon={Crosshair}>
           <div className="space-y-3">
             {record.ttp_analysis.summary && (
-              <p className="text-xs text-gray-300">{record.ttp_analysis.summary}</p>
+              <p className="text-sm text-gray-300">{record.ttp_analysis.summary}</p>
             )}
             {record.ttp_analysis.techniques?.map((t) => (
               <div key={t.technique_id} className="border border-gray-700 rounded p-2.5 space-y-0.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-brand-400">{t.technique_id}</span>
-                  <span className="text-[10px] text-gray-500">{t.tactic}</span>
+                  <span className="text-[11px] font-mono text-brand-400">{t.technique_id}</span>
+                  <span className="text-[11px] text-gray-500">{t.tactic}</span>
                 </div>
-                <p className="text-xs font-medium text-gray-200">{t.technique_name}</p>
-                <p className="text-[10px] text-gray-500">{t.description}</p>
+                <p className="text-sm font-medium text-gray-200">{t.technique_name}</p>
+                <p className="text-[11px] text-gray-500">{t.description}</p>
               </div>
             ))}
             {record.ttp_analysis.detection_opportunities?.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-gray-400 mb-1">Detection Opportunities:</p>
+                <p className="text-sm font-medium text-gray-400 mb-1">Detection Opportunities:</p>
                 <ul className="space-y-0.5">
                   {record.ttp_analysis.detection_opportunities.map((opp, i) => (
-                    <li key={i} className="text-xs text-gray-500 flex gap-1.5"><span className="text-brand-600">•</span>{opp}</li>
+                    <li key={i} className="text-sm text-gray-500 flex gap-1.5">
+                      <span className="text-brand-600">•</span>
+                      {asDisplayText(opp, ['description', 'text', 'detail'])}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -673,11 +724,11 @@ function HuntingPackageDraft({
             {record.query_drafts.map((q: THQueryDraft) => (
               <div key={q.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-mono uppercase">{q.language}</span>
-                  <p className="text-xs font-medium text-gray-200">{q.title}</p>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-mono uppercase">{q.language}</span>
+                  <p className="text-sm font-medium text-gray-200">{q.title}</p>
                 </div>
-                {q.description && <p className="text-[10px] text-gray-500">{q.description}</p>}
-                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-[10px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{asQueryText(q.query)}</pre>
+                {q.description && <p className="text-[11px] text-gray-500">{q.description}</p>}
+                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-[11px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{asQueryText(q.query)}</pre>
               </div>
             ))}
           </div>
@@ -687,9 +738,9 @@ function HuntingPackageDraft({
       {/* Errors */}
       {record.generation_errors && record.generation_errors.length > 0 && (
         <div className="rounded-lg border border-amber-800/40 bg-amber-900/10 p-3 space-y-1">
-          <p className="text-xs font-medium text-amber-400">Generation warnings:</p>
+          <p className="text-sm font-medium text-amber-400">Generation warnings:</p>
           {record.generation_errors.map((e: string, i: number) => (
-            <p key={i} className="text-[10px] text-amber-500">• {e}</p>
+            <p key={i} className="text-[11px] text-amber-500">• {e}</p>
           ))}
         </div>
       )}
@@ -702,7 +753,7 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
     return (
       <div className="card space-y-2">
         <p className="text-sm font-semibold text-gray-200">Threat Context</p>
-        <p className="text-xs text-gray-500 whitespace-pre-wrap">{String(ctx.raw_response || '')}</p>
+        <p className="text-sm text-gray-500 whitespace-pre-wrap">{String(ctx.raw_response || '')}</p>
       </div>
     )
   }
@@ -714,18 +765,21 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
   return (
     <div className="card space-y-3">
       <p className="text-sm font-semibold text-gray-200">Threat Context</p>
-      {summary      && <p className="text-xs text-gray-300">{summary}</p>}
-      <div className="grid grid-cols-2 gap-2 text-xs">
+      {summary      && <p className="text-sm text-gray-300">{summary}</p>}
+      <div className="grid grid-cols-2 gap-2 text-sm">
         {threatActor  && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{threatActor}</span></div>}
         {campaignName && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-300">{campaignName}</span></div>}
         {confidence   && <div><span className="text-gray-500">Confidence: </span><span className={clsx(confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>{confidence}</span></div>}
       </div>
       {Array.isArray(ctx.key_observations) && ctx.key_observations.length > 0 && (
         <div>
-          <p className="text-[10px] text-gray-500 font-medium mb-1">Key observations:</p>
+          <p className="text-[11px] text-gray-500 font-medium mb-1">Key observations:</p>
           <ul className="space-y-0.5">
-            {(ctx.key_observations as string[]).map((obs, i) => (
-              <li key={i} className="text-[10px] text-gray-400 flex gap-1.5"><span className="text-brand-600">•</span>{obs}</li>
+            {(ctx.key_observations as unknown[]).map((obs, i) => (
+              <li key={i} className="text-[11px] text-gray-400 flex gap-1.5">
+                <span className="text-brand-600">•</span>
+                {asDisplayText(obs, ['observation', 'text', 'description', 'summary'])}
+              </li>
             ))}
           </ul>
         </div>

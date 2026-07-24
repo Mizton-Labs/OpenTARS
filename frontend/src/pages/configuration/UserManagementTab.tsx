@@ -296,6 +296,9 @@ function CreateUserForm({
           onChange={(e) => setConfirm(e.target.value)}
         />
       </div>
+      <p className="text-xs text-gray-500">
+        The new user will be required to set their own password on first login.
+      </p>
       {username !== '' && !usernameValid && (
         <p className="text-xs text-red-400">
           Username must be 1–40 chars of letters, digits, &apos;.&apos;, &apos;_&apos; or &apos;-&apos;.

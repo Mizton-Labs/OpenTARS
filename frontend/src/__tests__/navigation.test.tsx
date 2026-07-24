@@ -194,6 +194,27 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
     renderSidebar(undefined, '/')
     expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument()
   })
+
+  it('groups Threat Intel + Threat Hunting in one bordered container, separate from Home and utility items', () => {
+    renderSidebar(undefined, '/')
+    const moduleGroup = document.querySelector('.nav-module-group')
+    expect(moduleGroup).not.toBeNull()
+    // The two module sections' links live inside the group...
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /^viewer$/i }))).toBe(true)
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /threat hunting/i }))).toBe(true)
+    // ...while Home and the utility items do not.
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /^home$/i }))).toBe(false)
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /configuration/i }))).toBe(false)
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /about/i }))).toBe(false)
+  })
+
+  it('keeps the module group present (icon-only) when collapsed', () => {
+    renderSidebar(undefined, '/')
+    fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }))
+    const moduleGroup = document.querySelector('.nav-module-group')
+    expect(moduleGroup).not.toBeNull()
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /threat hunting/i }))).toBe(true)
+  })
 })
 
 describe('Index route redirects to "viewer" (prompts-019)', () => {

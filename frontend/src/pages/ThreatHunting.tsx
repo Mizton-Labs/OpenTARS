@@ -3,7 +3,7 @@
  *
  * Phase/arrow card improvements (issue-008 review):
  *   1. Live refresh — polls every 4s while any package is running; stops when idle.
- *   2. Bigger cards — text-[11px], px-2.5 py-1.5, min-w-[68px].
+ *   2. Bigger cards — text-[12px], px-2.5 py-1.5, min-w-[68px].
  *   3. Visible status colors — stronger contrast: bright green/red/blue/amber/gray
  *      with a per-card status glyph (✓ · ✕ · ⟳ · ⊘ · ⋯) for color-independent scanning.
  *   4. Fixed active-step detection — keep last entry per step (handles parallel fan-out
@@ -14,16 +14,18 @@
  *   6. 2-theme system (Classic / Modern) stored in localStorage (Part 3b).
  *   7. Delete/archive confirmation dialog (Part 4).
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Shield, Trash2, ChevronRight, Timer, Copy, UserCircle } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THuntPackage, type THPhaseEntry } from '../api/client'
+import { api, type THuntPackage, type THPhaseEntry, type THuntPackageRun } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import HuntPackageWizard from './threat-hunting/HuntPackageWizard'
 import HuntDetail from './threat-hunting/HuntDetail'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useHuntTheme, type HuntTheme } from './threat-hunting/useHuntTheme'
+import { useHuntDensity, type HuntDensity } from './threat-hunting/useHuntDensity'
+import RunStatusBadge from './threat-hunting/RunStatusBadge'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -174,10 +176,10 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
             </span>
           </div>
 
-          {/* Status word + elapsed — Part 3a: text-[10px] mt-0.5 */}
+          {/* Status word + elapsed — Part 3a: text-[11px] mt-0.5 */}
           <div className="flex items-center justify-center gap-1.5 mt-0.5">
             <span className={clsx(
-              'text-[10px] font-normal leading-none',
+              'text-[11px] font-normal leading-none',
               isActive ? 'text-blue-300' :
               isDone ? isPartial ? 'text-amber-400' : 'text-green-400' :
               isError ? 'text-red-400' :
@@ -187,25 +189,25 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
               {statusWord}
             </span>
             {phase?.elapsed_s != null && phase.elapsed_s > 0 && (
-              <span className="text-[10px] font-mono opacity-60 leading-none">
+              <span className="text-[11px] font-mono opacity-60 leading-none">
                 {phase.elapsed_s}s
               </span>
             )}
           </div>
         </div>
 
-        {/* ── Inline detail (done steps only) — Part 3a: max-w-[112px] text-[10px] ── */}
+        {/* ── Inline detail (done steps only) — Part 3a: max-w-[112px] text-[11px] ── */}
         {isDone && (hasCounts || hasTools) && (
           <div className="mt-1 space-y-0.5 max-w-[112px]" onClick={(e) => e.stopPropagation()}>
             {hasCounts && (
               <div className="flex flex-wrap gap-0.5">
                 {phase!.item_count != null && (
-                  <span className="text-[10px] font-mono text-brand-400 leading-none">
+                  <span className="text-[11px] font-mono text-brand-400 leading-none">
                     {phase!.item_count} items
                   </span>
                 )}
                 {phase!.ioc_count != null && (
-                  <span className="text-[10px] font-mono text-blue-400 leading-none">
+                  <span className="text-[11px] font-mono text-blue-400 leading-none">
                     {phase!.ioc_count} IOC{phase!.noisy_count ? ` (${phase!.noisy_count}⚠)` : ''}
                   </span>
                 )}
@@ -216,7 +218,7 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
                 {[...new Set(phase!.tools_used!)].map((t) => (
                   <span
                     key={t}
-                    className="text-[10px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
+                    className="text-[11px] font-mono bg-purple-900/50 text-purple-300 border border-purple-700/50 rounded px-1 leading-none"
                     title={t}
                   >
                     {t.replace(/_/g, ' ')}
@@ -236,12 +238,25 @@ function PhaseCard({ phase, stepId, currentStep, isLast, theme }: PhaseCardProps
   )
 }
 
+/**
+ * The subset of a run's fields ProcessArrow needs to render its stage rail —
+ * issue-local-016: extracted from `THuntPackage` directly so the parent can
+ * resolve "which run is selected" (defaulting to the latest) and pass THAT
+ * run's data down, independent of how many runs a package has.
+ */
+export interface ProcessArrowRunData {
+  phases: THPhaseEntry[] | null | undefined
+  generation_status: string | null | undefined
+  total_elapsed_s: number | null | undefined
+  run_created_at: string | null | undefined
+}
+
 interface ProcessArrowProps {
-  pkg: THuntPackage
+  run: ProcessArrowRunData
   theme: HuntTheme
 }
 
-function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
+function ProcessArrow({ run: pkg, theme }: ProcessArrowProps) {
   // fix: keep the LAST entry per step so a re-run ok overrides an earlier error,
   // and parallel steps (threat_context_builder / deep_retrohunt_planner) both appear.
   const phaseByStep: Record<string, THPhaseEntry> = {}
@@ -285,7 +300,7 @@ function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
       {pkg.generation_status && (
         <div className="flex items-center gap-1.5 mb-1.5">
           <span className={clsx(
-            'text-[9px] font-mono px-1.5 py-0.5 rounded font-semibold',
+            'text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold',
             pkg.generation_status === 'completed'
               ? 'bg-green-900/30 text-green-400 border border-green-700/40'
               : pkg.generation_status === 'running'
@@ -304,12 +319,12 @@ function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
           </span>
 
           {isRunning && liveElapsed != null ? (
-            <span className="flex items-center gap-0.5 text-[9px] text-blue-300 font-mono">
+            <span className="flex items-center gap-0.5 text-[10px] text-blue-300 font-mono">
               <Timer className="w-2.5 h-2.5" />
               {liveElapsed}s
             </span>
           ) : pkg.total_elapsed_s != null && !isRunning ? (
-            <span className="flex items-center gap-0.5 text-[9px] text-gray-500 font-mono">
+            <span className="flex items-center gap-0.5 text-[10px] text-gray-500 font-mono">
               <Timer className="w-2.5 h-2.5" />
               {pkg.total_elapsed_s}s total
             </span>
@@ -332,8 +347,153 @@ function ProcessArrow({ pkg, theme }: ProcessArrowProps) {
       </div>
 
       {!hasAnyData && (
-        <p className="text-[9px] text-gray-600 mt-1">No analysis run yet</p>
+        <p className="text-[10px] text-gray-600 mt-1">No analysis run yet</p>
       )}
+    </div>
+  )
+}
+
+// Outer card classes for the two card-color themes (Classic / Modern) — module
+// scope since they're static, shared by PackageCard below.
+const MODERN_CARD = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
+const CLASSIC_CARD = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
+
+/**
+ * One hunt-package list card (issue-local-016: extracted from the inline
+ * `.map()` body so each card can own its own "which run is selected" state
+ * — the run-chip row is a per-run selector, defaulting to the latest run,
+ * that drives which run's stage rail ProcessArrow renders).
+ */
+function PackageCard({
+  pkg,
+  theme,
+  density,
+  isResearcher,
+  onSelect,
+  onClone,
+  onArchive,
+}: {
+  pkg: THuntPackage
+  theme: HuntTheme
+  density: HuntDensity
+  isResearcher: boolean
+  onSelect: () => void
+  onClone: () => void
+  onArchive: () => void
+}) {
+  const runs = useMemo(() => pkg.runs ?? [], [pkg.runs])
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(runs[0]?.id)
+
+  // Default to the latest run whenever there's no valid selection yet (first
+  // render, or the previously-selected run disappeared from a refetch).
+  useEffect(() => {
+    if (runs.length > 0 && (!selectedRunId || !runs.some((r) => r.id === selectedRunId))) {
+      setSelectedRunId(runs[0].id)
+    }
+  }, [runs, selectedRunId])
+
+  const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0]
+  const resolvedRun: ProcessArrowRunData = selectedRun
+    ? {
+        phases: selectedRun.phases,
+        generation_status: selectedRun.generation_status,
+        total_elapsed_s: selectedRun.total_elapsed_s,
+        run_created_at: selectedRun.created_at,
+      }
+    : {
+        phases: pkg.phases,
+        generation_status: pkg.generation_status,
+        total_elapsed_s: pkg.total_elapsed_s,
+        run_created_at: pkg.run_created_at,
+      }
+
+  return (
+    <div
+      className={theme === 'modern' ? MODERN_CARD : CLASSIC_CARD}
+      onClick={onSelect}
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
+            <span className={clsx('badge text-[11px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+              {pkg.status}
+            </span>
+            {pkg.generation_status && pkg.generation_status !== 'completed' && (
+              <span className="badge text-[10px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
+                {pkg.generation_status.replace(/_/g, ' ')}
+              </span>
+            )}
+          </div>
+          {pkg.description && (
+            <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
+          )}
+          <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+            <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
+            <span>·</span>
+            <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
+            {pkg.created_by && (
+              <span className="flex items-center gap-0.5">
+                <UserCircle className="w-3 h-3" />
+                {pkg.created_by}
+              </span>
+            )}
+          </p>
+
+          {/* issue-local-016: per-run compact status chips — shown whenever a
+              package has more than one run, in BOTH density modes (this is
+              the actual payoff of the multi-run feature; only the heavier
+              stage rail below is gated by density). Clicking a chip selects
+              that run for this card's stage rail. */}
+          {runs.length > 1 && (
+            <div
+              className="flex items-end gap-1.5 mt-2 border-b border-gray-700 flex-wrap"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold pb-2 shrink-0">
+                Runs
+              </span>
+              {runs.map((run: THuntPackageRun) => (
+                <RunStatusBadge
+                  key={run.id}
+                  run={run}
+                  active={run.id === selectedRun?.id}
+                  onClick={() => setSelectedRunId(run.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {density === 'detailed' && <ProcessArrow run={resolvedRun} theme={theme} />}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isResearcher && (
+            <>
+              <button
+                className="btn-ghost p-1.5 text-gray-600 hover:text-brand-400"
+                title="Clone hunt package"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onClone()
+                }}
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+              <button
+                className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
+                title="Archive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onArchive()
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <ChevronRight className="w-4 h-4 text-gray-600" />
+        </div>
+      </div>
     </div>
   )
 }
@@ -366,6 +526,9 @@ export default function ThreatHunting() {
 
   // Part 3b: theme
   const { theme, setTheme } = useHuntTheme()
+  // issue-local-016: compact/detailed density — independent of the card
+  // color-theme toggle above.
+  const { density, setDensity } = useHuntDensity()
 
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ['th-packages'],
@@ -406,10 +569,6 @@ export default function ThreatHunting() {
     )
   }
 
-  // Modern theme outer card classes
-  const modernCard = 'bg-gray-900/60 border border-gray-700/50 rounded-xl p-4 cursor-pointer hover:bg-gray-800/40 hover:border-gray-600 transition-all shadow-sm'
-  const classicCard = 'card cursor-pointer hover:bg-gray-800/60 transition-colors'
-
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -421,7 +580,7 @@ export default function ThreatHunting() {
         </div>
         <div className="flex items-center gap-3">
           {/* Part 3b: Theme toggle segmented control */}
-          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-xs">
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
             <button
               className={clsx(
                 'px-2.5 py-1.5 transition-colors',
@@ -445,6 +604,36 @@ export default function ThreatHunting() {
               title="Modern theme"
             >
               Modern
+            </button>
+          </div>
+          {/* issue-local-016: Compact/Detailed density toggle — independent
+              of the Classic/Modern card-color toggle above. Compact hides
+              the per-stage ProcessArrow rail; the per-run chip row (when a
+              package has multiple runs) shows in both modes. */}
+          <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'detailed'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('detailed')}
+              title="Detailed view"
+            >
+              Detailed
+            </button>
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'compact'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('compact')}
+              title="Compact view"
+            >
+              Compact
             </button>
           </div>
           {isResearcher && (
@@ -471,73 +660,16 @@ export default function ThreatHunting() {
       ) : (
         <div className="space-y-2">
           {packages.map((pkg: THuntPackage) => (
-            <div
+            <PackageCard
               key={pkg.id}
-              className={theme === 'modern' ? modernCard : classicCard}
-              onClick={() => setSelectedId(pkg.id)}
-            >
-              <div className="flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                   <div className="flex items-center gap-2 flex-wrap">
-                     {/* Part 3a: text-base font-semibold */}
-                     <p className="text-base font-semibold text-gray-100 truncate">{pkg.name}</p>
-                     <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
-                       {pkg.status}
-                     </span>
-                     {pkg.generation_status && pkg.generation_status !== 'completed' && (
-                       <span className="badge text-[9px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">
-                         {pkg.generation_status.replace(/_/g, ' ')}
-                       </span>
-                     )}
-                   </div>
-                   {/* Part 3a: text-sm text-gray-400 */}
-                   {pkg.description && (
-                     <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
-                   )}
-                   {/* Part 3a: text-xs text-gray-500; Part 5: created_by */}
-                   <p className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
-                     <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
-                     <span>·</span>
-                     <span>{new Date(pkg.created_at).toLocaleDateString()}</span>
-                     {pkg.created_by && (
-                       <span className="flex items-center gap-0.5">
-                         <UserCircle className="w-3 h-3" />
-                         {pkg.created_by}
-                       </span>
-                     )}
-                   </p>
-                  <ProcessArrow pkg={pkg} theme={theme} />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {isResearcher && (
-                    <>
-                      {/* Part 3b: Clone button */}
-                      <button
-                        className="btn-ghost p-1.5 text-gray-600 hover:text-brand-400"
-                        title="Clone hunt package"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setCloneTarget({ id: pkg.id, originalName: pkg.name, newName: `Copy of ${pkg.name}` })
-                        }}
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="btn-ghost p-1.5 text-gray-600 hover:text-red-400"
-                        title="Archive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })
-                        }}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                  <ChevronRight className="w-4 h-4 text-gray-600" />
-                </div>
-              </div>
-            </div>
+              pkg={pkg}
+              theme={theme}
+              density={density}
+              isResearcher={isResearcher}
+              onSelect={() => setSelectedId(pkg.id)}
+              onClone={() => setCloneTarget({ id: pkg.id, originalName: pkg.name, newName: `Copy of ${pkg.name}` })}
+              onArchive={() => setConfirmTarget({ id: pkg.id, type: 'archive', label: pkg.name })}
+            />
           ))}
         </div>
       )}
@@ -579,7 +711,7 @@ export default function ThreatHunting() {
               autoFocus
             />
             {cloneMut.isError && (
-              <p className="text-xs text-red-400">
+              <p className="text-sm text-red-400">
                 Clone failed: {cloneMut.error instanceof Error ? cloneMut.error.message : String(cloneMut.error)}
               </p>
             )}

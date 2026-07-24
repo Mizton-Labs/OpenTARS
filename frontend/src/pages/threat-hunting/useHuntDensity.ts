@@ -1,0 +1,35 @@
+/**
+ * useHuntDensity — compact/detailed density selector for the Threat Hunting
+ * list view (issue-local-016). Persists the user's choice in localStorage
+ * under 'sfi.th.cardDensity'. Independent of useHuntTheme (that toggle
+ * controls card COLOR STYLE — Classic vs Modern — this one controls how
+ * much per-card detail renders — the 16-step stage rail hides in 'compact').
+ */
+import { useState, useEffect } from 'react'
+
+export type HuntDensity = 'compact' | 'detailed'
+
+const STORAGE_KEY = 'sfi.th.cardDensity'
+const DEFAULT_DENSITY: HuntDensity = 'detailed'
+
+export function useHuntDensity(): { density: HuntDensity; setDensity: (d: HuntDensity) => void } {
+  const [density, setDensityState] = useState<HuntDensity>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored === 'compact' || stored === 'detailed') return stored
+    } catch {
+      // ignore
+    }
+    return DEFAULT_DENSITY
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, density)
+    } catch {
+      // ignore
+    }
+  }, [density])
+
+  return { density, setDensity: setDensityState }
+}

@@ -89,8 +89,8 @@ export default function AddEvidenceModal({
           <button className="btn-ghost p-1.5" onClick={onClose}><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
-          {error && <p className="text-xs text-red-400 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" />{error}</p>}
-          {added && <p className="text-xs text-green-400 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" />Added: {added.label}</p>}
+          {error && <p className="text-sm text-red-400 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" />{error}</p>}
+          {added && <p className="text-sm text-green-400 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" />Added: {added.label}</p>}
 
           {!addMode && (
             <div className="grid grid-cols-2 gap-2">
@@ -123,7 +123,7 @@ export default function AddEvidenceModal({
               {files.length > 0 && (
                 <div className="space-y-1">
                   {files.map((f, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs text-gray-400">
+                    <div key={i} className="flex items-center justify-between text-sm text-gray-400">
                       <span className="truncate flex-1">{f.name}</span>
                       <span className="text-gray-600 ml-2 shrink-0">
                         {f.size >= 1_048_576 ? `${(f.size / 1_048_576).toFixed(1)} MB` : `${(f.size / 1024).toFixed(0)} KB`}
@@ -137,7 +137,7 @@ export default function AddEvidenceModal({
                   <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
                     <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${uploadProgress.pct}%` }} />
                   </div>
-                  <p className="text-[10px] text-gray-500">Uploading… {uploadProgress.pct}%</p>
+                  <p className="text-[11px] text-gray-500">Uploading… {uploadProgress.pct}%</p>
                 </div>
               )}
               <select
@@ -156,7 +156,7 @@ export default function AddEvidenceModal({
                 </option>
               </select>
               {parserMode === 'docling' && !doclingAvailable && (
-                <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
+                <div className="flex items-center gap-1.5 text-[11px] text-amber-400">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
                   Docling is not yet installed — selection will fall back to PyMuPDF.
                   Restart the app to trigger installation.
@@ -173,7 +173,7 @@ export default function AddEvidenceModal({
           {addMode === 'text' && (
             <div className="space-y-3">
               <input className="input w-full text-sm" placeholder="Label (optional)" value={textLabel} onChange={(e) => setTextLabel(e.target.value)} />
-              <textarea className="input w-full h-32 resize-none font-mono text-xs" placeholder="Paste threat intel, IOCs, notes..." value={text} onChange={(e) => setText(e.target.value)} />
+              <textarea className="input w-full h-32 resize-none font-mono text-sm" placeholder="Paste threat intel, IOCs, notes..." value={text} onChange={(e) => setText(e.target.value)} />
             </div>
           )}
           {addMode === 'watcher' && (

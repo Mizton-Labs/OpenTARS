@@ -62,9 +62,14 @@ describe('About page (prompts-051)', () => {
     expect(screen.getByText('Git Commit')).toBeInTheDocument()
     expect(screen.getByText('Git Branch')).toBeInTheDocument()
     // vitest runs with the same vite.config.ts `define` as a real build, so
-    // __GIT_BRANCH__ falls back to its 'unknown' default (no GIT_BRANCH env
-    // var set for the test runner) — assert the fallback renders, not a
-    // blank/undefined value.
-    expect(screen.getByText('unknown')).toBeInTheDocument()
+    // __GIT_BRANCH__/__GIT_COMMIT_DATE__ both fall back to their 'unknown'
+    // default (no GIT_BRANCH/GIT_COMMIT_DATE env vars set for the test
+    // runner) — assert both fallbacks render, not a blank/undefined value.
+    expect(screen.getAllByText('unknown')).toHaveLength(2)
+  })
+
+  it('shows the commit date alongside the commit', () => {
+    renderAbout()
+    expect(screen.getByText('Commit Date')).toBeInTheDocument()
   })
 })

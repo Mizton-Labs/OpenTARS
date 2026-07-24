@@ -29,6 +29,7 @@ import {
   Ban,
 } from 'lucide-react'
 import type { THDeepRetrohuntLead, THSanitizedIOC } from '../../api/client'
+import IocVerdictToggle, { type IocVerdict } from './IocVerdictToggle'
 
 // Must match NOISE_THRESHOLD / HIGH_NOISE_THRESHOLD in backend/threat_hunting/iocs.py.
 const NOISE_THRESHOLD = 0.7
@@ -47,7 +48,7 @@ function NoiseBar({ score }: { score: number }) {
       </div>
       <span
         className={clsx(
-          'text-[10px] tabular-nums',
+          'text-[11px] tabular-nums',
           score >= HIGH_NOISE_THRESHOLD ? 'text-red-400' : score >= NOISE_THRESHOLD ? 'text-amber-400' : 'text-green-400',
         )}
       >
@@ -60,18 +61,18 @@ function NoiseBar({ score }: { score: number }) {
 function NoiseBadge({ score }: { score: number }) {
   if (score >= HIGH_NOISE_THRESHOLD)
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 border border-red-800/40">
+      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 border border-red-800/40">
         <ShieldAlert className="w-3 h-3" /> High Noise
       </span>
     )
   if (score >= NOISE_THRESHOLD)
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/40">
+      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/40">
         <AlertTriangle className="w-3 h-3" /> Noisy
       </span>
     )
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400 border border-green-800/30">
+    <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400 border border-green-800/30">
       <CheckCircle className="w-3 h-3" /> Clean
     </span>
   )
@@ -93,7 +94,7 @@ function IOCTypeChip({ type }: { type: string }) {
   return (
     <span
       className={clsx(
-        'text-[10px] font-mono px-1.5 py-0.5 rounded',
+        'text-[11px] font-mono px-1.5 py-0.5 rounded',
         colors[type] ?? 'bg-gray-800 text-gray-400',
       )}
     >
@@ -102,12 +103,25 @@ function IOCTypeChip({ type }: { type: string }) {
   )
 }
 
-function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
-  const removed = ioc.action === 'remove'
+function IOCRow({
+  ioc,
+  pendingFor,
+  onStageVerdict,
+}: {
+  ioc: THSanitizedIOC
+  /** When provided (together with onStageVerdict), the Action column becomes
+   *  an interactive Keep/Remove toggle instead of the static noise/removed
+   *  badge — omitted for read-only draft views. */
+  pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
+}) {
+  const serverValue: IocVerdict = ioc.action ?? 'keep'
+  const removed = serverValue === 'remove'
   // Removed IOCs default to expanded — the rationale for removal must be
   // fully visible, not hidden behind a click (issue-local-015 feedback).
   const [expanded, setExpanded] = useState(removed)
   const hasReasons = ioc.noise_reasons.length > 0
+  const interactive = !!onStageVerdict
 
   return (
     <>
@@ -139,7 +153,7 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
         </td>
         {/* IOC value */}
         <td className="py-1.5 pr-2">
-          <span className={clsx('font-mono text-[11px] break-all', removed ? 'text-gray-500 line-through' : 'text-gray-200')}>
+          <span className={clsx('font-mono text-[12px] break-all', removed ? 'text-gray-500 line-through' : 'text-gray-200')}>
             {ioc.ioc}
           </span>
         </td>
@@ -149,17 +163,17 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
         </td>
         {/* Description */}
         <td className="py-1.5 pr-2 max-w-[200px]">
-          <span className="text-[11px] text-gray-400 truncate block">{ioc.ioc_description || '—'}</span>
+          <span className="text-[12px] text-gray-400 truncate block">{ioc.ioc_description || '—'}</span>
         </td>
         {/* Search token */}
         <td className="py-1.5 pr-2">
-          <span className="font-mono text-[10px] text-brand-400 break-all">{ioc.search_token}</span>
+          <span className="font-mono text-[11px] text-brand-400 break-all">{ioc.search_token}</span>
         </td>
         {/* Noise / Action */}
         <td className="py-1.5 pr-2 whitespace-nowrap">
           <div className="flex items-center gap-2">
             {removed ? (
-              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 border border-red-800/40">
+              <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 border border-red-800/40">
                 <Ban className="w-3 h-3" /> Removed
               </span>
             ) : (
@@ -167,6 +181,13 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
                 <NoiseBar score={ioc.noise_score} />
                 <NoiseBadge score={ioc.noise_score} />
               </>
+            )}
+            {interactive && (
+              <IocVerdictToggle
+                value={serverValue}
+                pending={pendingFor?.(ioc.ioc, ioc.ioc_type)}
+                onChange={(next) => onStageVerdict?.(ioc.ioc, ioc.ioc_type, next, serverValue)}
+              />
             )}
           </div>
         </td>
@@ -181,7 +202,7 @@ function IOCRow({ ioc }: { ioc: THSanitizedIOC }) {
                 <li
                   key={i}
                   className={clsx(
-                    'text-[10px] flex gap-1.5',
+                    'text-[11px] flex gap-1.5',
                     removed ? 'text-red-300' : 'text-amber-400',
                   )}
                 >
@@ -242,11 +263,11 @@ function SplDraftBlock({
       {open && (
         <div className="p-4">
           {draft ? (
-            <pre className="bg-gray-950 border border-gray-800 rounded p-3 text-[11px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+            <pre className="bg-gray-950 border border-gray-800 rounded p-3 text-[12px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
               {draft}
             </pre>
           ) : (
-            <p className="text-xs text-gray-500 italic">
+            <p className="text-sm text-gray-500 italic">
               SPL draft unavailable — LLM enrichment failed or LLM is disabled.
             </p>
           )}
@@ -261,21 +282,28 @@ function SplDraftBlock({
 export default function RetrohuntPanel({
   retrohunt,
   pkgId,
+  pendingFor,
+  onStageVerdict,
 }: {
   retrohunt: THDeepRetrohuntLead
   pkgId: string
+  /** When provided (together with onStageVerdict), each row gets an
+   *  interactive Keep/Remove toggle — omitted for read-only draft views. */
+  pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
+  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
 }) {
-  // issue-local-015: default view is the actionable set (what actually
-  // feeds the SPL query) — 'removed' (action=='remove', excluded by this
-  // run's IOC active-cleaning config) is opt-in via the selector, not mixed
-  // into "all" by default. Noise level is already visible per-row via the
+  // issue-local-016: default view is the actionable set ('sanitized' — what
+  // actually feeds the SPL query). 'all' is a true union of every IOC seen,
+  // 'removed' is opt-in. Noise level is already visible per-row via the
   // NoiseBar/NoiseBadge, so a separate 'noisy' filter tab is redundant.
-  const [iocFilter, setIocFilter] = useState<'all' | 'removed'>('all')
+  const [iocFilter, setIocFilter] = useState<'all' | 'sanitized' | 'removed'>('sanitized')
 
   const removedIocs = retrohunt.sanitized_iocs.filter((ioc) => ioc.action === 'remove')
-  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) =>
-    iocFilter === 'removed' ? ioc.action === 'remove' : ioc.action !== 'remove',
-  )
+  const filteredIocs = retrohunt.sanitized_iocs.filter((ioc) => {
+    if (iocFilter === 'removed') return ioc.action === 'remove'
+    if (iocFilter === 'sanitized') return ioc.action !== 'remove'
+    return true
+  })
 
   return (
     <div className="space-y-5">
@@ -284,12 +312,12 @@ export default function RetrohuntPanel({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-sm font-semibold text-gray-200">Deep Retrohunt Lead</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-sm text-gray-500 mt-0.5">
               Sanitized IOC list ready for retrohunt execution against your SIEM.
             </p>
           </div>
           <button
-            className="btn-secondary text-xs flex items-center gap-1.5 shrink-0"
+            className="btn-secondary text-sm flex items-center gap-1.5 shrink-0"
             onClick={() => downloadCsv(retrohunt.ioc_csv, `retrohunt-iocs-${pkgId.slice(0, 8)}.csv`)}
             title="Download canonical IOC CSV"
           >
@@ -300,26 +328,26 @@ export default function RetrohuntPanel({
 
         {/* Stats chips */}
         <div className="flex flex-wrap gap-2">
-          <span className="text-[11px] px-2 py-1 rounded bg-gray-800 text-gray-300">
+          <span className="text-[12px] px-2 py-1 rounded bg-gray-800 text-gray-300">
             Sanitized IOCs: <span className="font-semibold text-gray-100">{retrohunt.total_ioc_count}</span>
           </span>
           {retrohunt.noisy_ioc_count > 0 && (
-            <span className="text-[11px] px-2 py-1 rounded bg-amber-900/30 text-amber-400">
+            <span className="text-[12px] px-2 py-1 rounded bg-amber-900/30 text-amber-400">
               Noisy (≥{Math.round(NOISE_THRESHOLD * 100)}%): <span className="font-semibold">{retrohunt.noisy_ioc_count}</span>
             </span>
           )}
           {retrohunt.high_noise_ioc_count > 0 && (
-            <span className="text-[11px] px-2 py-1 rounded bg-red-900/30 text-red-400">
+            <span className="text-[12px] px-2 py-1 rounded bg-red-900/30 text-red-400">
               High Noise (≥{Math.round(HIGH_NOISE_THRESHOLD * 100)}%): <span className="font-semibold">{retrohunt.high_noise_ioc_count}</span>
             </span>
           )}
           {removedIocs.length > 0 && (
-            <span className="text-[11px] px-2 py-1 rounded bg-gray-800 text-gray-500">
+            <span className="text-[12px] px-2 py-1 rounded bg-gray-800 text-gray-500">
               Removed (active cleaning): <span className="font-semibold">{removedIocs.length}</span>
             </span>
           )}
           {retrohunt.llm_parse_error && (
-            <span className="text-[11px] px-2 py-1 rounded bg-amber-900/30 text-amber-400 flex items-center gap-1">
+            <span className="text-[12px] px-2 py-1 rounded bg-amber-900/30 text-amber-400 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" /> LLM enrichment unavailable
             </span>
           )}
@@ -329,7 +357,7 @@ export default function RetrohuntPanel({
         {retrohunt.search_hint && (
           <div className="flex gap-2 p-2.5 rounded-lg bg-brand-900/20 border border-brand-800/30">
             <Search className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
-            <p className="text-xs text-gray-300">{retrohunt.search_hint}</p>
+            <p className="text-sm text-gray-300">{retrohunt.search_hint}</p>
           </div>
         )}
       </div>
@@ -338,15 +366,17 @@ export default function RetrohuntPanel({
       {retrohunt.sanitized_iocs.length > 0 && (
         <div className="card space-y-3">
           <div className="flex items-center justify-between gap-4">
-            <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
               Sanitized IOCs ({filteredIocs.length}/{retrohunt.sanitized_iocs.length})
             </h4>
-            {/* Filter buttons — default 'all' (actionable set); 'removed'
-                is opt-in, not folded into a misleading 'all' bucket. */}
+            {/* Filter buttons — default 'sanitized' (actionable set that
+                feeds the SPL query); 'all' is a true union, 'removed' is
+                opt-in — no bucket is a misleading mix of the other two. */}
             <div className="flex gap-1">
               {(
                 [
                   ['all', 'All'],
+                  ['sanitized', 'Sanitized'],
                   ['removed', `Removed${removedIocs.length ? ` (${removedIocs.length})` : ''}`],
                 ] as const
               ).map(([f, label]) => (
@@ -354,7 +384,7 @@ export default function RetrohuntPanel({
                   key={f}
                   onClick={() => setIocFilter(f)}
                   className={clsx(
-                    'text-[10px] px-2 py-0.5 rounded transition-colors',
+                    'text-[11px] px-2 py-0.5 rounded transition-colors',
                     iocFilter === f
                       ? 'bg-brand-600/30 text-brand-300 border border-brand-700/40'
                       : 'text-gray-500 hover:text-gray-300',
@@ -369,7 +399,7 @@ export default function RetrohuntPanel({
           <div className="overflow-x-auto rounded-lg border border-gray-800">
             <table className="w-full min-w-[640px]">
               <thead>
-                <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+                <tr className="bg-gray-800/50 text-[11px] uppercase tracking-wider text-gray-500">
                   <th className="w-6 pl-2 py-2" />
                   <th className="text-left py-2 pr-2">IOC</th>
                   <th className="text-left py-2 pr-2">Type</th>
@@ -380,10 +410,17 @@ export default function RetrohuntPanel({
               </thead>
               <tbody>
                 {filteredIocs.length > 0 ? (
-                  filteredIocs.map((ioc, i) => <IOCRow key={`${ioc.ioc_type}-${ioc.ioc}-${i}`} ioc={ioc} />)
+                  filteredIocs.map((ioc, i) => (
+                    <IOCRow
+                      key={`${ioc.ioc_type}-${ioc.ioc}-${i}`}
+                      ioc={ioc}
+                      pendingFor={pendingFor}
+                      onStageVerdict={onStageVerdict}
+                    />
+                  ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="py-4 text-center text-xs text-gray-500 italic">
+                    <td colSpan={6} className="py-4 text-center text-sm text-gray-500 italic">
                       No IOCs match the current filter.
                     </td>
                   </tr>
@@ -395,7 +432,7 @@ export default function RetrohuntPanel({
           {retrohunt.high_noise_ioc_count > 0 && (
             <div className="flex gap-2 p-2.5 rounded-lg bg-red-900/10 border border-red-800/30">
               <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-red-300">
+              <p className="text-sm text-red-300">
                 <span className="font-semibold">{retrohunt.high_noise_ioc_count} high-noise IOC{retrohunt.high_noise_ioc_count !== 1 ? 's' : ''}</span>
                 {' '}flagged. Review analyst notes and consider excluding them from SIEM execution to
                 prevent alert storms.
@@ -416,11 +453,11 @@ export default function RetrohuntPanel({
         <div className="card space-y-2">
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-brand-400 shrink-0" />
-            <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
               Analyst Notes
             </h4>
           </div>
-          <p className="text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
+          <p className="text-sm text-gray-400 whitespace-pre-wrap leading-relaxed">
             {retrohunt.analyst_notes}
           </p>
         </div>

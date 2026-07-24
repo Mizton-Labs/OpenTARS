@@ -42,7 +42,7 @@ function StatusBadge({ status }: { status: THTaskResult['status'] }) {
   }
   const s = map[status] ?? map.pending
   return (
-    <span className={clsx('text-[10px] px-2 py-0.5 rounded font-medium', s.cls)}>
+    <span className={clsx('text-[11px] px-2 py-0.5 rounded font-medium', s.cls)}>
       {s.label}
     </span>
   )
@@ -65,21 +65,21 @@ function ResultCard({ result }: { result: THTaskResult }) {
               <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
             )}
           </div>
-          <p className="text-[10px] text-gray-500 mt-0.5 font-mono truncate">
+          <p className="text-[11px] text-gray-500 mt-0.5 font-mono truncate">
             {result.earliest} → {result.latest}
             {rawRows.length > 0 && ` · ${rawRows.length} events`}
           </p>
         </div>
-        <span className="text-[10px] text-gray-600">{result.created_at?.slice(0, 19).replace('T', ' ')}</span>
+        <span className="text-[11px] text-gray-600">{result.created_at?.slice(0, 19).replace('T', ' ')}</span>
       </div>
 
       {/* Findings */}
       {result.interpreted_findings && (
         <div className="px-4 py-3 border-t border-gray-800/60">
-          <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
+          <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
             Interpreted Findings
           </p>
-          <p className="text-xs text-gray-300 leading-relaxed">{result.interpreted_findings}</p>
+          <p className="text-sm text-gray-300 leading-relaxed">{result.interpreted_findings}</p>
         </div>
       )}
 
@@ -95,13 +95,13 @@ function ResultCard({ result }: { result: THTaskResult }) {
             ) : (
               <ChevronRight className="w-3.5 h-3.5 text-gray-500" />
             )}
-            <span className="text-[11px] text-gray-500">
+            <span className="text-[12px] text-gray-500">
               Raw results ({rawRows.length} rows)
             </span>
           </button>
           {showRaw && (
             <div className="px-4 pb-3 overflow-x-auto">
-              <pre className="bg-gray-950 rounded p-2 text-[10px] text-gray-400 font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">
+              <pre className="bg-gray-950 rounded p-2 text-[11px] text-gray-400 font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">
                 {JSON.stringify(rawRows.slice(0, 20), null, 2)}
                 {rawRows.length > 20 && `\n… (${rawRows.length - 20} more rows)`}
               </pre>
@@ -112,7 +112,7 @@ function ResultCard({ result }: { result: THTaskResult }) {
 
       {result.status === 'failed' && !result.interpreted_findings && (
         <div className="px-4 py-3 border-t border-gray-800/60">
-          <p className="text-xs text-red-400">Execution failed. Check connector configuration and SPL syntax.</p>
+          <p className="text-sm text-red-400">Execution failed. Check connector configuration and SPL syntax.</p>
         </div>
       )}
     </div>
@@ -182,7 +182,7 @@ export default function ExecutionPanel({
           {connectors.length === 0 ? (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-900/10 border border-amber-800/30">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-300">
+              <p className="text-sm text-amber-300">
                 No SIEM connectors configured. Add a connector in{' '}
                 <span className="font-semibold">Configuration → General → SIEM Connectors</span>.
               </p>
@@ -235,7 +235,7 @@ export default function ExecutionPanel({
                   SPL Query
                   {retrohunt?.spl_draft && (
                     <button
-                      className="ml-2 text-[10px] text-brand-400 hover:text-brand-300"
+                      className="ml-2 text-[11px] text-brand-400 hover:text-brand-300"
                       onClick={() => setSpl(retrohunt.spl_draft)}
                     >
                       Reset to generated draft
@@ -243,7 +243,7 @@ export default function ExecutionPanel({
                   )}
                 </label>
                 <textarea
-                  className="input w-full font-mono text-[11px] leading-relaxed resize-y"
+                  className="input w-full font-mono text-[12px] leading-relaxed resize-y"
                   rows={8}
                   value={spl}
                   onChange={(e) => setSpl(e.target.value)}
@@ -251,14 +251,14 @@ export default function ExecutionPanel({
                   spellCheck={false}
                 />
                 {!spl.trim() && (
-                  <p className="text-[10px] text-amber-400 mt-1">SPL query is required.</p>
+                  <p className="text-[11px] text-amber-400 mt-1">SPL query is required.</p>
                 )}
               </div>
 
               {/* Submit */}
               <div className="flex items-center gap-3">
                 <button
-                  className="btn-primary flex items-center gap-2 text-xs"
+                  className="btn-primary flex items-center gap-2 text-sm"
                   disabled={!canExecute || executeMut.isPending}
                   onClick={() => executeMut.mutate()}
                 >
@@ -270,7 +270,7 @@ export default function ExecutionPanel({
                   {hasRunning ? 'Execution running…' : 'Execute Hunt'}
                 </button>
                 {executeMut.isError && (
-                  <p className="text-xs text-red-400">
+                  <p className="text-sm text-red-400">
                     {executeMut.error instanceof Error
                       ? executeMut.error.message
                       : 'Execution failed'}
@@ -286,7 +286,7 @@ export default function ExecutionPanel({
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Search className="w-4 h-4 text-gray-500" />
-          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+          <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
             Execution Results
             {results.length > 0 && (
               <span className="ml-2 text-gray-600 normal-case font-normal">

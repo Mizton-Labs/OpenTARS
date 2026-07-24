@@ -45,6 +45,12 @@ class HuntPackageOut(BaseModel):
     phases: list[dict[str, Any]] | None = None
     total_elapsed_s: float | None = None
     run_created_at: str | None = None
+    # issue-local-016: every generation run for this package (newest first),
+    # each with its own phases/total_elapsed_s — for the list view's
+    # per-run chip row. Same declare-or-get-silently-stripped trap as the
+    # fields above (see the comment at line 41) — must be declared here.
+    runs: list[dict[str, Any]] = []
+    run_count: int = 0
 
 
 # ── Evidence ──────────────────────────────────────────────────────────────────
