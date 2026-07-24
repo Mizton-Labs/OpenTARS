@@ -377,6 +377,7 @@ async def test_list_hunt_packages_enriches_phases() -> None:
         "created_at": "2026-01-01T00:00:00",
         "updated_at": "2026-01-01T00:00:00",
         "evidence_count": 2,
+        "hunt_seq": 1,
     }
 
     hp_row = ("pkg-1", "completed", step_logs, "2026-01-01T00:00:00")

@@ -23,6 +23,7 @@ from backend.config.loader import (
     load_app_pagination_max,
     load_app_title,
     load_default_theme,
+    load_hunt_id_prefix,
     load_logo_path,
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
@@ -37,6 +38,7 @@ from backend.config.loader import (
     save_app_pagination_max,
     save_app_title,
     save_default_theme,
+    save_hunt_id_prefix,
     save_logo_path,
     save_th_llm_max_retries,
     save_th_llm_retry_backoff_seconds,
@@ -428,6 +430,37 @@ async def set_th_research_effort(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"th_research_effort": value}
+
+
+# ── Threat Hunting HuntID prefix (issue-local-018) ────────────────────────────
+
+
+@router.get("/hunt-id-prefix")
+async def get_hunt_id_prefix() -> dict[str, str]:
+    """Return the configured HuntID prefix (default 'TH')."""
+    return {"hunt_id_prefix": load_hunt_id_prefix()}
+
+
+@router.put("/hunt-id-prefix")
+async def set_hunt_id_prefix(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, str]:
+    """Set the HuntID prefix.
+
+    Body: {"hunt_id_prefix": "TH"}
+    """
+    value = body.get("hunt_id_prefix")
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'hunt_id_prefix' as a string",
+        )
+    try:
+        save_hunt_id_prefix(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"hunt_id_prefix": value}
 
 
 # ── Threat Hunting report formats (issue-local-004) ──────────────────────────

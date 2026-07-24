@@ -114,6 +114,19 @@ async def _save_generation_state(
                 ),
             )
         else:
+            # issue-local-018: run_seq (the Run ID's numeric part, scoped to
+            # this package) must be assigned atomically — BEGIN IMMEDIATE
+            # serializes the read-then-write against other concurrent runs
+            # of the same package (issue-local-014 explicitly allows
+            # multiple concurrent runs per package), same idiom used by
+            # backend/threat_hunting/db.py's create_hunt_package.
+            await db.execute("BEGIN IMMEDIATE")
+            cur = await db.execute(
+                "SELECT COALESCE(MAX(run_seq), 0) FROM hunting_packages WHERE hunt_package_id = ?",
+                (pkg_id,),
+            )
+            next_run_seq = (await cur.fetchone())[0] + 1
+            await cur.close()
             await db.execute(
                 """INSERT INTO hunting_packages
                    (id, hunt_package_id, threat_context, hypotheses,
@@ -121,8 +134,8 @@ async def _save_generation_state(
                     llm_provider, llm_model,
                     generation_status, generation_errors, created_at,
                     current_step, completed_steps, step_logs, research_effort,
-                    run_config)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    run_config, run_seq)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id,
                     pkg_id,
@@ -142,6 +155,7 @@ async def _save_generation_state(
                     _to_json(state.get("step_logs") or []),
                     state.get("research_effort", "medium"),
                     _to_json(state.get("run_config") or {}),
+                    next_run_seq,
                 ),
             )
         await db.commit()
