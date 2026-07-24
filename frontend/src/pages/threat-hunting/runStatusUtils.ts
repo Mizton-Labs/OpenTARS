@@ -10,6 +10,8 @@ const STATUS_STYLES: Record<string, string> = {
   running: 'bg-blue-900/30 text-blue-400',
   awaiting_approval: 'bg-amber-900/30 text-amber-400',
   error: 'bg-red-900/30 text-red-400',
+  // issue-local-019: operator-cancelled — distinct from 'error' (a failure)
+  cancelled: 'bg-gray-700/40 text-gray-400',
 }
 const STATUS_DEFAULT = 'bg-gray-800 text-gray-500'
 

@@ -153,7 +153,8 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
     URL.revokeObjectURL(url)
   }
 
-  const linkClass = 'text-gray-500 hover:text-brand-400 transition-colors'
+  const linkClass = 'flex items-center gap-1 text-gray-500 hover:text-brand-400 transition-colors'
+  const badgeClass = 'text-[9px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
   return (
     <span className="flex items-center gap-2">
       <a
@@ -162,6 +163,7 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
         title="Download report as Markdown"
       >
         <FileText className="w-3.5 h-3.5" />
+        <span className={clsx(badgeClass, 'bg-blue-900/40 text-blue-300')}>MD</span>
       </a>
       <a
         href={api.threatHunting.downloadRunReportPdf(pkgId, run.id)}
@@ -169,9 +171,11 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
         title="Download report as PDF"
       >
         <FileCode2 className="w-3.5 h-3.5" />
+        <span className={clsx(badgeClass, 'bg-red-900/40 text-red-300')}>PDF</span>
       </a>
       <button type="button" onClick={() => void downloadJson()} className={linkClass} title="Download report as JSON">
         <FileJson className="w-3.5 h-3.5" />
+        <span className={clsx(badgeClass, 'bg-amber-900/40 text-amber-300')}>JSON</span>
       </button>
     </span>
   )
