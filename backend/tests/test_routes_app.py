@@ -278,6 +278,14 @@ def test_put_default_theme_accepts_light(client):
     assert client.get("/api/app/theme").json() == {"theme": "light"}
 
 
+def test_put_default_theme_accepts_ocean(client):
+    """issue-local-018 follow-up: 'ocean' is a valid fourth instance-default theme."""
+    resp = client.put("/api/app/theme", json={"theme": "ocean"})
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "ocean"}
+    assert client.get("/api/app/theme").json() == {"theme": "ocean"}
+
+
 def test_put_default_theme_rejects_invalid_value(client):
     resp = client.put("/api/app/theme", json={"theme": "not-a-real-theme"})
     assert resp.status_code == 400
