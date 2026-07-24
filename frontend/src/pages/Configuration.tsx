@@ -325,7 +325,7 @@ const THEME_SWATCHES: Record<'classic' | 'energy' | 'light' | 'ocean', { label: 
   classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
   energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'] },
   light: { label: 'Light', colors: ['#f9fafb', '#f3f4f6', '#2f58f0', '#dc2626'] },
-  ocean: { label: 'Ocean', colors: ['#02050d', '#0b111c', '#2f58f0', '#dc2626'] },
+  ocean: { label: 'Ocean', colors: ['#02080b', '#08161c', '#0ea5e9', '#dc2626'] },
 }
 
 function ThemeSetting() {

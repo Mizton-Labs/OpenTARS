@@ -22,7 +22,7 @@ const THEME_SWATCHES: Record<'classic' | 'energy' | 'light' | 'ocean', string[]>
   classic: ['#030712', '#111827', '#2f58f0', '#dc2626'],
   energy: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'],
   light: ['#f9fafb', '#f3f4f6', '#2f58f0', '#dc2626'],
-  ocean: ['#02050d', '#0b111c', '#2f58f0', '#dc2626'],
+  ocean: ['#02080b', '#08161c', '#0ea5e9', '#dc2626'],
 }
 
 const THEME_LABELS: Record<'classic' | 'energy' | 'light' | 'ocean', string> = {

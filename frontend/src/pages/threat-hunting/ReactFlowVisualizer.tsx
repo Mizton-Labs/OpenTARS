@@ -12,13 +12,14 @@
  *   - Part 1c: active node gets .node-active class for CSS pulse animation
  */
 
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import {
   ReactFlow,
   Background,
   Controls,
   type Node,
   type Edge,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { type THGenerationRecord } from '../../api/client'
@@ -132,7 +133,10 @@ export default function ReactFlowVisualizer({
         const subStatus = src.sub_status
         let bg: string, borderColor: string, color: string
         if (subStatus === 'ok') {
-          bg = '#14532d'; borderColor = '#22c55e'; color = '#d1fae5'
+          // Part 4 (issue-local-018 follow-up): a distinct teal "success" —
+          // not agent nodes' green — so a completed Evidence node never
+          // reads as a completed Agent node at a glance.
+          bg = '#134e4a'; borderColor = '#2dd4bf'; color = '#99f6e4'
         } else if (subStatus === 'error') {
           bg = '#7f1d1d'; borderColor = '#ef4444'; color = '#fee2e2'
         } else if (subStatus === 'partial') {
@@ -238,13 +242,27 @@ export default function ReactFlowVisualizer({
 
   const graphHeight = intakeSources.length > 0 ? 1000 : 900
 
+  // issue-local-018 follow-up: on first render (i.e. when an analysis run
+  // starts and this chart mounts), focus the view tightly on Evidence +
+  // the initial/root agent node (intake_classifier) instead of fitting the
+  // whole ~1800px-tall pipeline, which zooms out so far the starting point
+  // is barely visible. `fitView`'s boolean prop only runs once at mount and
+  // always targets every current node, so it can't express "just these
+  // nodes" — `onInit` gives us the instance to call a scoped `fitView` on.
+  const handleInit = useCallback(
+    (instance: ReactFlowInstance) => {
+      const focusIds = ['intake_classifier', ...intakeSources.map((_, i) => `src_${i}`)]
+      instance.fitView({ nodes: focusIds.map((id) => ({ id })), padding: 0.4, duration: 0 })
+    },
+    [intakeSources],
+  )
+
   return (
     <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: graphHeight }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
+        onInit={handleInit}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}

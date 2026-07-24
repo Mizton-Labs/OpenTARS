@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X, Save, MessageSquare, Send } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -12,6 +12,7 @@ import ReportPanel from './ReportPanel'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { runStatusClass, runLabel, HUNT_ID_BADGE } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
+import IocApplyBar from './IocApplyBar'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
 import RunsStatusTable from './RunsStatusTable'
 
@@ -235,6 +236,9 @@ export default function HuntDetail({
             {pkg?.hunt_id_display && (
               <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>
             )}
+            {activeRun?.run_id_display && (
+              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{activeRun.run_id_display}</span>
+            )}
             {pkg?.name ?? '…'}
           </h1>
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
@@ -261,42 +265,9 @@ export default function HuntDetail({
         </div>
       </div>
 
-      {/* issue-local-016: staged IOC verdict changes — visible regardless of
-          active tab, since a change can be staged from either the IOCs tab
-          or the Analysis tab's Sanitized IOCs table. */}
-      {iocStaging.isDirty && (
-        <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-brand-700/50 bg-brand-900/10">
-          <p className="text-sm text-brand-300">
-            {iocStaging.pendingCount} IOC verdict change{iocStaging.pendingCount !== 1 ? 's' : ''} staged for this run.
-          </p>
-          <button
-            className="btn-primary flex items-center gap-2 text-sm shrink-0"
-            disabled={iocStaging.isApplying}
-            onClick={() => iocStaging.apply()}
-          >
-            <Save className="w-3.5 h-3.5" />
-            {iocStaging.isApplying ? 'Applying...' : 'Apply changes'}
-          </button>
-        </div>
-      )}
-
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
         <div className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
-          {/* issue-local-018 follow-up: unambiguous "which run is open"
-              indicator — HuntID + RunID together, since the dropdown below
-              can otherwise be scrolled/changed without a clear at-a-glance
-              confirmation of what's currently loaded. */}
-          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-brand-700/40 bg-brand-900/15">
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0">Viewing</span>
-            {pkg?.hunt_id_display && <span className={HUNT_ID_BADGE}>{pkg.hunt_id_display}</span>}
-            {activeRun?.run_id_display && (
-              <>
-                <span className="text-gray-600">/</span>
-                <span className={HUNT_ID_BADGE}>{activeRun.run_id_display}</span>
-              </>
-            )}
-          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500 shrink-0">Run:</span>
             <div className="relative flex-1 max-w-xs">
@@ -452,11 +423,22 @@ export default function HuntDetail({
             <p className="text-sm text-gray-500 text-center py-8">No IOCs extracted yet.</p>
           ) : (
             <>
-              <div className="flex gap-4 text-sm text-gray-500">
-                <span className="text-green-400">{cleanCount} actionable</span>
-                <span className="text-amber-400">{noisyCount} noisy / flagged</span>
-                {removedCount > 0 && (
-                  <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex gap-4 text-sm text-gray-500">
+                  <span className="text-green-400">{cleanCount} actionable</span>
+                  <span className="text-amber-400">{noisyCount} noisy / flagged</span>
+                  {removedCount > 0 && (
+                    <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+                  )}
+                </div>
+                {isResearcher && (
+                  <IocApplyBar
+                    isDirty={iocStaging.isDirty}
+                    pendingCount={iocStaging.pendingCount}
+                    isApplying={iocStaging.isApplying}
+                    justApplied={iocStaging.justApplied}
+                    onApply={iocStaging.apply}
+                  />
                 )}
               </div>
               {/* Column headers */}
@@ -539,6 +521,17 @@ export default function HuntDetail({
           pendingVerdictFor={isResearcher ? iocStaging.pendingFor : undefined}
           onStageVerdict={isResearcher ? iocStaging.stage : undefined}
           iocVerdictsDirty={iocStaging.isDirty}
+          iocApplyBar={
+            isResearcher
+              ? {
+                  isDirty: iocStaging.isDirty,
+                  pendingCount: iocStaging.pendingCount,
+                  isApplying: iocStaging.isApplying,
+                  justApplied: iocStaging.justApplied,
+                  onApply: iocStaging.apply,
+                }
+              : undefined
+          }
         />
       )}
 

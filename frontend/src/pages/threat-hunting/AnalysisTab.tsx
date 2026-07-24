@@ -18,6 +18,7 @@ import { useAuth } from '../../auth/useAuth'
 import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
 import type { IocVerdict } from './IocVerdictToggle'
+import type { IocApplyBarProps } from './IocApplyBar'
 import { asDisplayText } from './llmTextUtils'
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
@@ -74,6 +75,7 @@ export default function AnalysisTab({
   pendingVerdictFor,
   onStageVerdict,
   iocVerdictsDirty,
+  iocApplyBar,
 }: {
   pkgId: string
   runId?: string
@@ -89,6 +91,10 @@ export default function AnalysisTab({
    *  Approving with unsaved verdicts would move the package into Execution
    *  using stale IOC data, so Approve is disabled until they're applied. */
   iocVerdictsDirty?: boolean
+  /** issue-local-018 follow-up: passed through to RetrohuntPanel's Sanitized
+   *  IOCs filter row so "Apply changes" sits right next to the
+   *  All/Sanitized/Removed filter, instead of a page-wide banner. */
+  iocApplyBar?: IocApplyBarProps
 }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -418,6 +424,7 @@ export default function AnalysisTab({
           runId={runId}
           pendingVerdictFor={pendingVerdictFor}
           onStageVerdict={onStageVerdict}
+          iocApplyBar={iocApplyBar}
         />
       </div>
     )
@@ -444,6 +451,7 @@ function HuntingPackageDraft({
   readOnly = false,
   pendingVerdictFor,
   onStageVerdict,
+  iocApplyBar,
 }: {
   record: THGenerationRecord
   pkgId: string
@@ -451,6 +459,7 @@ function HuntingPackageDraft({
   readOnly?: boolean
   pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
   onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
+  iocApplyBar?: IocApplyBarProps
 }) {
   const qc = useQueryClient()
 
@@ -523,6 +532,7 @@ function HuntingPackageDraft({
             pkgId={pkgId}
             pendingFor={!readOnly ? pendingVerdictFor : undefined}
             onStageVerdict={!readOnly ? onStageVerdict : undefined}
+            iocApplyBar={!readOnly ? iocApplyBar : undefined}
           />
         </CollapsibleSection>
       )}

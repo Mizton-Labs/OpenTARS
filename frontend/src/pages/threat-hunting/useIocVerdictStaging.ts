@@ -10,7 +10,7 @@
  * viewing one tab is still pending when the analyst switches to the other.
  * Scoped to a single run — changes apply to the current run only.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { IocVerdict } from './IocVerdictToggle'
@@ -24,6 +24,10 @@ export function useIocVerdictStaging(pkgId: string, runId: string | undefined) {
   const [pending, setPending] = useState<Map<string, { ioc: string; ioc_type: string; action: IocVerdict }>>(
     new Map(),
   )
+  // issue-local-018 follow-up: brief "Applied" confirmation shown wherever
+  // the Apply button lives, cleared automatically so it doesn't linger.
+  const [justApplied, setJustApplied] = useState(false)
+  const justAppliedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const stage = useCallback((ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => {
     setPending((prev) => {
@@ -53,6 +57,9 @@ export function useIocVerdictStaging(pkgId: string, runId: string | undefined) {
       setPending(new Map())
       qc.invalidateQueries({ queryKey: ['th-iocs', pkgId, runId] })
       qc.invalidateQueries({ queryKey: ['th-generation', pkgId, runId] })
+      setJustApplied(true)
+      if (justAppliedTimer.current) clearTimeout(justAppliedTimer.current)
+      justAppliedTimer.current = setTimeout(() => setJustApplied(false), 2500)
     },
   })
 
@@ -64,5 +71,6 @@ export function useIocVerdictStaging(pkgId: string, runId: string | undefined) {
     apply: () => applyMut.mutate(),
     isApplying: applyMut.isPending,
     applyError: applyMut.error,
+    justApplied,
   }
 }

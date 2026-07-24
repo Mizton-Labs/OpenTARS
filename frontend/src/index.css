@@ -107,38 +107,36 @@
     --color-brand-900: 26 39 134;
   }
 
-  /* Ocean — a slightly-darker, more blue-biased variant of Classic (dark
-   * theme requests: "just slightly darker" + "based on the Classic theme").
-   * Same construction method as Light's ramp-mirror above: every stop is
-   * Classic's value made a bit darker and nudged toward blue (B channel
-   * held higher relative to R/G) rather than a hand-picked new palette, so
-   * every component's existing dark-surface/light-text contrast pairing
-   * (already tuned for Classic) still holds. brand-* (accent) is reused
-   * verbatim from Classic — same reasoning as Light reusing it for its
-   * accent: the blue accent already reads as "Ocean" on its own. */
+  /* Ocean — a genuinely different blue tone from Classic, not just a darker
+   * copy of it. Classic's brand accent is an indigo-blue (hue ~226, hex
+   * #2f58f0); Ocean instead uses a cyan/teal-leaning "deep water" blue (hue
+   * ~199, a sky/cyan family) for its accent, and the gray ramp is tinted to
+   * match (teal-biased dark surfaces — G held close to B, rather than
+   * Classic's B-only-biased navy-grey) so the whole theme reads as a
+   * distinct blue-green "ocean" palette at a glance, not a dimmed Classic. */
   :root[data-theme='ocean'] {
-    --color-gray-50:  245 248 252;
-    --color-gray-100: 231 238 247;
-    --color-gray-200: 209 221 237;
-    --color-gray-300: 178 195 219;
-    --color-gray-400: 130 148 175;
-    --color-gray-500: 90 106 132;
-    --color-gray-600: 62 76 99;
-    --color-gray-700: 42 53 71;
-    --color-gray-800: 22 30 44;
-    --color-gray-900: 11 17 28;
-    --color-gray-950: 2 5 13;
+    --color-gray-50:  240 250 250;
+    --color-gray-100: 219 238 241;
+    --color-gray-200: 186 219 224;
+    --color-gray-300: 148 195 203;
+    --color-gray-400: 100 158 168;
+    --color-gray-500: 68 122 133;
+    --color-gray-600: 46 89 99;
+    --color-gray-700: 30 61 69;
+    --color-gray-800: 17 38 45;
+    --color-gray-900: 8 22 28;
+    --color-gray-950: 2 8 11;
 
-    --color-brand-50:  240 244 255;
-    --color-brand-100: 221 230 255;
-    --color-brand-200: 184 205 255;
-    --color-brand-300: 135 170 255;
-    --color-brand-400: 84 128 250;
-    --color-brand-500: 47 88 240;
-    --color-brand-600: 28 61 230;
-    --color-brand-700: 24 45 209;
-    --color-brand-800: 25 39 170;
-    --color-brand-900: 26 39 134;
+    --color-brand-50:  240 249 255;
+    --color-brand-100: 224 242 254;
+    --color-brand-200: 186 230 253;
+    --color-brand-300: 125 211 252;
+    --color-brand-400: 56 189 248;
+    --color-brand-500: 14 165 233;
+    --color-brand-600: 2 132 199;
+    --color-brand-700: 3 105 161;
+    --color-brand-800: 7 89 133;
+    --color-brand-900: 12 74 110;
   }
 
   :root {

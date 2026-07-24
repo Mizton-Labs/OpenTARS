@@ -5,7 +5,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { THuntPackage, THRunSummary, THRunComment } from '../api/client'
+import type { THuntPackage, THRunSummary, THuntPackageRun, THRunComment } from '../api/client'
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -66,7 +66,7 @@ function makePkg(overrides: Partial<THuntPackage> = {}): THuntPackage {
   }
 }
 
-function makeRun(overrides: Partial<THRunSummary> = {}): THRunSummary {
+function makeRun(overrides: Partial<THuntPackageRun> = {}): THRunSummary {
   return {
     id: 'run-1',
     hunt_package_id: 'pkg-1',
@@ -170,5 +170,20 @@ describe('HuntDetail Comments tab (issue-local-018)', () => {
 
     expect(screen.queryByPlaceholderText('Add a comment about this run…')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Delete comment')).not.toBeInTheDocument()
+  })
+})
+
+describe('HuntDetail header HuntID/RunID (issue-local-018 follow-up)', () => {
+  it('shows both the HuntID and the active RunID in the main title, and nothing duplicated elsewhere', async () => {
+    vi.mocked(api.threatHunting.getPackage).mockResolvedValue(makePkg({ hunt_id_display: 'TH01' }))
+    vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ run_id_display: 'TH01-X01' })])
+    renderDetail()
+
+    const heading = await screen.findByRole('heading', { name: /Test Package/ })
+    expect(heading).toHaveTextContent('TH01')
+    expect(heading).toHaveTextContent('TH01-X01')
+    // The old standalone "Viewing" indicator card is gone — this info now
+    // lives only in the title, not duplicated elsewhere.
+    expect(screen.queryByText('Viewing')).not.toBeInTheDocument()
   })
 })

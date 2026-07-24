@@ -186,6 +186,50 @@ describe('RetrohuntPanel — three-way filter + verdict column', () => {
     fireEvent.click(removeButtons[0])
     expect(onStageVerdict).toHaveBeenCalledWith('evil.com', 'domain', 'remove', 'keep')
   })
+
+  describe('iocApplyBar (issue-local-018 follow-up)', () => {
+    it('renders the Apply button next to the All/Sanitized/Removed filter when dirty', () => {
+      const onApply = vi.fn()
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: true, pendingCount: 2, isApplying: false, justApplied: false, onApply }}
+        />,
+      )
+      expect(screen.getByText('2 staged')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Apply changes/ }))
+      expect(onApply).toHaveBeenCalled()
+    })
+
+    it('renders nothing when not dirty and not just applied', () => {
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: false, pendingCount: 0, isApplying: false, justApplied: false, onApply: vi.fn() }}
+        />,
+      )
+      expect(screen.queryByText(/staged/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Apply changes/ })).not.toBeInTheDocument()
+    })
+
+    it('shows a confirmation after applying', () => {
+      render(
+        <RetrohuntPanel
+          retrohunt={makeRetrohunt(sanitized)}
+          pkgId="pkg-1"
+          iocApplyBar={{ isDirty: false, pendingCount: 0, isApplying: false, justApplied: true, onApply: vi.fn() }}
+        />,
+      )
+      expect(screen.getByText('Applied')).toBeInTheDocument()
+    })
+
+    it('does not render when iocApplyBar is omitted (read-only draft view)', () => {
+      render(<RetrohuntPanel retrohunt={makeRetrohunt(sanitized)} pkgId="pkg-1" />)
+      expect(screen.queryByText(/staged/)).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
