@@ -102,11 +102,24 @@ describe('Account page', () => {
 })
 
 describe('Account page theme selector (issue-local-016)', () => {
-  it('shows Classic, Energy, and "use instance default" options', async () => {
+  it('shows Classic, Energy, Light, and "use instance default" options', async () => {
     renderAccount()
     expect(await screen.findByText('Classic')).toBeInTheDocument()
     expect(screen.getByText('Energy')).toBeInTheDocument()
+    expect(screen.getByText('Light')).toBeInTheDocument()
     expect(screen.getByText(/use instance default/i)).toBeInTheDocument()
+  })
+
+  it('selecting Light calls setOwnTheme and marks it active (issue-local-017)', async () => {
+    vi.mocked(api.auth.setOwnTheme).mockResolvedValue({
+      id: 7, username: 'reader', role: 'threat-viewer', enabled: true, theme: 'light',
+    })
+    renderAccount()
+    fireEvent.click(await screen.findByText('Light'))
+
+    await waitFor(() => expect(api.auth.setOwnTheme).toHaveBeenCalledWith('light'))
+    const lightButton = screen.getByText('Light').closest('button')
+    await waitFor(() => expect(lightButton).toHaveTextContent('Active'))
   })
 
   it('defaults to "use instance default" as active when the user has no override', async () => {

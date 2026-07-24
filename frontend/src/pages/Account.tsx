@@ -18,9 +18,16 @@ import { useTheme } from '../theme/useTheme'
 // Same swatch colors as the General Config default-theme picker (Configuration.tsx) —
 // hardcoded hex so each option shows its own theme's real colors regardless of
 // which theme is currently active on the page rendering this picker.
-const THEME_SWATCHES: Record<'classic' | 'energy', string[]> = {
+const THEME_SWATCHES: Record<'classic' | 'energy' | 'light', string[]> = {
   classic: ['#030712', '#111827', '#2f58f0', '#dc2626'],
   energy: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'],
+  light: ['#f9fafb', '#f3f4f6', '#2f58f0', '#dc2626'],
+}
+
+const THEME_LABELS: Record<'classic' | 'energy' | 'light', string> = {
+  classic: 'Classic',
+  energy: 'Energy',
+  light: 'Light',
 }
 
 function ThemePreferenceSection() {
@@ -28,7 +35,7 @@ function ThemePreferenceSection() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleSelect(next: 'classic' | 'energy' | null) {
+  async function handleSelect(next: 'classic' | 'energy' | 'light' | null) {
     setPending(true)
     setError(null)
     try {
@@ -40,12 +47,13 @@ function ThemePreferenceSection() {
     }
   }
 
-  const options: { id: 'classic' | 'energy' | null; label: string; colors?: string[] }[] = [
+  const options: { id: 'classic' | 'energy' | 'light' | null; label: string; colors?: string[] }[] = [
     { id: 'classic', label: 'Classic', colors: THEME_SWATCHES.classic },
     { id: 'energy', label: 'Energy', colors: THEME_SWATCHES.energy },
+    { id: 'light', label: 'Light', colors: THEME_SWATCHES.light },
     {
       id: null,
-      label: `Use instance default (${instanceDefault === 'energy' ? 'Energy' : 'Classic'})`,
+      label: `Use instance default (${THEME_LABELS[instanceDefault]})`,
     },
   ]
 
@@ -74,7 +82,11 @@ function ThemePreferenceSection() {
                 {opt.colors && (
                   <div className="flex gap-1">
                     {opt.colors.map((c, i) => (
-                      <span key={i} className="w-3.5 h-3.5 rounded" style={{ backgroundColor: c }} />
+                      <span
+                        key={i}
+                        className="w-3.5 h-3.5 rounded border border-gray-700/40"
+                        style={{ backgroundColor: c }}
+                      />
                     ))}
                   </div>
                 )}

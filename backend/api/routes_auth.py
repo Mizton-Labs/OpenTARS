@@ -388,7 +388,10 @@ async def set_own_theme(body: ThemeBody, user: dict = Depends(get_current_user))
     call this regardless of role — see backend/main.py's _SELF_PATHS.
     """
     if body.theme is not None and body.theme not in db.VALID_THEMES:
-        raise HTTPException(status_code=400, detail="theme must be 'classic', 'energy', or null")
+        raise HTTPException(
+            status_code=400,
+            detail=f"theme must be one of {sorted(db.VALID_THEMES)}, or null",
+        )
     await db.set_theme(user["id"], body.theme)
     return _public_user(await db.get_user_by_id(user["id"]))
 

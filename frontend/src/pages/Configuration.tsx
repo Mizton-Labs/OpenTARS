@@ -321,9 +321,10 @@ function AppTitleSetting() {
 // issue-local-016: swatch colors are hardcoded hex (not Tailwind classes) so
 // each option always shows its OWN theme's real colors regardless of which
 // theme is currently active on the page rendering this picker.
-const THEME_SWATCHES: Record<'classic' | 'energy', { label: string; colors: string[] }> = {
+const THEME_SWATCHES: Record<'classic' | 'energy' | 'light', { label: string; colors: string[] }> = {
   classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
   energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'] },
+  light: { label: 'Light', colors: ['#f9fafb', '#f3f4f6', '#2f58f0', '#dc2626'] },
 }
 
 function ThemeSetting() {
@@ -336,7 +337,7 @@ function ThemeSetting() {
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
-    mutationFn: (theme: 'classic' | 'energy') => api.setDefaultTheme(theme),
+    mutationFn: (theme: 'classic' | 'energy' | 'light') => api.setDefaultTheme(theme),
     onSuccess: () => {
       setSaved(true)
       setError(null)
@@ -348,7 +349,7 @@ function ThemeSetting() {
     },
   })
 
-  const current = data?.theme === 'energy' ? 'energy' : 'classic'
+  const current = data?.theme === 'energy' || data?.theme === 'light' ? data.theme : 'classic'
 
   return (
     <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
@@ -360,7 +361,9 @@ function ThemeSetting() {
         </p>
       </div>
       <div className="flex gap-2">
-        {(Object.entries(THEME_SWATCHES) as ['classic' | 'energy', { label: string; colors: string[] }][]).map(
+        {(
+          Object.entries(THEME_SWATCHES) as ['classic' | 'energy' | 'light', { label: string; colors: string[] }][]
+        ).map(
           ([id, { label, colors }]) => (
             <button
               key={id}
@@ -384,7 +387,11 @@ function ThemeSetting() {
               </div>
               <div className="flex gap-1 mt-1.5">
                 {colors.map((c, i) => (
-                  <span key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c }} />
+                  <span
+                    key={i}
+                    className="w-4 h-4 rounded border border-gray-700/40"
+                    style={{ backgroundColor: c }}
+                  />
                 ))}
               </div>
             </button>

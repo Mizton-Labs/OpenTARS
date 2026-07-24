@@ -177,7 +177,7 @@ async def set_default_theme(
 ) -> dict[str, str]:
     """Set the instance-wide default theme.
 
-    Body: {"theme": "classic" | "energy"}
+    Body: {"theme": "classic" | "energy" | "light"}
 
     A signed-in user with a personal theme override (see PUT /api/auth/me/theme)
     is unaffected by this — it only changes what everyone else (and logged-out
