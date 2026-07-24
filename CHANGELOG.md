@@ -9,6 +9,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — HuntID/RunID, run-table polish, theme fixes, per-run comments (issue-local-018)
+
+**Every Hunt Package now gets an automatic HuntID** (e.g. `TH01`, `TH02`) — a configurable prefix
+(default `TH`, editable in Threat Hunting settings) plus a monotonic sequence, shown to the left of
+the package title everywhere it appears. **Runs get a matching Run ID** (e.g. `TH01-X01`), shown as
+the leftmost column of the run summary tables. Both IDs are computed dynamically from the current
+prefix at read time (not baked into stored strings), so changing the prefix relabels everything
+consistently. The 44 pre-existing hunt packages/runs were backfilled by creation order (oldest =
+01) via a v6 schema migration.
+
+**The run summary table gained a Duration column**, and its Run ID/Model cells are now clickable —
+opening that exact run's detail view (previously only the newest run could be reached without
+manually switching the run selector).
+
+**The Classic/Modern card-color toggle was removed** — only the Classic card design remains, and
+the hunt-package list's Table density mode now gets the same card chrome (border/background) as
+Compact/Detailed mode, closing a visual gap where Table mode rendered with no card styling at all.
+
+**Fixed Light theme contrast**: badges, chips, and buttons using Tailwind's stock
+`{color}-900/NN` + `{color}-300`/`-400` pairing (severity badges, status pills, the IOC Keep/Remove
+toggle, workflow phase chips) previously stayed dark-tinted with pastel text even in Light mode,
+since those literal color classes never participated in Light's CSS-variable ramp-mirroring — a
+scoped `[data-theme='light']` CSS override flips the idiom to light-background/dark-text for
+green/red/blue/amber/yellow, without touching any component. The sidebar's Threat Intel/Threat
+Hunting section titles are also now visually emphasized (brand-colored, bold) to separate them from
+Home and the utility items.
+
+**New Comments tab** on each run in `HuntDetail` — free-text analyst notes with author/timestamp,
+gated by role (post: researcher, delete: researcher/admin). Previously the closest thing,
+`approval_notes`, was accepted by the API but silently discarded — there was no durable place to
+record analyst commentary on a specific run.
+
 ### Added — Table density mode, Light theme, run-summary IOC counts and report links (issue-local-017)
 
 **New "Table" density mode for the hunt-package list**, alongside the existing Compact/Detailed
