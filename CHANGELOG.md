@@ -15,6 +15,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 administration concern, not Threat-Intel-specific — a tab-group relocation only, no behavior
 change (still admin-only, still the same component).
 
+**Global Field Defaults moved from General Configuration to Threat Intel.** It configures
+default field mappings for ingested Threat Intel data specifically, so it belongs alongside the
+other Threat-Intel-scoped settings (General TI Settings, feed sources) rather than under general
+platform settings — a tab-group relocation only, no behavior change.
+
 **Admin password reset now generates a random password and forces a change on next login.**
 Previously the admin typed the new password directly. The admin no longer supplies one at
 all — the backend generates it (`secrets.token_urlsafe(18)`, the same pattern already used by
@@ -34,9 +39,11 @@ infrastructure existed before this (single hardcoded dark palette) — built fro
   component-file changes. Severity badges and other status colors (red/green/orange) stay on
   Tailwind's stock palettes, untouched, so error/success meaning stays constant across themes.
   Classic's values are the literal pre-existing colors — visually unchanged.
-- Energy ("Amber Ember"): warm near-black/charcoal base, amber-gold accent for buttons/
-  active-tab/toggle/focus-rings, and a muted brick-red decorative touch (sidebar active item,
-  card hover) — not a semantic color; danger/error stays on stock red in both themes.
+- Energy: solid neutral dark grey/black (every gray/brand stop is R=G=B — no warm/sepia tint).
+  Yellow is deliberately NOT a broad palette color — it appears only as a glow/shadow (never a
+  fill) on two specific components (primary buttons, active toggles), keeping the rest of the UI
+  monochrome. A muted brick-red decorative touch remains on the sidebar active item / card hover
+  — unrelated to yellow, not a semantic color; danger/error stays on stock red in both themes.
 - `users.theme` (schema v5, nullable — NULL means "follow the instance default"), a new
   `GET/PUT /api/app/theme` (public GET, admin-gated PUT, mirrors the existing `app/title`
   pattern), and a new self-service `PUT /api/auth/me/theme` (any authenticated user, own account
