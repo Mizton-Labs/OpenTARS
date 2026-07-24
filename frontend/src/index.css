@@ -89,11 +89,14 @@
     --color-gray-300: 55 65 81;
     --color-gray-400: 75 85 99;
     --color-gray-500: 107 114 128;
-    --color-gray-600: 156 163 175;
-    --color-gray-700: 209 213 219;
-    --color-gray-800: 229 231 235;
-    --color-gray-900: 243 244 246;
-    --color-gray-950: 249 250 251;
+    /* issue-local-019: nudged 600-950 a bit darker than a straight Classic
+     * mirror — the original values read as washed-out/plain-white. Text
+     * stops (50-500) are unchanged since their contrast is already tuned. */
+    --color-gray-600: 140 147 159;
+    --color-gray-700: 188 193 200;
+    --color-gray-800: 206 209 214;
+    --color-gray-900: 219 222 226;
+    --color-gray-950: 227 230 233;
 
     --color-brand-50:  240 244 255;
     --color-brand-100: 221 230 255;
@@ -285,19 +288,18 @@
   box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.45);
 }
 
-/* issue-local-018 follow-up: Light theme's `.card` had no override at all —
- * it fell through to the mirrored `gray-900` (243 244 246, near-white) on a
- * `gray-950` page background (249 250 251, also near-white), a ~6-unit gap:
- * cards read as plain white with no visible separation from the page. Give
- * Light its own subtle slate-blue tint (same mechanism as Energy's bump
- * above), distinct enough from the page to read as a card without looking
- * like a colored alert box. */
+/* issue-local-018/019: Light theme's `.card` had no override at all — it
+ * fell through to the mirrored `gray-900`, nearly indistinguishable from the
+ * page background. Since issue-local-019 darkened the page background
+ * (gray-950/900) a bit, cards now read as a crisp near-white surface sitting
+ * ON that slightly-darker page — the inverse of Energy's "lighter card on
+ * dark page" bump, same idea. */
 :root[data-theme='light'] .card {
-  background-color: rgb(226 232 240);
+  background-color: rgb(250 251 253);
   border-color: rgb(203 213 225);
 }
 :root[data-theme='light'] .card:hover {
-  background-color: rgb(214 221 232);
+  background-color: rgb(240 244 249);
 }
 
 /* Sidebar module-group box (Threat Intel + Threat Hunting), separating the

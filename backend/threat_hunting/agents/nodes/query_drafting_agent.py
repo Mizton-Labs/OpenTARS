@@ -9,7 +9,6 @@ applicable.
 from __future__ import annotations
 
 import json
-import logging
 import time
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
@@ -19,9 +18,8 @@ from backend.threat_hunting.agents.llm_bridge import (
     call_llm_with_tools,
     parse_json_response,
 )
+from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import HuntPipelineState
-
-logger = logging.getLogger(__name__)
 
 _OUTPUT_FORMAT = """[
   {
@@ -51,6 +49,7 @@ _TOOL_NAMES = ["validate_spl", "mitre_lookup"]
 async def query_drafting_agent(state: HuntPipelineState) -> dict:
     start = time.monotonic()
     step = "query_drafting_agent"
+    log = get_run_logger(__name__, state.get("hunt_package_id"), state.get("run_id"))
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
@@ -126,10 +125,10 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
         if isinstance(parsed, list):
             query_drafts = parsed
         elif isinstance(parsed, dict):
-            logger.warning("query_drafting_agent: got dict instead of list, wrapping")
+            log.warning("query_drafting_agent: got dict instead of list, wrapping")
             query_drafts = [parsed]
         else:
-            logger.error(
+            log.error(
                 "query_drafting_agent: unexpected parse result type=%s", type(parsed).__name__
             )
             errors.append(f"{step}: unexpected LLM response type, using empty list")
@@ -213,9 +212,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.warning("Node %s: LLM is disabled — skipping", step)
+            log.warning("Node %s: LLM is disabled — skipping", step)
         else:
-            logger.exception("Node %s failed: %s", step, exc)
+            log.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(

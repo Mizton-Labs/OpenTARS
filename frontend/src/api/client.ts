@@ -1220,6 +1220,12 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/reject`,
         { method: 'POST', body: JSON.stringify({ notes }) },
       ),
+    // issue-local-019: cancel a currently-running generation run.
+    cancelRun: (pkgId: string, runId: string) =>
+      request<{ generation_status: string }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/cancel`,
+        { method: 'POST' },
+      ),
     listRunResults: (pkgId: string, runId: string) =>
       request<THTaskResult[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/results`,

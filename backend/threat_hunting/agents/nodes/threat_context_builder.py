@@ -13,7 +13,6 @@ Tool-calling (issue-006-B):
 from __future__ import annotations
 
 import json
-import logging
 import time
 
 from backend.threat_hunting.agents.llm_bridge import (
@@ -23,9 +22,8 @@ from backend.threat_hunting.agents.llm_bridge import (
     coerce_string_list,
     parse_json_response,
 )
+from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import HuntPipelineState
-
-logger = logging.getLogger(__name__)
 
 _EVIDENCE_TRUNCATE = 12_000  # chars — keep prompts within safe token budget
 
@@ -49,6 +47,7 @@ _TOOL_NAMES = ["mitre_lookup", "refetch_url"]
 async def threat_context_builder(state: HuntPipelineState) -> dict:
     start = time.monotonic()
     step = "threat_context_builder"
+    log = get_run_logger(__name__, state.get("hunt_package_id"), state.get("run_id"))
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
@@ -142,7 +141,7 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
             # Parse failed — store raw response with error marker
             threat_context: dict = {"raw_response": parsed, "parse_error": True}
             errors.append(f"{step}: JSON parse failed; raw response stored")
-            logger.warning("threat_context_builder: JSON parse failed, storing raw response")
+            log.warning("threat_context_builder: JSON parse failed, storing raw response")
         else:
             threat_context = (
                 parsed
@@ -178,9 +177,9 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.warning("Node %s: LLM is disabled — skipping", step)
+            log.warning("Node %s: LLM is disabled — skipping", step)
         else:
-            logger.exception("Node %s failed: %s", step, exc)
+            log.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(

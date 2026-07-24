@@ -8,7 +8,6 @@ context built by earlier pipeline nodes.
 from __future__ import annotations
 
 import json
-import logging
 import time
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
@@ -18,9 +17,8 @@ from backend.threat_hunting.agents.llm_bridge import (
     coerce_string_list,
     parse_json_response,
 )
+from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import HuntPipelineState
-
-logger = logging.getLogger(__name__)
 
 _OUTPUT_FORMAT = """{
   "summary": "...",
@@ -40,6 +38,7 @@ _OUTPUT_FORMAT = """{
 async def ttp_analyst(state: HuntPipelineState) -> dict:
     start = time.monotonic()
     step = "ttp_analyst"
+    log = get_run_logger(__name__, state.get("hunt_package_id"), state.get("run_id"))
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
@@ -85,7 +84,7 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
         if isinstance(parsed, dict):
             ttp_analysis = parsed
         else:
-            logger.error("ttp_analyst: unexpected parse result type=%s", type(parsed).__name__)
+            log.error("ttp_analyst: unexpected parse result type=%s", type(parsed).__name__)
             errors.append(f"{step}: unexpected LLM response type; storing raw")
             ttp_analysis = {"raw_response": str(parsed), "parse_error": True}
 
@@ -120,9 +119,9 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.warning("Node %s: LLM is disabled — skipping", step)
+            log.warning("Node %s: LLM is disabled — skipping", step)
         else:
-            logger.exception("Node %s failed: %s", step, exc)
+            log.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(

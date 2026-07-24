@@ -162,9 +162,13 @@ function IOCRow({
         <td className="py-1.5 pr-2 whitespace-nowrap">
           <IOCTypeChip type={ioc.ioc_type} />
         </td>
-        {/* Description */}
-        <td className="py-1.5 pr-2 max-w-[200px]">
-          <span className="text-[12px] text-gray-400 truncate block">{ioc.ioc_description || '—'}</span>
+        {/* Description — the LLM's per-IOC assessment; wraps in full rather
+            than truncating, matching how the removal rationale (noise_reasons)
+            below is never cut off either. */}
+        <td className="py-1.5 pr-2 max-w-[280px]">
+          <span className="text-[12px] text-gray-400 block whitespace-normal break-words">
+            {ioc.ioc_description || '—'}
+          </span>
         </td>
         {/* Search token */}
         <td className="py-1.5 pr-2">

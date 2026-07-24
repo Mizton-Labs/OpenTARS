@@ -48,13 +48,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import time
 from typing import Any
 
+from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import HuntPipelineState
-
-logger = logging.getLogger(__name__)
 
 _TOOL_NAMES = ["extract_iocs", "refetch_url"]
 
@@ -134,6 +132,7 @@ async def _llm_triage_iocs(
 async def intake_classifier(state: HuntPipelineState) -> dict:
     start = time.monotonic()
     step = "intake_classifier"
+    log = get_run_logger(__name__, state.get("hunt_package_id"), state.get("run_id"))
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
@@ -215,9 +214,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         parse_warnings=[f"Pipeline parse failed: {parse_exc}"],
                     )
                     debug_lines.append(f"FILE_PARSE_ERR: {label} → {parse_exc}")
-                    logger.warning(
-                        "intake_classifier: file parse failed for %s: %s", label, parse_exc
-                    )
+                    log.warning("intake_classifier: file parse failed for %s: %s", label, parse_exc)
 
             # Reload after parsing
             evidence_items = await th_db.list_evidence_items(pkg_id)
@@ -265,7 +262,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         parse_warnings=[f"Pipeline fetch failed: {fetch_exc}"],
                     )
                     debug_lines.append(f"URL_FETCH_ERR: {url} → {fetch_exc}")
-                    logger.warning("intake_classifier: URL fetch failed for %s: %s", url, fetch_exc)
+                    log.warning("intake_classifier: URL fetch failed for %s: %s", url, fetch_exc)
 
             # Reload evidence items after fetching
             evidence_items = await th_db.list_evidence_items(pkg_id)
@@ -492,7 +489,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             ],
         }
 
-        logger.info(
+        log.info(
             "intake_classifier: pkg=%s evidence=%d fetched=%d iocs=%d tools_used=%s",
             pkg_id,
             len(evidence_items),
@@ -530,7 +527,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
             "all_extracted_iocs": all_iocs,
         }
     except Exception as exc:
-        logger.exception("Node %s failed: %s", step, exc)
+        log.exception("Node %s failed: %s", step, exc)
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(

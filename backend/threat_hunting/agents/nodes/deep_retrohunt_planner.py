@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import csv
 import io
-import logging
 import re
 import time
 from typing import Any
 
 from backend.threat_hunting.agents.effort_profile import get_effort_profile
 from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
+from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import DeepRetrohuntLead, HuntPipelineState, SanitizedIOC
 from backend.threat_hunting.iocs import _NOISY_DOMAINS as _NOISY_DOMAINS_SET  # noqa: PLC2701
 from backend.threat_hunting.iocs import _NOISY_HASHES as _EMPTY_HASHES  # noqa: PLC2701
@@ -46,8 +46,6 @@ from backend.threat_hunting.iocs import (  # noqa: PLC2701
     _noise_score,
     _normalize_ioc,
 )
-
-logger = logging.getLogger(__name__)
 
 # issue-007: normalized module-level constant (was an inline tuple)
 _TOOL_NAMES = ["validate_spl", "defang_ioc", "noise_score"]
@@ -337,6 +335,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     """
     start = time.monotonic()
     step = "deep_retrohunt_planner"
+    log = get_run_logger(__name__, state.get("hunt_package_id"), state.get("run_id"))
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
@@ -356,7 +355,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     atomic_iocs = [r for r in raw_iocs if str(r.get("ioc_type", "other")).lower() in _ATOMIC_TYPES]
 
     if not atomic_iocs:
-        logger.info("deep_retrohunt_planner: no atomic IOCs found — skipping")
+        log.info("deep_retrohunt_planner: no atomic IOCs found — skipping")
         elapsed = time.monotonic() - start
         logs.append(
             {
@@ -390,7 +389,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         ioc_csv = _build_ioc_csv(kept)
         noisy_count = sum(1 for s in kept if s["noise_score"] >= NOISE_THRESHOLD)
         high_noise_count = sum(1 for s in kept if s["noise_score"] >= HIGH_NOISE_THRESHOLD)
-        logger.info(
+        log.info(
             "deep_retrohunt_planner: sanitized %d IOCs (%d kept, %d removed, %d noisy, %d high-noise)",
             len(sanitized),
             len(kept),
@@ -399,7 +398,7 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             high_noise_count,
         )
     except Exception as exc:
-        logger.exception("deep_retrohunt_planner: deterministic stage failed: %s", exc)
+        log.exception("deep_retrohunt_planner: deterministic stage failed: %s", exc)
         errors.append(f"{step} (sanitization): {exc}")
         elapsed = time.monotonic() - start
         logs.append(
@@ -448,9 +447,9 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
         from backend.llm.errors import LLMDisabledError
 
         if isinstance(exc, LLMDisabledError):
-            logger.warning("deep_retrohunt_planner: LLM disabled — using deterministic output only")
+            log.warning("deep_retrohunt_planner: LLM disabled — using deterministic output only")
         else:
-            logger.exception("deep_retrohunt_planner: LLM enrichment failed: %s", exc)
+            log.exception("deep_retrohunt_planner: LLM enrichment failed: %s", exc)
             errors.append(f"{step} (LLM): {exc}")
         llm_parse_error = True
 

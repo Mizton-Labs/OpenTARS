@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -41,6 +41,8 @@ export default function HuntDetail({
 
   // Part 4: evidence delete confirmation
   const [confirmEvidenceId, setConfirmEvidenceId] = useState<string | null>(null)
+  // issue-local-019: cancel-run confirmation
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
 
   // issue-006-G: re-run dialog state
   const [showRerunDialog, setShowRerunDialog] = useState(false)
@@ -202,6 +204,16 @@ export default function HuntDetail({
     },
   })
 
+  // issue-local-019: cancel a currently-running run
+  const cancelMut = useMutation({
+    mutationFn: () => api.threatHunting.cancelRun(pkgId, activeRunId!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, activeRunId] })
+      setShowCancelConfirm(false)
+    },
+  })
+
   const PARSE_STATUS_ICON = {
     ok: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
     partial: <Clock className="w-3.5 h-3.5 text-amber-400" />,
@@ -244,6 +256,18 @@ export default function HuntDetail({
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
         <div className="flex items-center gap-2">
+          {/* issue-local-019: cancel the active run — only while it's actually running */}
+          {isResearcher && activeRun?.generation_status === 'running' && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
+              disabled={cancelMut.isPending}
+              onClick={() => setShowCancelConfirm(true)}
+              title="Cancel this run"
+            >
+              <XCircle className="w-4 h-4" />
+              Cancel
+            </button>
+          )}
           {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
           {canRerun && (
             <button
@@ -625,6 +649,17 @@ export default function HuntDetail({
             setConfirmEvidenceId(null)
           }}
           onCancel={() => setConfirmEvidenceId(null)}
+        />
+      )}
+
+      {/* issue-local-019: cancel-run confirmation dialog */}
+      {showCancelConfirm && (
+        <ConfirmDialog
+          title="Cancel this run?"
+          message="This stops the run immediately, including any in-progress LLM or tool calls. It will be marked as cancelled and cannot be resumed — you can start a new run afterward."
+          confirmLabel="Cancel run"
+          onConfirm={() => cancelMut.mutate()}
+          onCancel={() => setShowCancelConfirm(false)}
         />
       )}
 
