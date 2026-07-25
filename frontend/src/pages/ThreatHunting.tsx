@@ -16,7 +16,7 @@
  */
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Shield, Trash2, ChevronRight, ChevronLeft, Timer, Copy, UserCircle } from 'lucide-react'
+import { Plus, Shield, Trash2, ChevronRight, ChevronLeft, Timer, Copy, UserCircle, Search, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THuntPackage, type THPhaseEntry, type THuntPackageRun } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -28,6 +28,7 @@ import { useHuntPageSize, HUNT_PAGE_SIZE_OPTIONS } from './threat-hunting/useHun
 import RunStatusBadge from './threat-hunting/RunStatusBadge'
 import RunsStatusTable from './threat-hunting/RunsStatusTable'
 import { HUNT_ID_BADGE } from './threat-hunting/runStatusUtils'
+import HuntTimeFilter, { type HuntTimeRange } from './threat-hunting/HuntTimeFilter'
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-gray-700/50 text-gray-400',
@@ -523,9 +524,28 @@ export default function ThreatHunting() {
   const { pageSize, setPageSize } = useHuntPageSize()
   const [page, setPage] = useState(1)
 
+  // issue-local-020: server-side deep search (debounced) + date-range filter.
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 350)
+    return () => clearTimeout(t)
+  }, [searchInput])
+  const [timeRange, setTimeRange] = useState<HuntTimeRange>({})
+
+  // Reset to page 1 whenever the effective filter changes.
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch, timeRange.from, timeRange.to])
+
   const { data: packages = [], isLoading } = useQuery({
-    queryKey: ['th-packages'],
-    queryFn: api.threatHunting.listPackages,
+    queryKey: ['th-packages', debouncedSearch, timeRange.from, timeRange.to],
+    queryFn: () =>
+      api.threatHunting.listPackages({
+        search: debouncedSearch || undefined,
+        date_from: timeRange.from,
+        date_to: timeRange.to,
+      }),
     // issue-local-009: poll every 4s while any package is active in any phase
     // (running = pipeline, executing = SIEM, reporting = report generation).
     refetchInterval: (query) => {
@@ -658,16 +678,53 @@ export default function ThreatHunting() {
         </div>
       </div>
 
+      {/* issue-local-020: search + time-range filter row. */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative w-full max-w-xs">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search hunt packages…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="input pl-8 pr-8 w-full text-sm"
+            aria-label="Search hunt packages"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => setSearchInput('')}
+              className="absolute right-2 top-2 text-gray-500 hover:text-gray-300"
+              aria-label="Clear search"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <HuntTimeFilter value={timeRange} onChange={setTimeRange} />
+        {!isLoading && (
+          <span className="text-xs text-gray-600">
+            {packages.length} result{packages.length === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+
       {isLoading ? (
         <p className="text-sm text-gray-500">Loading...</p>
       ) : packages.length === 0 ? (
         <div className="card text-center py-12 space-y-3">
           <Shield className="w-10 h-10 text-gray-600 mx-auto" />
-          <p className="text-sm text-gray-400">No hunt packages yet.</p>
-          {isResearcher && (
-            <button className="btn-primary text-sm" onClick={() => setShowWizard(true)}>
-              Create your first Hunt Package
-            </button>
+          {debouncedSearch || timeRange.from || timeRange.to ? (
+            <p className="text-sm text-gray-400">No hunt packages match your search/filters.</p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-400">No hunt packages yet.</p>
+              {isResearcher && (
+                <button className="btn-primary text-sm" onClick={() => setShowWizard(true)}>
+                  Create your first Hunt Package
+                </button>
+              )}
+            </>
           )}
         </div>
       ) : density === 'table' ? (
