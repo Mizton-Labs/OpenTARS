@@ -1034,8 +1034,16 @@ export const api = {
   // Threat Hunting (issue-local-002, Phase 2)
   threatHunting: {
     // Hunt Packages
-    listPackages: () =>
-      request<THuntPackage[]>('/threat-hunting/packages'),
+    // issue-local-020: optional deep search (name/description + per-run
+    // stored analysis JSON + extracted IOCs) and created_at date-range filter.
+    listPackages: (params: { search?: string; date_from?: string; date_to?: string } = {}) => {
+      const q = new URLSearchParams()
+      if (params.search) q.set('search', params.search)
+      if (params.date_from) q.set('date_from', params.date_from)
+      if (params.date_to) q.set('date_to', params.date_to)
+      const qs = q.toString()
+      return request<THuntPackage[]>(`/threat-hunting/packages${qs ? `?${qs}` : ''}`)
+    },
     createPackage: (body: { name: string; description?: string }) =>
       request<THuntPackage>('/threat-hunting/packages', {
         method: 'POST',
@@ -1258,6 +1266,32 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
         { method: 'DELETE' },
       ),
+
+    // ── Threat Intelligence (issue-local-020) ────────────────────────────────
+    getRunThreatIntel: (pkgId: string, runId: string) =>
+      request<THThreatIntel>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/threat-intel`,
+      ),
+    getThreatIntel: (pkgId: string) =>
+      request<THThreatIntel>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/threat-intel`),
+    triggerRunThreatIntel: (pkgId: string, runId: string) =>
+      request<THThreatIntel>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/threat-intel`,
+        { method: 'POST' },
+      ),
+
+    // ── Comparison Module (issue-local-020) ──────────────────────────────────
+    compareRuns: (pkgId: string, body: { provider_name?: string | null; model_name?: string | null } = {}) =>
+      request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    getComparison: (pkgId: string) =>
+      request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison`),
+    downloadComparisonMarkdown: (pkgId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/markdown`,
+    downloadComparisonPdf: (pkgId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/pdf`,
   },
 }
 
@@ -2134,6 +2168,98 @@ export interface THHuntReport {
   run_id?: string | null
   executive_summary: string
   full_report: THFullReport
+  created_at: string
+  created_by: string | null
+}
+
+// ── Threat Intelligence (issue-local-020) ─────────────────────────────────────
+
+export interface THThreatActor {
+  name: string
+  confidence: string
+  rationale?: string
+}
+
+export interface THAttribution {
+  assessment: string
+  confidence: string
+  rationale?: string
+}
+
+export interface THCampaign {
+  name: string
+  description?: string
+}
+
+export interface THRelatedVendorReport {
+  vendor: string
+  report?: string
+  campaign?: string
+}
+
+export interface THCorrelatedIoc {
+  ioc: string
+  ioc_type: string
+  hunt_package_id: string
+  run_id?: string | null
+  hunt_name: string
+}
+
+export interface THThreatIntel {
+  id: string
+  hunt_package_id: string
+  run_id: string | null
+  threat_actors: THThreatActor[]
+  attribution: THAttribution | null
+  malware_families: string[]
+  campaigns: THCampaign[]
+  related_vendors: THRelatedVendorReport[]
+  correlated_iocs: THCorrelatedIoc[]
+  summary: string
+  full_analysis: Record<string, unknown>
+  created_at: string
+  created_by: string | null
+}
+
+// ── Comparison Module (issue-local-020) ────────────────────────────────────────
+// Reuses THHuntReport's envelope shape; `full_report` here is a
+// THComparisonFullReport rather than THFullReport (report_kind: "comparison").
+
+export interface THComparisonDiffRow {
+  run_id: string
+  run_id_display: string
+  model: string
+  effort: string
+  status: string
+  hypothesis_count: number
+  sanitized_ioc_count: number
+  removed_ioc_count: number
+  technique_count: number
+  event_count: number
+  created_at: string
+}
+
+export interface THComparisonFullReport {
+  hunt_name: string
+  hunt_id: string
+  hunt_id_display: string
+  compared_run_ids: string[]
+  generated_at: string
+  diff_table: THComparisonDiffRow[]
+  summary: string
+  key_differences: string[]
+  gaps: string[]
+  enrichment_opportunities: string[]
+  recommended_combination: string
+  report_kind?: string
+}
+
+export interface THComparisonReport {
+  id: string
+  hunt_package_id: string
+  run_id: string | null
+  executive_summary: string
+  full_report: THComparisonFullReport
   created_at: string
   created_by: string | null
 }

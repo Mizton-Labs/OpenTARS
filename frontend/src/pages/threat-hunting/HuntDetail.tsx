@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -9,6 +9,8 @@ import AnalysisTab from './AnalysisTab'
 import ExecutionPanel from './ExecutionPanel'
 import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
+import ThreatIntelTab from './ThreatIntelTab'
+import ComparisonAssessmentTab from './ComparisonAssessmentTab'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { runStatusClass, runLabel, HUNT_ID_BADGE } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
@@ -16,7 +18,7 @@ import IocApplyBar from './IocApplyBar'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
 import RunsStatusTable from './RunsStatusTable'
 
-type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'report' | 'comments'
+type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'threat-intel' | 'comparison' | 'report' | 'comments'
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high'] as const
 
@@ -214,6 +216,16 @@ export default function HuntDetail({
     },
   })
 
+  // issue-local-020: Comparison Module — compares ALL runs of this package
+  // regardless of status, independent of the run selector above.
+  const compareMut = useMutation({
+    mutationFn: () => api.threatHunting.compareRuns(pkgId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-comparison', pkgId] })
+      setActiveTab('comparison')
+    },
+  })
+
   const PARSE_STATUS_ICON = {
     ok: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
     partial: <Clock className="w-3.5 h-3.5 text-amber-400" />,
@@ -278,6 +290,22 @@ export default function HuntDetail({
             >
               <RefreshCw className="w-4 h-4" />
               Re-run
+            </button>
+          )}
+          {/* issue-local-020: Assess & Compare — available regardless of run status */}
+          {runs.length > 0 && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm"
+              disabled={compareMut.isPending}
+              onClick={() => compareMut.mutate()}
+              title="Compare all runs of this hunt package"
+            >
+              {compareMut.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <GitCompare className="w-4 h-4" />
+              )}
+              Assess &amp; Compare
             </button>
           )}
           {isResearcher && (
@@ -374,6 +402,26 @@ export default function HuntDetail({
               className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'execution' ? 'tab-active' : 'tab-inactive')}
             >
               Execution
+            </button>
+          )}
+          {/* Threat Intelligence tab (issue-local-020) — shown once the
+              package has finished at least one run's execution. */}
+          {isFinished && (
+            <button
+              onClick={() => setActiveTab('threat-intel')}
+              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'threat-intel' ? 'tab-active' : 'tab-inactive')}
+            >
+              Threat Intelligence
+            </button>
+          )}
+          {/* Comparison Assessment tab (issue-local-020) — independent of
+              status, available as soon as any run exists. */}
+          {runs.length > 0 && (
+            <button
+              onClick={() => setActiveTab('comparison')}
+              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'comparison' ? 'tab-active' : 'tab-inactive')}
+            >
+              Comparison Assessment
             </button>
           )}
           {/* Report tab — shown when package is approved or completed */}
@@ -567,6 +615,12 @@ export default function HuntDetail({
           retrohunt={undefined}
         />
       )}
+
+      {/* Threat Intelligence tab (issue-local-020) */}
+      {activeTab === 'threat-intel' && <ThreatIntelTab pkgId={pkgId} runId={activeRunId} />}
+
+      {/* Comparison Assessment tab (issue-local-020) */}
+      {activeTab === 'comparison' && <ComparisonAssessmentTab pkgId={pkgId} />}
 
       {/* Report tab */}
       {activeTab === 'report' && <ReportPanel pkgId={pkgId} runId={activeRunId} />}

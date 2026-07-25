@@ -9,6 +9,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Search/time filter, Threat Intelligence Analyst, Comparison Module (issue-local-020)
+
+**The hunt package list now supports server-side deep search and a time-range filter.** The search
+box reaches past name/description into each package's stored per-run JSON (threat context,
+hypotheses, TTP analysis, deep retrohunt) and extracted IOCs via `list_hunt_packages(search=...)`,
+with LIKE-wildcard escaping so literal `%`/`_` in a search term aren't treated as wildcards. A new
+`HuntTimeFilter` component adds three sub-modes — Relative ("Last N days"), Time Range (native
+`<input type="date">` pair), and Presets (Last 1d/7d/15d/30d/3m/6m, Year to Date, Last Year) — with
+the search input debounced ~350ms before hitting the API.
+
+**A new Threat Hunt Intelligence Analyst runs automatically after every SIEM execution**, correlating
+the run's threat context, hypotheses, and kept IOCs against every other hunt package in the system.
+It persists threat actors, attribution, malware families, campaigns, related vendor reporting, and
+cross-package IOC correlations (`extracted_iocs` shares one DB across all packages, so this is a
+plain cross-package query) to a new `threat_intel_analysis` table (schema v7). Results surface in a
+new **Threat Intelligence** tab, shown before Report. Since it lives entirely in
+`siem/executor.py` — SIEM execution is outside the LangGraph pipeline, same as `report_writer.py` —
+packages that never execute don't get it automatically; a manual
+`POST /packages/{id}/runs/{run_id}/threat-intel` route covers that gap.
+
+**A new Comparison Module lets analysts assess all runs of a hunt package side by side.** The
+"Assess & Compare" button (next to Re-run, available regardless of any run's status) triggers a
+comparison agent that builds a deterministic per-run diff table (model, effort, status, hypothesis/
+IOC/technique/event counts) plus an LLM narrative (key differences, gaps, enrichment opportunities,
+a recommended combination). Full run detail is only sent to the LLM for the 3 most recent runs —
+older runs get a one-line summary — to keep prompt size bounded on packages with many runs.
+Comparison reports reuse the existing `hunt_reports` table via a `report_kind: "comparison"`
+discriminator instead of a new table; `get_hunt_report()` was updated to filter these out so a
+comparison report can never shadow a package's real report. Results show in a new **Comparison
+Assessment** tab (before Report), downloadable as Markdown/PDF/JSON.
+
 ### Added — Run cancellation, traceable logging, report identifiers/IOC table (issue-local-019)
 
 **Operators can now cancel a currently-running hunt generation run** — a new Cancel button on
