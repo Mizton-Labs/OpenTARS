@@ -6,8 +6,11 @@
  *
  * Verbosity levels:
  *   info    — compact checklist
- *   verbose — 2-col layout: task list LEFT, diagram card RIGHT (issue-006-C)
- *   debug   — verbose view + a live scoped log textbox at the bottom
+ *   verbose — 2-col layout: task list LEFT, diagram card RIGHT (issue-006-C);
+ *             also shows the Pipeline Log console, filtered to error/
+ *             disabled/failed reasoning lines only (issue-local-021)
+ *   debug   — verbose view + the full Pipeline Log console (every
+ *             TOOL_CALL/TOOL_RESULT/LLM_CALL/LLM_RESPONSE line, unfiltered)
  *
  * Visualization styles (only for verbose/debug):
  *   timeline  — animated vertical step list (no extra deps)
@@ -37,6 +40,7 @@ import {
 import { clsx } from 'clsx'
 import { useQuery } from '@tanstack/react-query'
 import { api, type THGenerationRecord, type THStepLog, type THIntakeSource } from '../../api/client'
+import { buildPipelineLogLines } from './pipelineLogUtils'
 
 // ── Lazy-loaded visualizers ───────────────────────────────────────────────────
 
@@ -127,11 +131,14 @@ function IntakeSourceSubStatus({ src }: { src: THIntakeSource }) {
 
 function TimelineVisualizer({
   genRecord,
-  debug,
+  verbosity,
   onShowIocs,
 }: {
   genRecord: THGenerationRecord
-  debug: boolean
+  /** issue-local-021: 'verbose' now also shows the Pipeline Log console,
+   *  filtered to error/disabled lines only ("show the thinking depending on
+   *  verbosity" — the full raw trace is reserved for 'debug'). */
+  verbosity: 'verbose' | 'debug'
   onShowIocs?: () => void
 }) {
   const stepLogs: Record<string, THStepLog> = {}
@@ -140,22 +147,16 @@ function TimelineVisualizer({
   }
   const completed = genRecord.completed_steps ?? []
   const currentStep = genRecord.current_step ?? ''
-
-  const allDebugLines: string[] = []
-  for (const step of PIPELINE_STEPS) {
-    const log = stepLogs[step.id]
-    if (log?.debug_lines?.length) {
-      allDebugLines.push(`=== ${step.label} ===`)
-      allDebugLines.push(...log.debug_lines)
-    }
-  }
+  const debug = verbosity === 'debug'
+  const showConsole = verbosity === 'verbose' || verbosity === 'debug'
+  const allDebugLines = buildPipelineLogLines(genRecord, verbosity, PIPELINE_STEPS)
 
   const debugRef = useRef<HTMLPreElement>(null)
   useEffect(() => {
-    if (debug && debugRef.current) {
+    if (showConsole && debugRef.current) {
       debugRef.current.scrollTop = debugRef.current.scrollHeight
     }
-  }, [allDebugLines.length, debug])
+  }, [allDebugLines.length, showConsole])
 
   return (
     <div className="space-y-4">
@@ -261,11 +262,13 @@ function TimelineVisualizer({
         })}
       </div>
 
-      {/* Debug log panel */}
-      {debug && (
+      {/* issue-local-021: Pipeline Log console — now shown at 'verbose' too
+          (filtered to error/disabled reasoning lines), full raw trace at
+          'debug'. */}
+      {showConsole && (
         <div className="space-y-1">
           <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
-            Pipeline Log
+            Pipeline Log {!debug && <span className="normal-case text-gray-600">(errors only — enable Debug verbosity for the full trace)</span>}
           </p>
           <pre
             ref={debugRef}
@@ -364,7 +367,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
 
   // Part 1b: toolbar row component
   const SubtasksToolbar = (
-    <div className="col-span-2 flex items-center gap-3 pb-1 border-b border-gray-800/50">
+    <div className="col-span-2 flex items-center justify-end gap-3 pb-1 border-b border-gray-800/50">
       <button
         className="text-sm text-gray-400 flex items-center gap-1.5 cursor-pointer select-none hover:text-gray-200 transition-colors"
         onClick={() => {
@@ -409,7 +412,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
+          <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
         </div>
         {/* Right: Mermaid diagram */}
         <div className="min-w-0">
@@ -435,7 +438,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
+          <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
         </div>
         {/* Right: ReactFlow graph */}
         <div className="min-w-0">
@@ -455,5 +458,5 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   }
 
   // Default: timeline (full width, includes debug panel)
-  return <TimelineVisualizer genRecord={genRecord} debug={debug} onShowIocs={onShowIocs} />
+  return <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
 }

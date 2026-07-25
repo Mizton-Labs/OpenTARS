@@ -185,6 +185,7 @@ export default function RunsStatusTable({
   pkgId,
   runs,
   onSelectRun,
+  activeRunId,
 }: {
   pkgId: string
   runs: THuntPackageRun[]
@@ -192,6 +193,9 @@ export default function RunsStatusTable({
    *  clickable buttons that open this specific run (rather than the
    *  package's newest run). Omitted call sites stay plain text. */
   onSelectRun?: (runId: string) => void
+  /** issue-local-021: when provided, highlights the row matching this run id
+   *  as the currently-open/selected run. */
+  activeRunId?: string
 }) {
   if (runs.length === 0) return null
   const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
@@ -212,7 +216,13 @@ export default function RunsStatusTable({
         </thead>
         <tbody>
           {runs.map((run) => (
-            <tr key={run.id} className="border-t border-gray-800/60">
+            <tr
+              key={run.id}
+              className={clsx(
+                'border-t border-gray-800/60',
+                run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
+              )}
+            >
               <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
                 {onSelectRun ? (
                   <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>

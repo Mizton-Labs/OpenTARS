@@ -60,3 +60,17 @@ describe('Sidebar section title emphasis', () => {
     expect(screen.getByText('Home', { selector: 'span' })).toHaveClass('text-gray-500', 'font-medium')
   })
 })
+
+describe('Sidebar Threat Intel Tracking nav item (issue-local-021)', () => {
+  it('links to the nested threat-hunting/tracking route', () => {
+    renderSidebar()
+    const link = screen.getByText('Threat Intel Tracking').closest('a')
+    expect(link).toHaveAttribute('href', '/threat-hunting/tracking')
+  })
+
+  it('sits under the Threat Hunting section, alongside the base Threat Hunting item', () => {
+    renderSidebar()
+    expect(screen.getByText('Threat Hunting', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByText('Threat Intel Tracking')).toBeInTheDocument()
+  })
+})

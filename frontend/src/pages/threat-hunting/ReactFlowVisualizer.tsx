@@ -272,7 +272,9 @@ export default function ReactFlowVisualizer({
   // around the single focused node regardless of its size on screen.
   useEffect(() => {
     if (!trackWorkflow || !active) return
-    instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 0.6, duration: 400 })
+    // issue-local-021: zoomed out slightly (0.6 -> 1.1) so neighboring
+    // nodes stay visible for context while still centering on the active one.
+    instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 1.1, duration: 400 })
   }, [trackWorkflow, active])
 
   return (

@@ -13,6 +13,7 @@ import Login from './pages/Login'
 import Home from './pages/Home'
 import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
 import ThreatHuntingDetail from './pages/threat-hunting/ThreatHuntingDetail'
+import ThreatIntelTracking from './pages/threat-hunting/ThreatIntelTracking'
 import { api } from './api/client'
 import { useAuth } from './auth/useAuth'
 import { KNOWN_ROUTES } from './utils/basePrefix'
@@ -108,6 +109,11 @@ export default function App() {
             generic SHELL_ROUTES map so they take precedence over the flat
             threat-hunting entry which handles the list view. */}
         <Route path="threat-hunting/new" element={<ThreatHuntingNew />} />
+        {/* issue-local-021: cross-hunt Threat Intel Tracking dashboard — a
+            static segment, so React Router's route ranking already prefers
+            it over threat-hunting/:id regardless of declaration order, but
+            it's declared first anyway for clarity, matching threat-hunting/new. */}
+        <Route path="threat-hunting/tracking" element={<ThreatIntelTracking />} />
         <Route path="threat-hunting/:id" element={<ThreatHuntingDetail />} />
       </Route>
     </Routes>

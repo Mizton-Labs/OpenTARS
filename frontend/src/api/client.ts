@@ -1281,7 +1281,10 @@ export const api = {
       ),
 
     // ── Comparison Module (issue-local-020) ──────────────────────────────────
-    compareRuns: (pkgId: string, body: { provider_name?: string | null; model_name?: string | null } = {}) =>
+    compareRuns: (
+      pkgId: string,
+      body: { provider_name?: string | null; model_name?: string | null; run_ids?: string[] } = {},
+    ) =>
       request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
         method: 'POST',
         body: JSON.stringify(body),
@@ -1292,6 +1295,26 @@ export const api = {
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/markdown`,
     downloadComparisonPdf: (pkgId: string) =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/pdf`,
+
+    // ── Threat Intel Tracking dashboard (issue-local-021) ────────────────────
+    tracking: {
+      getDashboard: (search?: string) => {
+        const q = new URLSearchParams()
+        if (search) q.set('search', search)
+        const qs = q.toString()
+        return request<THTrackingDashboard>(`/threat-hunting/tracking/dashboard${qs ? `?${qs}` : ''}`)
+      },
+      listHunts: () => request<THTrackingHunt[]>('/threat-hunting/tracking/hunts'),
+      setHuntExcluded: (pkgId: string, excluded: boolean) =>
+        request<THuntPackage>(
+          `/threat-hunting/tracking/hunts/${encodeURIComponent(pkgId)}/exclude`,
+          { method: 'POST', body: JSON.stringify({ excluded }) },
+        ),
+      deleteHunt: (pkgId: string) =>
+        request<void>(`/threat-hunting/tracking/hunts/${encodeURIComponent(pkgId)}`, {
+          method: 'DELETE',
+        }),
+    },
   },
 }
 
@@ -1846,6 +1869,9 @@ export interface THIocRunConfig {
     remove_cdn_ranges?: boolean
     remove_legit_services?: boolean
   }
+  /** issue-local-021: include the Threat Hunt Intelligence Analyst (both the
+   *  preliminary and post-execution phases) in this run's workflow. */
+  include_threat_intel?: boolean
 }
 
 /** Per-source intake metadata emitted by intake_classifier (issue-006-C / issue-local-011). */
@@ -2262,4 +2288,64 @@ export interface THComparisonReport {
   full_report: THComparisonFullReport
   created_at: string
   created_by: string | null
+}
+
+// ── Threat Intel Tracking dashboard (issue-local-021) ───────────────────────
+
+/** A hunt package as an aggregated item's data-provenance source. */
+export interface THTrackingSource {
+  id: string
+  name: string
+  hunt_id_display: string
+}
+
+export interface THTrackingIoc {
+  ioc: string
+  ioc_type: string
+  hunt_count: number
+  hunt_packages: THTrackingSource[]
+}
+
+export interface THTrackingThreatActor {
+  name: string
+  confidence?: string
+  rationale?: string
+  sources: THTrackingSource[]
+}
+
+export interface THTrackingCampaign {
+  name: string
+  description?: string
+  sources: THTrackingSource[]
+}
+
+export interface THTrackingMalwareFamily {
+  name: string
+  sources: THTrackingSource[]
+}
+
+export interface THTrackingTtp {
+  technique_id: string
+  technique_name: string
+  tactic: string
+  sources: THTrackingSource[]
+}
+
+export interface THTrackingDashboard {
+  iocs: THTrackingIoc[]
+  cves: THTrackingIoc[]
+  threat_actors: THTrackingThreatActor[]
+  campaigns: THTrackingCampaign[]
+  malware_families: THTrackingMalwareFamily[]
+  ttps: THTrackingTtp[]
+}
+
+export interface THTrackingHunt {
+  id: string
+  name: string
+  hunt_id_display: string
+  status: string
+  excluded_from_correlation: boolean
+  ioc_count: number
+  has_threat_intel: boolean
 }

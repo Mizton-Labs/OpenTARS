@@ -61,8 +61,10 @@ export default function ThreatIntelTab({ pkgId, runId }: { pkgId: string; runId?
           )}
         </div>
         {isResearcher && runId && (
+          // issue-local-021: highlighted regardless of label — this is the
+          // primary call-to-action for the tab, not a secondary action.
           <button
-            className="btn-secondary text-sm flex items-center gap-1.5"
+            className="btn-primary text-sm flex items-center gap-1.5"
             disabled={analyzeMut.isPending}
             onClick={() => analyzeMut.mutate()}
           >
@@ -71,7 +73,7 @@ export default function ThreatIntelTab({ pkgId, runId }: { pkgId: string; runId?
             ) : (
               <RefreshCw className="w-3.5 h-3.5" />
             )}
-            {intel ? 'Re-analyze' : 'Analyze'}
+            {intel ? 'Re-Run Analysis' : 'Run Analysis'}
           </button>
         )}
       </div>

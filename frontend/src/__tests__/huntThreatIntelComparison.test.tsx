@@ -174,26 +174,29 @@ beforeEach(() => {
 })
 
 describe('HuntDetail tabs (issue-local-020)', () => {
-  it('shows Threat Intelligence and Comparison Assessment tabs before Report, in order', async () => {
+  it('shows Threat Intelligence before Report in the tab bar, and a Comparison Assessment control on the All-Runs row', async () => {
     renderDetail()
-    const nav = await screen.findByRole('button', { name: 'Threat Intelligence' })
+    // issue-local-021: Comparison Assessment is no longer a tab-bar button —
+    // it's a control on the "All runs" row (above the tab bar), signaling
+    // it's a package-level view, not a per-run tab. Wait for it as the
+    // readiness signal (still gated on runs.length>0).
+    const nav = await screen.findByRole('button', { name: 'Comparison Assessment' })
     expect(nav).toBeInTheDocument()
 
     const buttons = screen.getAllByRole('button').map((b) => b.textContent)
     const tiIdx = buttons.findIndex((t) => t === 'Threat Intelligence')
-    const cmpIdx = buttons.findIndex((t) => t === 'Comparison Assessment')
     const reportIdx = buttons.findIndex((t) => t === 'Report')
     expect(tiIdx).toBeGreaterThan(-1)
-    expect(cmpIdx).toBeGreaterThan(tiIdx)
-    expect(reportIdx).toBeGreaterThan(cmpIdx)
+    expect(reportIdx).toBeGreaterThan(tiIdx)
   })
 
-  it('shows Comparison Assessment tab even when the package is not finished, as long as a run exists', async () => {
+  it('shows Threat Intelligence/Report tabs disabled (not absent) when the package is not finished', async () => {
     vi.mocked(api.threatHunting.getPackage).mockResolvedValue(makePkg({ status: 'planning' }))
     renderDetail()
     expect(await screen.findByRole('button', { name: 'Comparison Assessment' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Threat Intelligence' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Report' })).not.toBeInTheDocument()
+    // issue-local-021: always rendered, just greyed/disabled — not absent.
+    expect(await screen.findByRole('button', { name: 'Threat Intelligence' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Report' })).toBeDisabled()
   })
 
   it('hides both tabs and the Assess & Compare button when there are no runs', async () => {
@@ -208,14 +211,20 @@ describe('HuntDetail tabs (issue-local-020)', () => {
 describe('ThreatIntelTab (issue-local-020)', () => {
   it('shows an empty state when no analysis exists yet', async () => {
     renderDetail()
-    fireEvent.click(await screen.findByRole('button', { name: 'Threat Intelligence' }))
+    // issue-local-021: the tab is always rendered but starts disabled until
+    // the package finishes loading (isFinished depends on pkg) — wait for
+    // it to become enabled before clicking, rather than clicking the instant
+    // it appears in the DOM.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Threat Intelligence' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Threat Intelligence' }))
     expect(await screen.findByText('No threat intelligence analysis yet.')).toBeInTheDocument()
   })
 
   it('renders threat actors, summary, and correlated IOCs when data exists', async () => {
     vi.mocked(api.threatHunting.getRunThreatIntel).mockResolvedValue(makeThreatIntel())
     renderDetail()
-    fireEvent.click(await screen.findByRole('button', { name: 'Threat Intelligence' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Threat Intelligence' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Threat Intelligence' }))
 
     expect(await screen.findByText('FIN7 activity correlated across hunts.')).toBeInTheDocument()
     // "FIN7" appears twice (Threat Actors card + Attribution assessment).
@@ -244,16 +253,28 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
     expect(screen.getByText('Combine IOC lists.')).toBeInTheDocument()
   })
 
-  it('clicking Assess & Compare calls compareRuns and switches to the Comparison tab', async () => {
+  it('clicking Comparison Assessment then Assess & Compare opens the run picker and calls compareRuns', async () => {
+    // issue-local-021: Assess & Compare is now self-contained inside
+    // ComparisonAssessmentTab — navigate to the tab first (no comparison
+    // yet), then trigger the dialog from within it.
     vi.mocked(api.threatHunting.compareRuns).mockResolvedValue(makeComparison())
-    // onSuccess invalidates the ['th-comparison', pkgId] query, which
-    // refetches via getComparison — must resolve for the tab to render data.
-    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
     renderDetail()
 
-    fireEvent.click(await screen.findByRole('button', { name: /Assess & Compare/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Assess & Compare' }))
 
-    await waitFor(() => expect(api.threatHunting.compareRuns).toHaveBeenCalledWith('pkg-1'))
+    // getComparison starts empty; after a successful compare it must
+    // resolve with data so the invalidated query refetches real content.
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.compareRuns).toHaveBeenCalledWith('pkg-1', {
+        run_ids: undefined,
+        provider_name: undefined,
+        model_name: undefined,
+      }),
+    )
     expect(await screen.findByText('Runs largely agree on the threat actor.')).toBeInTheDocument()
   })
 })
