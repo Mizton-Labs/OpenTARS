@@ -88,9 +88,18 @@ def _item_or_404(item: dict | None) -> dict:
 
 
 @router.get("/packages", response_model=list[HuntPackageOut])
-async def list_packages() -> list[dict]:
-    """List all non-archived hunt packages."""
-    return await th_db.list_hunt_packages()
+async def list_packages(
+    search: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+) -> list[dict]:
+    """List all non-archived hunt packages.
+
+    issue-local-020: optional deep search (name/description + this
+    package's runs' stored analysis JSON + extracted IOCs) and date-range
+    filtering on created_at.
+    """
+    return await th_db.list_hunt_packages(search=search, date_from=date_from, date_to=date_to)
 
 
 @router.post("/packages", response_model=HuntPackageOut, status_code=201)
@@ -1123,6 +1132,164 @@ async def download_run_report_pdf(pkg_id: str, run_id: str) -> StreamingResponse
 
     hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
     filename = f"hunt_report_{hunt_name}_run_{run_id[:8]}.pdf"
+    from io import BytesIO
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Threat Intelligence (issue-local-020) ─────────────────────────────────────
+
+
+@router.get("/packages/{pkg_id}/runs/{run_id}/threat-intel")
+async def get_run_threat_intel(pkg_id: str, run_id: str) -> dict:
+    """Get the Threat Intelligence analysis for a specific run."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    analysis = await th_db.get_threat_intel_analysis_by_run(run_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=404, detail="No threat intelligence analysis found for this run."
+        )
+    return analysis
+
+
+@router.get("/packages/{pkg_id}/threat-intel")
+async def get_package_threat_intel(pkg_id: str) -> dict:
+    """Get the latest Threat Intelligence analysis for a package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    analysis = await th_db.get_latest_threat_intel_analysis(pkg_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="No threat intelligence analysis found.")
+    return analysis
+
+
+@router.post("/packages/{pkg_id}/runs/{run_id}/threat-intel", status_code=201)
+async def trigger_run_threat_intel(pkg_id: str, run_id: str, request: Request) -> dict:
+    """Manually (re-)trigger Threat Intelligence analysis for a run.
+
+    Normally this runs automatically after SIEM execution completes; this
+    on-demand route covers packages approved/completed without an execution
+    run, and is useful for re-analysis after new hunt packages are added
+    (more cross-package IOC correlations may now be findable).
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    from backend.threat_hunting.agents.nodes.threat_intel_analyst import analyze_threat_intel
+
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
+    result = await analyze_threat_intel(pkg_id, run_id=run_id, created_by=created_by)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return result
+
+
+# ── Comparison Module (issue-local-020) ────────────────────────────────────────
+
+
+class CompareRunsBody(BaseModel):
+    provider_name: str | None = None
+    model_name: str | None = None
+
+
+@router.post("/packages/{pkg_id}/compare", status_code=201)
+async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Request) -> dict:
+    """Compare all runs of this hunt package (any status) and persist a
+    comparison report. Synchronous — a single LLM call, matching the
+    existing manual report-generation pattern."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    from backend.threat_hunting.agents.nodes.comparison_analyst import compare_runs
+
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
+    try:
+        return await compare_runs(
+            pkg_id,
+            provider_name=body.provider_name,
+            model_name=body.model_name,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/comparison")
+async def get_package_comparison(pkg_id: str) -> dict:
+    """Get the latest comparison report for a package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_comparison_report(pkg_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No comparison report found.")
+    return report
+
+
+def _decode_full_report(report: dict) -> dict:
+    full_report = report.get("full_report") or {}
+    if isinstance(full_report, str):
+        import json as _json
+
+        try:
+            full_report = _json.loads(full_report)
+        except Exception:
+            full_report = {}
+    return full_report
+
+
+@router.get("/packages/{pkg_id}/comparison/markdown")
+async def download_comparison_markdown(pkg_id: str) -> Response:
+    """Download the latest comparison report as a Markdown document."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_comparison_report(pkg_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No comparison report found.")
+
+    full_report = _decode_full_report(report)
+    markdown_content = full_report.get("_markdown")
+    if not markdown_content:
+        from backend.threat_hunting.agents.nodes.report_writer import render_comparison_markdown
+
+        markdown_content = render_comparison_markdown(full_report)
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_comparison_{hunt_name}.md"
+    return Response(
+        content=markdown_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/packages/{pkg_id}/comparison/pdf")
+async def download_comparison_pdf(pkg_id: str) -> StreamingResponse:
+    """Download the latest comparison report as a PDF document (generated on demand)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_comparison_report(pkg_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No comparison report found.")
+
+    full_report = _decode_full_report(report)
+
+    try:
+        from backend.threat_hunting.agents.nodes.report_writer import render_comparison_pdf
+
+        pdf_bytes = render_comparison_pdf(full_report)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="PDF generation requires reportlab. Install it with: pip install reportlab",
+        )
+    except Exception as exc:
+        logger.exception("Comparison PDF render failed for %s: %s", pkg_id[:8], exc)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_comparison_{hunt_name}.pdf"
     from io import BytesIO
 
     return StreamingResponse(

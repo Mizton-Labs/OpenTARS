@@ -343,6 +343,31 @@ async def _run_execution(
         await th_db.update_hunt_package(hunt_package_id, status="completed")
         logger.info("Execution [%s]: completed", task_result_id[:8])
 
+        # 6b. Threat Hunt Intelligence Analyst (soft-fail, issue-local-020) —
+        #     correlates this run against every other hunt package (shared
+        #     IOCs, threat actors, malware families). Runs after execution
+        #     completes and before the report, so a future report could
+        #     reference it. Not a graph node — see threat_intel_analyst.py's
+        #     module docstring for why.
+        try:
+            from backend.threat_hunting.agents.nodes.threat_intel_analyst import (
+                analyze_threat_intel,
+            )
+
+            await analyze_threat_intel(
+                hunt_package_id,
+                run_id=run_id,
+                provider_name=provider_name,
+                model_name=model_name,
+            )
+            logger.info("Execution [%s]: threat intel analysis complete", task_result_id[:8])
+        except Exception as intel_exc:
+            logger.warning(
+                "Execution [%s]: threat intel analysis failed (non-fatal): %s",
+                task_result_id[:8],
+                intel_exc,
+            )
+
         # 7. Auto-generate hunt report (soft-fail) — report_writer sets
         #    generation_status="reporting" and writes its own step_logs
         try:

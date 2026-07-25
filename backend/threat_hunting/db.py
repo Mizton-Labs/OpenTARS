@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 6
+_TH_SCHEMA_VERSION = 7
 
 
 def _utc_now_iso() -> str:
@@ -177,6 +177,24 @@ CREATE TABLE IF NOT EXISTS run_comments (
     body             TEXT NOT NULL,
     created_by       TEXT,
     created_at       TEXT NOT NULL
+);
+"""
+
+CREATE_THREAT_INTEL_ANALYSIS_TABLE = """
+CREATE TABLE IF NOT EXISTS threat_intel_analysis (
+    id                TEXT PRIMARY KEY,
+    hunt_package_id   TEXT NOT NULL REFERENCES hunt_packages(id),
+    run_id            TEXT,
+    threat_actors     TEXT,
+    attribution       TEXT,
+    malware_families  TEXT,
+    campaigns         TEXT,
+    related_vendors   TEXT,
+    correlated_iocs   TEXT,
+    summary           TEXT,
+    full_analysis     TEXT,
+    created_at        TEXT NOT NULL,
+    created_by        TEXT
 );
 """
 
@@ -349,6 +367,22 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
             "Migrated threat_hunting.db to schema v6 "
             "(added hunt_seq/run_seq for HuntID/Run ID, run_comments table)"
         )
+    if current_version < 7:
+        # v7 (issue-local-020): threat_intel_analysis table (Threat Hunt
+        # Intelligence Analyst results) + an index on extracted_iocs.ioc to
+        # speed up both the new cross-package correlation query and the new
+        # deep-search LIKE filter.
+        await db.execute(CREATE_THREAT_INTEL_ANALYSIS_TABLE)
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_extracted_iocs_ioc ON extracted_iocs(ioc)"
+            )
+        except Exception as exc:
+            logger.warning("Schema v7 index creation skipped (non-fatal): %s", exc)
+        logger.info(
+            "Migrated threat_hunting.db to schema v7 "
+            "(added threat_intel_analysis table, extracted_iocs.ioc index)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -365,6 +399,13 @@ async def init_threat_hunting_db() -> None:
         await db.execute(CREATE_HUNT_REPORTS_TABLE)
         await db.execute(CREATE_RUN_COMMENTS_TABLE)
         await db.execute(CREATE_SIEM_CONNECTORS_TABLE)
+        await db.execute(CREATE_THREAT_INTEL_ANALYSIS_TABLE)
+        try:
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_extracted_iocs_ioc ON extracted_iocs(ioc)"
+            )
+        except Exception:
+            pass
         cur = await db.execute("SELECT version FROM th_schema_version LIMIT 1")
         row = await cur.fetchone()
         await cur.close()
@@ -594,7 +635,19 @@ def _parse_deep_retrohunt_counts(
     return len(sanitized_iocs) - removed, removed
 
 
-async def list_hunt_packages() -> list[dict[str, Any]]:
+def _escape_like(term: str) -> str:
+    """Escape LIKE wildcards (%, _) and the escape char itself in *term*,
+    so search input containing them is matched literally, not as a pattern.
+    Pair with ``LIKE ? ESCAPE '\\'`` in the SQL."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def list_hunt_packages(
+    *,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
     """List all non-archived hunt packages with evidence counts and latest run summary.
 
     issue-006-D: each package dict gains three optional keys:
@@ -607,16 +660,47 @@ async def list_hunt_packages() -> list[dict[str, Any]]:
     ``total_elapsed_s`` — not just the latest one) and ``run_count``, so the
     list view can show per-run state (e.g. a compact status chip per run)
     without an N+1 fetch per package.
+
+    issue-local-020: optional ``search`` (deep search — matches package
+    name/description as well as this package's runs' stored
+    threat_context/hypotheses/ttp_analysis/deep_retrohunt JSON and its
+    extracted IOCs) and ``date_from``/``date_to`` (inclusive bounds on
+    ``hunt_packages.created_at``, ISO-8601 strings — compare correctly as
+    plain text). All filtering happens in the base query; everything below
+    it already keys off the resulting ``pkg_ids``, so it cascades for free.
     """
+    where_clauses = ["hp.status != 'archived'"]
+    params: list[Any] = []
+    if date_from:
+        where_clauses.append("hp.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_clauses.append("hp.created_at <= ?")
+        params.append(date_to)
+    if search:
+        like_term = f"%{_escape_like(search)}%"
+        where_clauses.append(
+            "("
+            "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
+            "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
+            "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
+            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
+            "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
+            "AND x.ioc LIKE ? ESCAPE '\\')"
+            ")"
+        )
+        params.extend([like_term] * 7)
+
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        # Base query: packages + evidence count
+        # Base query: packages + evidence count, filtered by search/date range
         cur = await db.execute(
             "SELECT hp.*, COUNT(ei.id) AS evidence_count "
             "FROM hunt_packages hp "
             "LEFT JOIN evidence_items ei ON ei.hunt_package_id = hp.id "
-            "WHERE hp.status != 'archived' "
-            "GROUP BY hp.id ORDER BY hp.created_at DESC"
+            f"WHERE {' AND '.join(where_clauses)} "  # noqa: S608
+            "GROUP BY hp.id ORDER BY hp.created_at DESC",
+            params,
         )
         rows = await cur.fetchall()
         await cur.close()
@@ -1661,18 +1745,29 @@ def _decode_report_row(d: dict) -> dict:
 
 
 async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the latest report for a hunt package (most recently created)."""
+    """Return the latest NORMAL (non-comparison) report for a hunt package.
+
+    issue-local-020: comparison reports (full_report.report_kind ==
+    "comparison") share the hunt_reports table but must never surface here —
+    every existing caller of this function expects a single-run/package
+    report, so a comparison row (run_id=NULL, same as older pre-run-scoping
+    package-level reports) would otherwise silently shadow the real one.
+    """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT * FROM hunt_reports WHERE hunt_package_id = ? ORDER BY created_at DESC LIMIT 1",
+            "SELECT * FROM hunt_reports WHERE hunt_package_id = ? ORDER BY created_at DESC",
             (hunt_package_id,),
         )
-        row = await cur.fetchone()
+        rows = await cur.fetchall()
         await cur.close()
-    if not row:
-        return None
-    return _decode_report_row(dict(row))
+    for row in rows:
+        decoded = _decode_report_row(dict(row))
+        full_report = decoded.get("full_report")
+        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+            continue
+        return decoded
+    return None
 
 
 async def get_hunt_report_by_run(run_id: str) -> dict[str, Any] | None:
@@ -1688,6 +1783,187 @@ async def get_hunt_report_by_run(run_id: str) -> dict[str, Any] | None:
     if not row:
         return None
     return _decode_report_row(dict(row))
+
+
+# ── Comparison reports (issue-local-020) ─────────────────────────────────────
+# Reuses hunt_reports as-is rather than a new table: a comparison report is a
+# hunt_reports row with run_id=NULL (it isn't scoped to one run) and a
+# "report_kind": "comparison" discriminator inside full_report, alongside the
+# compared run ids. get_hunt_report()/get_hunt_report_by_run() are unaffected
+# since those either filter by a specific run_id (comparison rows have none)
+# or return latest-by-hunt_package_id — see get_latest_comparison_report()'s
+# own filtering below for why that one can't just reuse get_hunt_report().
+
+
+async def create_comparison_report(
+    hunt_package_id: str,
+    *,
+    executive_summary: str,
+    full_report: dict[str, Any],
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    full_report = {**full_report, "report_kind": "comparison"}
+    await create_hunt_report(
+        hunt_package_id,
+        executive_summary=executive_summary,
+        full_report=full_report,
+        created_by=created_by,
+        run_id=None,
+    )
+    result = await get_latest_comparison_report(hunt_package_id)
+    return result or {}
+
+
+async def get_latest_comparison_report(hunt_package_id: str) -> dict[str, Any] | None:
+    """Return the most recent comparison report for a package, ignoring
+    normal (single-run or package-level) reports — both share the
+    hunt_reports table, distinguished only by full_report.report_kind."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT * FROM hunt_reports
+               WHERE hunt_package_id = ? AND run_id IS NULL
+               ORDER BY created_at DESC""",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    for row in rows:
+        decoded = _decode_report_row(dict(row))
+        full_report = decoded.get("full_report")
+        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+            return decoded
+    return None
+
+
+# ── Threat Intelligence analysis (issue-local-020) ───────────────────────────
+# Persists the Threat Hunt Intelligence Analyst's per-run output: threat
+# actors, attribution, malware families, campaigns, related vendor
+# reporting, and IOCs correlated against OTHER hunt packages.
+
+
+async def create_threat_intel_analysis(
+    hunt_package_id: str,
+    *,
+    run_id: str | None,
+    threat_actors: list[dict[str, Any]],
+    attribution: dict[str, Any] | None,
+    malware_families: list[str],
+    campaigns: list[dict[str, Any]],
+    related_vendors: list[dict[str, Any]],
+    correlated_iocs: list[dict[str, Any]],
+    summary: str,
+    full_analysis: dict[str, Any],
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    import json as _json
+
+    analysis_id = _new_id()
+    now = _utc_now_iso()
+
+    def _j(val: Any) -> str:
+        return _json.dumps(val, ensure_ascii=False, default=str)
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO threat_intel_analysis
+               (id, hunt_package_id, run_id, threat_actors, attribution,
+                malware_families, campaigns, related_vendors, correlated_iocs,
+                summary, full_analysis, created_at, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                analysis_id,
+                hunt_package_id,
+                run_id,
+                _j(threat_actors),
+                _j(attribution),
+                _j(malware_families),
+                _j(campaigns),
+                _j(related_vendors),
+                _j(correlated_iocs),
+                summary,
+                _j(full_analysis),
+                now,
+                created_by,
+            ),
+        )
+        await db.commit()
+    return await get_threat_intel_analysis_by_run(run_id) if run_id else {}  # type: ignore[return-value]
+
+
+def _decode_threat_intel_row(d: dict[str, Any]) -> dict[str, Any]:
+    import json as _json
+
+    for field in (
+        "threat_actors",
+        "attribution",
+        "malware_families",
+        "campaigns",
+        "related_vendors",
+        "correlated_iocs",
+        "full_analysis",
+    ):
+        raw = d.get(field)
+        if raw and isinstance(raw, str):
+            try:
+                d[field] = _json.loads(raw)
+            except Exception:
+                pass
+    return d
+
+
+async def get_threat_intel_analysis_by_run(run_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM threat_intel_analysis WHERE run_id = ? ORDER BY created_at DESC LIMIT 1",
+            (run_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return _decode_threat_intel_row(dict(row))
+
+
+async def get_latest_threat_intel_analysis(hunt_package_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM threat_intel_analysis WHERE hunt_package_id = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (hunt_package_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return _decode_threat_intel_row(dict(row))
+
+
+async def find_cross_package_ioc_matches(
+    hunt_package_id: str, iocs: list[str]
+) -> list[dict[str, Any]]:
+    """Find *iocs* (this package's kept IOC values) appearing in OTHER hunt
+    packages' extracted_iocs rows. All packages share one DB file, so this
+    is a plain scoped SELECT — no cross-database complexity."""
+    unique_iocs = sorted({i for i in iocs if i})
+    if not unique_iocs:
+        return []
+    placeholders = ",".join("?" for _ in unique_iocs)
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            f"""SELECT ei.ioc, ei.ioc_type, ei.hunt_package_id, ei.run_id, hp.name AS hunt_name
+                FROM extracted_iocs ei
+                JOIN hunt_packages hp ON hp.id = ei.hunt_package_id
+                WHERE ei.hunt_package_id != ? AND ei.action != 'remove'
+                  AND ei.ioc IN ({placeholders})""",  # noqa: S608
+            (hunt_package_id, *unique_iocs),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    return [dict(row) for row in rows]
 
 
 # ── Run Comments CRUD (issue-local-018) ───────────────────────────────────────

@@ -1382,6 +1382,292 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+# ── Comparison report renderers (issue-local-020) ─────────────────────────────
+#
+# Siblings of render_report_markdown/render_report_pdf above, but for a
+# *comparison* full_report (see comparison_analyst.py's compare_runs()) —
+# NOT reuse of the single-run renderers, since every helper above assumes one
+# hypotheses/ttp/threat_context set, not N runs' worth of a diff table.
+
+
+def render_comparison_markdown(full_report: dict[str, Any]) -> str:
+    """Render a comparison full_report dict (see compare_runs()) as Markdown."""
+    lines: list[str] = []
+
+    def _h(level: int, text: str) -> None:
+        lines.append(f"{'#' * level} {text}\n")
+
+    def _p(text: str) -> None:
+        if text:
+            lines.append(f"{text}\n")
+
+    def _li(text: str) -> None:
+        lines.append(f"- {text}")
+
+    hunt_id_display = full_report.get("hunt_id_display", "")
+    title_prefix = f"[{hunt_id_display}] " if hunt_id_display else ""
+    _h(1, f"{title_prefix}Comparison Assessment: {full_report.get('hunt_name', 'Unnamed Hunt')}")
+    lines.append(f"**Internal ID:** {full_report.get('hunt_id', '')}")
+    lines.append(f"**Generated At:** {full_report.get('generated_at', '')}")
+    compared = full_report.get("compared_run_ids") or []
+    lines.append(f"**Runs Compared:** {len(compared)}\n")
+
+    summary = full_report.get("summary", "")
+    if summary:
+        _h(2, "Summary")
+        _p(summary)
+
+    diff_table = full_report.get("diff_table") or []
+    if diff_table:
+        _h(2, f"Run Diff Table ({len(diff_table)} run(s))")
+        lines.append(
+            "| Run | Model | Effort | Status | Hypotheses | IOCs (kept/removed) | Techniques | Events |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for row in diff_table:
+            lines.append(
+                f"| {row.get('run_id_display', '')} | {row.get('model', '')} | "
+                f"{row.get('effort', '')} | {row.get('status', '')} | "
+                f"{row.get('hypothesis_count', 0)} | "
+                f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)} | "
+                f"{row.get('technique_count', 0)} | {row.get('event_count', 0)} |"
+            )
+        lines.append("")
+
+    key_differences = full_report.get("key_differences") or []
+    if key_differences:
+        _h(2, "Key Differences")
+        for item in key_differences:
+            _li(str(item))
+        lines.append("")
+
+    gaps = full_report.get("gaps") or []
+    if gaps:
+        _h(2, "Gaps")
+        for item in gaps:
+            _li(str(item))
+        lines.append("")
+
+    enrichment = full_report.get("enrichment_opportunities") or []
+    if enrichment:
+        _h(2, "Enrichment Opportunities")
+        for item in enrichment:
+            _li(str(item))
+        lines.append("")
+
+    recommended = full_report.get("recommended_combination", "")
+    if recommended:
+        _h(2, "Recommended Combination")
+        _p(recommended)
+
+    return "\n".join(lines)
+
+
+def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
+    """Render a comparison full_report dict as a PDF byte string using reportlab.
+
+    Shares the same print-oriented light palette/table helpers as
+    render_report_pdf() (re-derived here rather than shared, matching that
+    function's self-contained local-import style).
+    """
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        HRFlowable,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    from backend.config.loader import load_app_title
+
+    PAGE_W, PAGE_H = A4
+    LEFT_MARGIN = 2 * cm
+    RIGHT_MARGIN = 2 * cm
+    TOP_MARGIN = 2.5 * cm
+    BOT_MARGIN = 2 * cm
+
+    buf = BytesIO()
+    app_title = load_app_title().strip()
+
+    _COL_H1 = colors.HexColor("#0f172a")
+    _COL_H2 = colors.HexColor("#1e293b")
+    _COL_ACCENT_RULE = colors.HexColor("#2f58f0")
+    _COL_META = colors.HexColor("#64748b")
+    _COL_TABLE_HEADER_BG = colors.HexColor("#e0e7ff")
+    _COL_TABLE_HEADER_FG = colors.HexColor("#1e293b")
+    _COL_TABLE_ROW_ALT = colors.HexColor("#f8fafc")
+    _COL_TABLE_ROW_NORM = colors.white
+    _COL_TABLE_BORDER = colors.HexColor("#cbd5e1")
+
+    def _footer(canvas, doc):  # type: ignore[no-untyped-def]
+        canvas.saveState()
+        canvas.setStrokeColor(_COL_TABLE_BORDER)
+        canvas.setLineWidth(0.5)
+        canvas.line(LEFT_MARGIN, BOT_MARGIN * 0.75, PAGE_W - RIGHT_MARGIN, BOT_MARGIN * 0.75)
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(_COL_META)
+        if app_title:
+            canvas.drawString(LEFT_MARGIN, BOT_MARGIN * 0.4, app_title)
+        canvas.drawCentredString(PAGE_W / 2.0, BOT_MARGIN * 0.4, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=RIGHT_MARGIN,
+        leftMargin=LEFT_MARGIN,
+        topMargin=TOP_MARGIN,
+        bottomMargin=BOT_MARGIN,
+        title=f"Comparison Assessment: {full_report.get('hunt_name', 'Threat Hunt')}",
+    )
+    styles = getSampleStyleSheet()
+    h1_style = ParagraphStyle(
+        "CoverH1", parent=styles["Heading1"], fontSize=19, spaceAfter=4, textColor=_COL_H1
+    )
+    h2_style = ParagraphStyle(
+        "SectionH2",
+        parent=styles["Heading2"],
+        fontSize=13,
+        spaceAfter=6,
+        textColor=_COL_H2,
+        spaceBefore=10,
+    )
+    body_style = ParagraphStyle(
+        "Body", parent=styles["BodyText"], textColor=colors.HexColor("#1f2937"), leading=14
+    )
+    meta_style = ParagraphStyle("Meta", parent=body_style, fontSize=9, textColor=_COL_META)
+
+    story: list = []
+
+    def _esc(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _h1(text: str) -> None:
+        story.append(Paragraph(_esc(text), h1_style))
+
+    def _h2(text: str) -> None:
+        story.append(Spacer(1, 8))
+        story.append(HRFlowable(width="100%", thickness=1.5, color=_COL_ACCENT_RULE))
+        story.append(Paragraph(_esc(text), h2_style))
+
+    def _p(text: str) -> None:
+        if text:
+            story.append(Paragraph(_esc(text), body_style))
+
+    def _sp(h: int = 4) -> None:
+        story.append(Spacer(1, h))
+
+    def _styled_table(rows: list[list[str]], col_widths: list) -> Table:  # type: ignore[type-arg]
+        table = Table(rows, colWidths=col_widths, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COL_TABLE_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _COL_TABLE_HEADER_FG),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_COL_TABLE_ROW_NORM, _COL_TABLE_ROW_ALT]),
+                    ("GRID", (0, 0), (-1, -1), 0.5, _COL_TABLE_BORDER),
+                    ("BOX", (0, 0), (-1, -1), 0.75, _COL_TABLE_BORDER),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        return table
+
+    hunt_name = full_report.get("hunt_name", "Unnamed Hunt")
+    hunt_id_display = full_report.get("hunt_id_display", "")
+    title_prefix = f"[{hunt_id_display}] " if hunt_id_display else ""
+    _h1(f"{title_prefix}Comparison Assessment: {hunt_name}")
+    story.append(HRFlowable(width="100%", thickness=2.5, color=_COL_ACCENT_RULE))
+    _sp(6)
+
+    meta_parts = []
+    if hunt_id_display:
+        meta_parts.append(f"HuntID: {hunt_id_display}")
+    if full_report.get("hunt_id"):
+        meta_parts.append(f"Internal ID: {full_report['hunt_id']}")
+    if full_report.get("generated_at"):
+        meta_parts.append(f"Generated: {full_report['generated_at']}")
+    compared = full_report.get("compared_run_ids") or []
+    meta_parts.append(f"Runs Compared: {len(compared)}")
+    if meta_parts:
+        story.append(Paragraph("  |  ".join(_esc(m) for m in meta_parts), meta_style))
+    _sp(8)
+
+    summary = full_report.get("summary", "")
+    if summary:
+        _h2("Summary")
+        _p(summary)
+
+    diff_table = full_report.get("diff_table") or []
+    if diff_table:
+        _h2(f"Run Diff Table ({len(diff_table)} run(s))")
+        try:
+            rows = [["Run", "Model", "Effort", "Status", "Hyps", "IOCs kept/rm", "TTPs", "Events"]]
+            for row in diff_table:
+                rows.append(
+                    [
+                        row.get("run_id_display", ""),
+                        row.get("model", ""),
+                        row.get("effort", ""),
+                        row.get("status", ""),
+                        str(row.get("hypothesis_count", 0)),
+                        f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)}",
+                        str(row.get("technique_count", 0)),
+                        str(row.get("event_count", 0)),
+                    ]
+                )
+            story.append(
+                _styled_table(
+                    rows, [2.2 * cm, 2.4 * cm, 1.8 * cm, 2 * cm, 1.6 * cm, 2.2 * cm, 1.6 * cm, None]
+                )
+            )
+        except Exception:  # noqa: BLE001
+            for row in diff_table:
+                _p(
+                    f"{row.get('run_id_display', '')}: {row.get('model', '')}, "
+                    f"status={row.get('status', '')}, hypotheses={row.get('hypothesis_count', 0)}"
+                )
+
+    key_differences = full_report.get("key_differences") or []
+    if key_differences:
+        _h2("Key Differences")
+        for item in key_differences:
+            _p(f"• {item}")
+
+    gaps = full_report.get("gaps") or []
+    if gaps:
+        _h2("Gaps")
+        for item in gaps:
+            _p(f"• {item}")
+
+    enrichment = full_report.get("enrichment_opportunities") or []
+    if enrichment:
+        _h2("Enrichment Opportunities")
+        for item in enrichment:
+            _p(f"• {item}")
+
+    recommended = full_report.get("recommended_combination", "")
+    if recommended:
+        _h2("Recommended Combination")
+        _p(recommended)
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    return buf.getvalue()
+
+
 def _build_fallback_summary(full_report: dict[str, Any]) -> str:
     """Build a deterministic plain-text executive summary without the LLM."""
     hunt_name = full_report.get("hunt_name", "this hunt")

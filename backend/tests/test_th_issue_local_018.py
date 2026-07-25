@@ -102,7 +102,7 @@ async def test_schema_v6_fresh_db_has_new_columns_and_table(tmp_path: Path) -> N
     assert "hunt_seq" in pkg_cols
     assert "run_seq" in run_cols
     assert "run_comments" in tables
-    assert version == 6
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
