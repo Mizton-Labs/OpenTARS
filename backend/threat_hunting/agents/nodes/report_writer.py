@@ -451,8 +451,13 @@ async def _report_step_log(
     *,
     elapsed_s: float | None = None,
     decision: str = "",
+    debug_lines: list[str] | None = None,
 ) -> None:
-    """Write a report-phase step entry into the run's step_logs (soft-fail)."""
+    """Write a report-phase step entry into the run's step_logs (soft-fail).
+
+    issue-local-021: *debug_lines* feeds WorkflowVisualizer.tsx's per-run
+    "Pipeline Log" debug console — this node previously never populated it.
+    """
     if not run_id:
         return
     try:
@@ -463,6 +468,8 @@ async def _report_step_log(
             entry["elapsed_s"] = round(elapsed_s, 2)
         if decision:
             entry["decision"] = decision
+        if debug_lines:
+            entry["debug_lines"] = debug_lines
         await th_db.append_run_step_log(run_id, entry)
     except Exception as exc:  # noqa: BLE001
         get_run_logger(__name__, None, run_id).debug(
@@ -566,8 +573,10 @@ async def write_report(
 
         if isinstance(exc, LLMDisabledError):
             log.info("report_writer: LLM disabled — skipping executive summary")
+            fallback_debug = ["LLM_DISABLED: skipping executive summary, using template"]
         else:
             log.exception("report_writer: executive summary generation failed: %s", exc)
+            fallback_debug = [f"LLM_ERROR: {exc}"]
         executive_summary = _build_fallback_summary(full_report)
         await _report_step_log(
             run_id,
@@ -575,6 +584,7 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Executive summary generated (template fallback)",
+            debug_lines=fallback_debug,
         )
 
     full_report["executive_summary"] = executive_summary
@@ -603,8 +613,10 @@ async def write_report(
 
         if isinstance(exc, LLMDisabledError):
             log.info("report_writer: LLM disabled — using templated findings")
+            fallback_debug = ["LLM_DISABLED: skipping findings section, using template"]
         else:
             log.warning("report_writer: findings generation failed: %s", exc)
+            fallback_debug = [f"LLM_ERROR: {exc}"]
         findings = _build_fallback_findings(full_report)
         await _report_step_log(
             run_id,
@@ -612,6 +624,7 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Findings/Conclusion section generated (template fallback)",
+            debug_lines=fallback_debug,
         )
     full_report["findings"] = findings or None
 

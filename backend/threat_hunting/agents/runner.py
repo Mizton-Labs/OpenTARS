@@ -356,6 +356,33 @@ async def _run_pipeline(
         elif final_status == "awaiting_approval":
             await th_db.update_hunt_package(pkg_id, status="planning")
 
+        # issue-local-021: preliminary-phase Threat Intel analysis — runs here
+        # (pipeline-completed, pre-execution) rather than only after SIEM
+        # execution (executor.py's existing "final" phase call). Gated on the
+        # run's include_threat_intel config flag (default on). Soft-fail,
+        # same convention as the auto-report block below.
+        if final_status == "completed" and (final_state.get("run_config") or {}).get(
+            "include_threat_intel", True
+        ):
+            try:
+                from backend.threat_hunting.agents.nodes.threat_intel_analyst import (
+                    analyze_threat_intel,
+                )
+
+                await analyze_threat_intel(
+                    pkg_id,
+                    run_id=run_id,
+                    phase="preliminary",
+                    provider_name=final_state.get("provider_name"),
+                    model_name=final_state.get("model_name"),
+                )
+                log.info("TH pipeline: preliminary threat intel analysis complete")
+            except Exception as intel_exc:  # noqa: BLE001
+                log.warning(
+                    "TH pipeline: preliminary threat intel analysis failed (non-fatal): %s",
+                    intel_exc,
+                )
+
         # issue-008-2C-A: auto-generate a run-scoped report when the pipeline
         # completes (status 'completed' = approved, awaiting SIEM execution).
         # Soft-fail — report failure never blocks the hunt workflow.

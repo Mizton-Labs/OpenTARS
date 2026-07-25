@@ -42,6 +42,10 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
+    # issue-local-021: debug_lines feeds WorkflowVisualizer.tsx's per-run
+    # "Pipeline Log" console (only shown in debug verbosity) — this node
+    # previously emitted none, leaving it invisible in that console.
+    debug_lines: list[str] = []
     try:
         from backend.llm.errors import LLMDisabledError
 
@@ -71,6 +75,9 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
         )
 
         profile = get_effort_profile(state.get("research_effort"))
+        debug_lines.append(
+            f"LLM_CALL: TTP analysis requested (effort={state.get('research_effort', 'medium')})"
+        )
         response = await call_llm(
             user,
             system=system,
@@ -83,9 +90,13 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
 
         if isinstance(parsed, dict):
             ttp_analysis = parsed
+            debug_lines.append(
+                f"LLM_RESPONSE: {len(ttp_analysis.get('techniques') or [])} technique(s) parsed"
+            )
         else:
             log.error("ttp_analyst: unexpected parse result type=%s", type(parsed).__name__)
             errors.append(f"{step}: unexpected LLM response type; storing raw")
+            debug_lines.append(f"LLM_PARSE_ERROR: unexpected type {type(parsed).__name__}")
             ttp_analysis = {"raw_response": str(parsed), "parse_error": True}
 
         if "detection_opportunities" in ttp_analysis:
@@ -105,6 +116,7 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
                 "status": "ok",
                 "elapsed_s": round(elapsed, 2),
                 "effort": state.get("research_effort", "medium"),
+                "debug_lines": debug_lines,
             }
         )
         completed.append(step)
@@ -120,12 +132,20 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
 
         if isinstance(exc, LLMDisabledError):
             log.warning("Node %s: LLM is disabled — skipping", step)
+            debug_lines.append("LLM_DISABLED: skipping TTP analysis")
         else:
             log.exception("Node %s failed: %s", step, exc)
+            debug_lines.append(f"LLM_ERROR: {exc}")
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(
-            {"step": step, "status": "error", "elapsed_s": round(elapsed, 2), "error": str(exc)}
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "debug_lines": debug_lines,
+            }
         )
         return {
             "current_step": step,

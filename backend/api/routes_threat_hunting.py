@@ -1194,6 +1194,10 @@ async def trigger_run_threat_intel(pkg_id: str, run_id: str, request: Request) -
 class CompareRunsBody(BaseModel):
     provider_name: str | None = None
     model_name: str | None = None
+    # issue-local-021: narrow the comparison to a specific subset of runs
+    # (the "Assess & Compare" dialog's run picker). None = compare all runs,
+    # unchanged from issue-local-020.
+    run_ids: list[str] | None = None
 
 
 @router.post("/packages/{pkg_id}/compare", status_code=201)
@@ -1211,6 +1215,7 @@ async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Requ
     try:
         return await compare_runs(
             pkg_id,
+            run_ids=body.run_ids,
             provider_name=body.provider_name,
             model_name=body.model_name,
             created_by=created_by,
@@ -1334,3 +1339,59 @@ async def delete_run_comment(pkg_id: str, run_id: str, comment_id: str) -> None:
     deleted = await th_db.delete_run_comment(comment_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Comment not found")
+
+
+# ── Threat Intel Tracking dashboard (issue-local-021) ──────────────────────────
+# Cross-hunt aggregation endpoints for the new "Threat Intel Tracking" sidebar
+# subsection — read-only aggregate views (Dashboard tab) plus per-hunt
+# include/exclude/delete controls (Hunts tab). All aggregation logic lives in
+# db.py; these routes are thin wrappers.
+
+
+@router.get("/tracking/dashboard")
+async def get_tracking_dashboard(
+    search: str | None = Query(default=None),
+) -> dict:
+    """Aggregated cross-hunt Threat Intel data: IOCs, threat actors,
+    campaigns, malware families, TTPs, and CVEs (ioc_type='cve', same IOC
+    aggregation — CVEs are already extracted as a normal IOC type).
+    *search* filters the IOCs/CVEs panels by substring match.
+    """
+    all_iocs = await th_db.list_correlated_iocs(search=search)
+    return {
+        "iocs": [i for i in all_iocs if i["ioc_type"] != "cve"],
+        "cves": [i for i in all_iocs if i["ioc_type"] == "cve"],
+        "threat_actors": await th_db.aggregate_threat_actors(),
+        "campaigns": await th_db.aggregate_campaigns(),
+        "malware_families": await th_db.aggregate_malware_families(),
+        "ttps": await th_db.aggregate_ttps(),
+    }
+
+
+@router.get("/tracking/hunts")
+async def list_tracking_hunts() -> list[dict]:
+    """List every non-archived hunt package with its correlation-inclusion
+    state, for the Hunts tab."""
+    return await th_db.list_tracking_hunts()
+
+
+class TrackingHuntExcludeBody(BaseModel):
+    excluded: bool
+
+
+@router.post("/tracking/hunts/{pkg_id}/exclude")
+async def set_tracking_hunt_excluded(pkg_id: str, body: TrackingHuntExcludeBody) -> dict:
+    """Include/exclude a hunt package from every cross-hunt aggregation above.
+    Reversible — the hunt package and its data are untouched."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    await th_db.set_hunt_correlation_excluded(pkg_id, body.excluded)
+    return _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+
+@router.delete("/tracking/hunts/{pkg_id}", status_code=204)
+async def delete_tracking_hunt(pkg_id: str) -> None:
+    """Delete a hunt package from the Hunts tab — a real, permanent removal
+    (not a correlation-only soft action), reusing the same archive mechanism
+    as the main Threat Hunting list's delete (DELETE /packages/{pkg_id})."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    await th_db.update_hunt_package(pkg_id, status="archived")

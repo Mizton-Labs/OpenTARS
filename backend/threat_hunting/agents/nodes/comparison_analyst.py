@@ -10,6 +10,14 @@ for combining data across runs).
 Persisted via `backend.threat_hunting.db.create_comparison_report`, which
 reuses the `hunt_reports` table with a `report_kind: "comparison"`
 discriminator (see db.py's "Comparison reports" section for why).
+
+issue-local-021 agent-consistency note: unlike every other node in this
+package, this function intentionally does NOT emit `debug_lines`/step_logs.
+`append_run_step_log` is scoped to a single run_id, but a comparison spans
+MULTIPLE runs at once — there is no single run's "Pipeline Log" console this
+belongs in. LLM failures still soft-fail into `log.warning(...)` (captured in
+app.log) and a deterministic fallback `summary`, matching this codebase's
+error-visibility convention as closely as the package-level shape allows.
 """
 
 from __future__ import annotations
@@ -53,14 +61,19 @@ def _utc_now() -> str:
 async def compare_runs(
     hunt_package_id: str,
     *,
+    run_ids: list[str] | None = None,
     provider_name: str | None = None,
     model_name: str | None = None,
     created_by: str | None = None,
 ) -> dict[str, Any]:
-    """Compare all runs of a hunt package and persist a comparison report.
+    """Compare runs of a hunt package and persist a comparison report.
 
-    Raises ValueError if the package doesn't exist or has no runs — callers
-    (the route) translate that into an HTTP 404/400.
+    issue-local-021: *run_ids*, when provided, narrows the comparison to that
+    subset of runs (the "Assess & Compare" dialog's run picker). ``None``
+    (the default) compares every run, unchanged from issue-local-020.
+
+    Raises ValueError if the package doesn't exist or has no (matching)
+    runs — callers (the route) translate that into an HTTP 404/400.
     """
     log = get_run_logger(__name__, hunt_package_id, None)
 
@@ -69,6 +82,9 @@ async def compare_runs(
         raise ValueError(f"Hunt package {hunt_package_id!r} not found")
 
     runs_summary = await th_db.list_generation_runs(hunt_package_id)
+    if run_ids is not None:
+        wanted = set(run_ids)
+        runs_summary = [r for r in runs_summary if r["id"] in wanted]
     if not runs_summary:
         raise ValueError("No runs to compare for this hunt package")
 

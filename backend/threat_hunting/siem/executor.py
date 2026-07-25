@@ -343,24 +343,33 @@ async def _run_execution(
         await th_db.update_hunt_package(hunt_package_id, status="completed")
         logger.info("Execution [%s]: completed", task_result_id[:8])
 
-        # 6b. Threat Hunt Intelligence Analyst (soft-fail, issue-local-020) —
-        #     correlates this run against every other hunt package (shared
-        #     IOCs, threat actors, malware families). Runs after execution
+        # 6b. Threat Hunt Intelligence Analyst — final phase (soft-fail,
+        #     issue-local-020, two-phase in issue-local-021). Correlates this
+        #     run against every other hunt package (shared IOCs, threat
+        #     actors, malware families) and, being the "final" phase, also
+        #     ingests this run's execution results. Runs after execution
         #     completes and before the report, so a future report could
         #     reference it. Not a graph node — see threat_intel_analyst.py's
-        #     module docstring for why.
+        #     module docstring for why. Gated on the run's include_threat_intel
+        #     config flag (default on).
         try:
-            from backend.threat_hunting.agents.nodes.threat_intel_analyst import (
-                analyze_threat_intel,
-            )
+            record = await th_db.get_generation_run(run_id) if run_id else None
+            include_threat_intel = (record.get("run_config") or {}).get(
+                "include_threat_intel", True
+            ) if record else True
+            if include_threat_intel:
+                from backend.threat_hunting.agents.nodes.threat_intel_analyst import (
+                    analyze_threat_intel,
+                )
 
-            await analyze_threat_intel(
-                hunt_package_id,
-                run_id=run_id,
-                provider_name=provider_name,
-                model_name=model_name,
-            )
-            logger.info("Execution [%s]: threat intel analysis complete", task_result_id[:8])
+                await analyze_threat_intel(
+                    hunt_package_id,
+                    run_id=run_id,
+                    phase="final",
+                    provider_name=provider_name,
+                    model_name=model_name,
+                )
+                logger.info("Execution [%s]: threat intel analysis complete", task_result_id[:8])
         except Exception as intel_exc:
             logger.warning(
                 "Execution [%s]: threat intel analysis failed (non-fatal): %s",
