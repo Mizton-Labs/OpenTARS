@@ -9,6 +9,36 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Evidence content viewer (issue-local-023)
+
+The Evidence tab is now a two-pane view — a sidebar list of evidence items on the left, and a
+content card on the right rendering the selected one: PDFs preview inline via the browser's native
+viewer, plaintext/extracted content renders in full, and a "Download original" link is always
+available. Binary files with no extracted text show a clear "not processed" placeholder instead of
+silently having no content at all, which was the previous behavior for every evidence type.
+
+New backend routes serve this safely: the PDF-preview route always responds with a hardcoded
+`application/pdf` content type and independently verifies the file's magic bytes server-side before
+serving it (regardless of what the uploader's browser claimed the file was), and the download route
+always forces `application/octet-stream` + an attachment disposition — neither ever trusts the
+stored, client-supplied `mime_type` for the response, closing a stored-content-type risk that a
+naive "just serve the file" implementation would have had.
+
+### Fixed — preliminary Threat Intel timing, Azure AI Foundry deployment modes (issue-local-023)
+
+The preliminary-phase Threat Intel analysis was gated on the pipeline reaching `"completed"`, which
+only happens on the *resumed* run once a human approves it — i.e. it ran after approval, not before,
+contradicting its own "preliminary" naming and the pipeline diagrams. Fixed to run at the point the
+pipeline first reaches the approval gate, so analysts reviewing a draft for approval already have
+threat intel context. The Hypothesis/Lead/IOC relationship chart also moved below the Analysis tab's
+main summary, collapsed by default behind an emphasized toggle.
+
+Confirmed against a real Azure AI Foundry resource that not every deployment uses the unified Model
+Inference API the `azure_ai_foundry` provider kind implements — some models (Anthropic Claude,
+confirmed 2026-07-26) are instead exposed as a native passthrough answering the model vendor's own
+API shape, for which the existing `anthropic` kind already works unmodified. Documented both modes
+in the provider wizard and config example so this doesn't need rediscovering.
+
 ### Added — Azure AI Foundry LLM provider, Analysis relationship chart, run-config consistency (issue-local-022)
 
 **New `azure_ai_foundry` LLM provider kind** covers OpenAI, Anthropic Claude, and other model

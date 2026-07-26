@@ -1110,6 +1110,12 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
         { method: 'DELETE' },
       ),
+    // issue-local-023: URL-string methods (not fetch calls) — same pattern
+    // as downloadReportPdf, for direct use in an <iframe src> / <a href>.
+    getEvidencePdfUrl: (pkgId: string, itemId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}/pdf`,
+    getEvidenceDownloadUrl: (pkgId: string, itemId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}/download`,
     listIocs: (pkgId: string, runId?: string) =>
       request<THExtractedIOC[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs${runId ? `?run_id=${encodeURIComponent(runId)}` : ''}`,
