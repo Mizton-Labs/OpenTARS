@@ -394,12 +394,13 @@ export default function HuntDetail({
         onSelect={(key) => setActiveTab(key as DetailTab)}
         tabs={[
           { key: 'evidence', label: `Evidence (${evidence.length})` },
+          { key: 'analysis', label: 'Analysis' },
           // issue-local-021: IOCs tab always visible (was gated on iocs.length>0)
+          // issue-local-022: moved after Analysis, matching PipelineStepper's order.
           {
             key: 'iocs',
             label: `IOCs${(iocs as THExtractedIOC[]).length > 0 ? ` (${(iocs as THExtractedIOC[]).length})` : ''}`,
           },
-          { key: 'analysis', label: 'Analysis' },
           {
             key: 'execution',
             label: 'Execution',
