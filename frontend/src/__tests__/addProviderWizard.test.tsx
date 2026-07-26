@@ -513,11 +513,26 @@ describe('AddProviderWizard (027)', () => {
   // failed silently (wrong path/header/query-param shape under the hood).
   it('offers azure_ai_foundry as a Kind option and shows its base_url hint only for that kind', () => {
     render(<AddProviderWizard existingNames={[]} onClose={() => {}} onAdded={() => {}} />)
-    expect(screen.queryByText(/services\.ai\.azure\.com/i)).not.toBeInTheDocument()
+    expect(screen.queryAllByText(/services\.ai\.azure\.com/i)).toHaveLength(0)
     fireEvent.change(screen.getByLabelText('Kind'), {
       target: { value: 'azure_ai_foundry' },
     })
-    expect(screen.getByText(/services\.ai\.azure\.com/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/services\.ai\.azure\.com/i).length).toBeGreaterThan(0)
+  })
+
+  // issue-local-023: confirmed against a real Azure AI Foundry resource that
+  // Anthropic Claude deployments are sometimes exposed as a NATIVE
+  // PASSTHROUGH (not the unified Model Inference API azure_ai_foundry
+  // implements) — the existing anthropic kind already sends the right
+  // shape for that mode, it just needs base_url pointed at Foundry's
+  // /anthropic path. The wizard must say so, since nothing else does.
+  it('shows the Azure Foundry native-passthrough hint only for the anthropic kind', () => {
+    render(<AddProviderWizard existingNames={[]} onClose={() => {}} onAdded={() => {}} />)
+    expect(screen.queryByText(/native passthrough/i)).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Kind'), {
+      target: { value: 'anthropic' },
+    })
+    expect(screen.getByText(/native passthrough/i)).toBeInTheDocument()
   })
 
   // ── prompts-028: dropdown decoupled from aggregate status ──────────────

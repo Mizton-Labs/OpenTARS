@@ -22,14 +22,20 @@
 #   ollama             — local Ollama server (no API key required)
 #   openai_compatible  — any server speaking the OpenAI chat-completions
 #                        wire shape (Together, Groq, vLLM, LM Studio, …)
-#   azure_ai_foundry   — Azure AI Foundry's unified Model Inference API.
-#                        Covers OpenAI, Anthropic Claude, and other model
-#                        families deployed through Foundry — they all
-#                        answer the same wire shape there. Do NOT use
-#                        `openai_compatible` or `anthropic` for a Foundry
-#                        endpoint: Foundry's path (/models/chat/completions),
-#                        auth header (api-key, not Bearer/x-api-key), and
-#                        required api-version query param differ from both.
+#   azure_ai_foundry   — Azure AI Foundry's UNIFIED Model Inference API
+#                        deployment mode only (path /models/chat/completions,
+#                        header api-key, required api-version query param).
+#                        NOT every Foundry deployment uses this — some models
+#                        (e.g. Anthropic Claude, confirmed 2026-07-26) are
+#                        instead exposed as a NATIVE PASSTHROUGH answering the
+#                        model vendor's own API shape. If a azure_ai_foundry
+#                        provider gets HTTP 404 on GET {base_url}/models,
+#                        that resource is in native-passthrough mode instead:
+#                        for Anthropic Claude on Foundry, use kind `anthropic`
+#                        with base_url `https://<resource>.services.ai.azure.com/anthropic`
+#                        (the existing anthropic client already sends the
+#                        exact request shape that mode expects — no new kind
+#                        needed for it).
 
 enabled: false
 default_provider: null
@@ -84,14 +90,23 @@ providers: []
 #     model: llama3.1           # whatever your OpenWebUI exposes
 #     api_key: ""               # JWT from OpenWebUI Settings → Account → API Keys
 #
-#   # Azure AI Foundry — base_url is the resource's base endpoint, no
-#   # trailing path (the client appends /models/chat/completions itself).
-#   # api_key is the resource key from Foundry's "Keys and Endpoint" pane.
-#   # Works the same way whether the deployed model is OpenAI, Anthropic
-#   # Claude, or another family — Foundry's Model Inference API normalizes
-#   # the wire shape regardless of the underlying model.
-#   - name: foundry-claude
+#   # Azure AI Foundry, UNIFIED Model Inference API mode — base_url is the
+#   # resource's base endpoint, no trailing path (the client appends
+#   # /models/chat/completions itself). api_key is the resource key from
+#   # Foundry's "Keys and Endpoint" pane. Only works for deployments actually
+#   # using this unified API — see the azure_ai_foundry note above.
+#   - name: foundry-openai
 #     kind: azure_ai_foundry
 #     base_url: https://my-resource.services.ai.azure.com
+#     model: gpt-4o
+#     api_key: ""
+#
+#   # Azure AI Foundry, Anthropic NATIVE PASSTHROUGH mode (confirmed
+#   # 2026-07-26 against a real Foundry resource that 404'd on the unified
+#   # API's /models route) — same `anthropic` kind used for the public
+#   # Anthropic API, just with base_url pointed at Foundry's Anthropic path.
+#   - name: foundry-claude
+#     kind: anthropic
+#     base_url: https://my-resource.services.ai.azure.com/anthropic
 #     model: claude-3-5-sonnet
 #     api_key: ""

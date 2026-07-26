@@ -62,7 +62,7 @@ const KINDS: { id: LLMProviderKind; label: string }[] = [
   { id: 'anthropic', label: 'Anthropic' },
   { id: 'ollama', label: 'Ollama (local)' },
   { id: 'openai_compatible', label: 'OpenAI-compatible' },
-  { id: 'azure_ai_foundry', label: 'Azure AI Foundry' },
+  { id: 'azure_ai_foundry', label: 'Azure AI Foundry (unified API)' },
 ]
 
 const DEFAULT_BASE_URL: Record<LLMProviderKind, string> = {
@@ -509,10 +509,24 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
                 <p className="text-xs text-gray-500 mt-1 italic">
                   Your Foundry resource's base endpoint, e.g.{' '}
                   <code>https://&lt;resource-name&gt;.services.ai.azure.com</code>
-                  {' '}— no trailing path. Works uniformly for OpenAI, Anthropic
-                  Claude, and other model families deployed through Foundry
-                  (its unified Model Inference API handles the routing). The
-                  API key is the resource's key, not a per-model key.
+                  {' '}— no trailing path. This is for Foundry's <strong>unified Model
+                  Inference API</strong> deployment mode (works for OpenAI and other
+                  models set up that way). The API key is the resource's key, not a
+                  per-model key. <strong>If your resource returns 404 on this kind
+                  </strong> (e.g. an Anthropic Claude deployment exposed as a
+                  native passthrough instead), use the <strong>Anthropic</strong> kind
+                  with base_url <code>https://&lt;resource-name&gt;.services.ai.azure.com/anthropic</code>{' '}
+                  instead — Foundry deploys some models this way, answering the
+                  model vendor's own native API shape rather than the unified one.
+                </p>
+              )}
+              {kind === 'anthropic' && (
+                <p className="text-xs text-gray-500 mt-1 italic">
+                  For Anthropic Claude deployed via <strong>Azure AI Foundry</strong> as a
+                  native passthrough (not the unified Model Inference API), set base_url to{' '}
+                  <code>https://&lt;resource-name&gt;.services.ai.azure.com/anthropic</code>{' '}
+                  and the API key to the Foundry resource's key — this kind already sends
+                  the exact request shape that mode expects.
                 </p>
               )}
             </div>
