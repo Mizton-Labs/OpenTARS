@@ -1,5 +1,5 @@
 """
-Mizton-ThreatBox — FastAPI application entry point.
+OpenTARS — FastAPI application entry point.
 Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 """
 
@@ -122,7 +122,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Mizton-ThreatBox",
+    title="OpenTARS",
     version=__version__,
     description="Lightweight Threat Intelligence feed receiver, normaliser, and viewer.",
     lifespan=lifespan,

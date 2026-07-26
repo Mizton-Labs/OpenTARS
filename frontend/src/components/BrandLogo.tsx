@@ -1,23 +1,25 @@
 /**
- * Branding logo (prompts-045).
+ * Branding logo (prompts-045, rebranded to OpenTARS in issue-local-024).
  *
  * Renders the operator-configured logo image when one exists, otherwise the
- * default brand mark (a shield + feed-waves glyph, see BrandMark). Two usage
- * modes:
+ * bundled default OpenTARS mark (frontend/src/assets/tars-logo-app.png).
+ * Both paths render a plain <img> — the only difference is the src — so an
+ * operator-uploaded logo behaves identically to the shipped default. Two
+ * usage modes:
  *   - hasLogo known (Sidebar, via the /api/app/logo-info query): pass it
  *     explicitly so we render the right element on first paint.
  *   - hasLogo unknown (Login, which is unauthenticated and cannot query
  *     logo-info): omit it; we optimistically try the image and fall back to
- *     the icon via onError. GET /api/app/logo is public, so this works for
- *     signed-out users.
+ *     the default mark via onError. GET /api/app/logo is public, so this
+ *     works for signed-out users.
  *
- * The backend serves the logo with Cache-Control: no-cache, so a replaced
- * image refreshes without any client-side cache-busting.
+ * The backend serves the operator logo with Cache-Control: no-cache, so a
+ * replaced image refreshes without any client-side cache-busting.
  */
 import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
 import { logoSrc } from '../api/client'
-import BrandMark from './BrandMark'
+import defaultLogo from '../assets/tars-logo-app.png'
 
 interface Props {
   hasLogo?: boolean
@@ -35,27 +37,18 @@ export default function BrandLogo({ hasLogo, size = 28, className }: Props) {
     setFailed(false)
   }, [hasLogo])
 
-  const showImage = hasLogo !== false && !failed
-
-  if (showImage) {
-    return (
-      <img
-        src={logoSrc()}
-        alt="Logo"
-        width={size}
-        height={size}
-        className={clsx('object-contain rounded-md', className)}
-        onError={() => setFailed(true)}
-      />
-    )
-  }
+  const useCustom = hasLogo !== false && !failed
 
   return (
-    <div
-      className={clsx('flex items-center justify-center bg-brand-600 rounded-md', className)}
-      style={{ width: size, height: size }}
-    >
-      <BrandMark className="text-white" size={size * 0.62} />
-    </div>
+    <img
+      src={useCustom ? logoSrc() : defaultLogo}
+      alt="OpenTARS"
+      width={size}
+      height={size}
+      className={clsx('object-contain rounded-md', className)}
+      onError={() => {
+        if (useCustom) setFailed(true)
+      }}
+    />
   )
 }

@@ -121,7 +121,7 @@ export default function Sidebar() {
     queryKey: ['app-title'],
     queryFn: api.getAppTitle,
   })
-  const displayTitle = titleData?.app_title?.trim() || 'Mizton-ThreatBox'
+  const displayTitle = titleData?.app_title?.trim() || 'OpenTARS'
 
   // Unused: isResearcher is available for future gating within sections
   void isResearcher

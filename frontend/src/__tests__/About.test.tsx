@@ -30,9 +30,9 @@ function renderAbout() {
 }
 
 describe('About page (prompts-051)', () => {
-  it('shows the Mizton-ThreatBox brand name', () => {
+  it('shows the OpenTARS brand name', () => {
     renderAbout()
-    expect(screen.getByText('Mizton-ThreatBox')).toBeInTheDocument()
+    expect(screen.getByText('OpenTARS')).toBeInTheDocument()
   })
 
   it('credits the code dev team with a repo link and author list', () => {

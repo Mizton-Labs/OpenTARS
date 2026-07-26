@@ -1,5 +1,5 @@
 """
-Logging configuration for Mizton-ThreatBox.
+Logging configuration for OpenTARS.
 
 Sets up two output channels:
   - stdout StreamHandler  (all levels, same as before)

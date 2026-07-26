@@ -7,7 +7,7 @@
 
 ## 1. Purpose and Scope
 
-Mizton-ThreatBox evolves from a Threat Intelligence feed aggregator into an
+OpenTARS evolves from a Threat Intelligence feed aggregator into an
 **agentic Threat Intel and Hunting Operations Framework**. The Threat Hunting
 module is the second pillar of this framework, sitting alongside the existing
 Threat Intel module.

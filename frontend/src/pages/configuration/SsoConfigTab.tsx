@@ -316,7 +316,7 @@ export default function SsoConfigTab() {
             onChange={(e) => setField('username_claim', e.target.value)}
           />
           <p className="text-[11px] text-gray-600 mt-0.5">
-            JWT claim used as the Mizton-ThreatBox username. Common values:{' '}
+            JWT claim used as the OpenTARS username. Common values:{' '}
             <code className="text-gray-500">preferred_username</code>,{' '}
             <code className="text-gray-500">email</code>,{' '}
             <code className="text-gray-500">upn</code>.
@@ -341,7 +341,7 @@ export default function SsoConfigTab() {
         <div>
           <label className="label">Role Mapping</label>
           <p className="text-[11px] text-gray-500 mb-2">
-            Map claim values to Mizton-ThreatBox roles. Unmapped users get the default role below.
+            Map claim values to OpenTARS roles. Unmapped users get the default role below.
           </p>
           <div className="space-y-2">
             {roleRows.map((row, i) => (
@@ -412,7 +412,7 @@ export default function SsoConfigTab() {
           <div>
             <p className="text-sm text-gray-300">Auto-provision accounts</p>
             <p className="text-xs text-gray-500">
-              Create a Mizton-ThreatBox account on first SSO login. Disable to require
+              Create an OpenTARS account on first SSO login. Disable to require
               manual account creation before SSO login is allowed.
             </p>
           </div>

@@ -1,4 +1,4 @@
-# pyproject.toml — Mizton-ThreatBox project metadata (PEP 517/518)
+# pyproject.toml — OpenTARS (formerly Mizton-ThreatBox) project metadata (PEP 517/518)
 #
 # This file is the single authoritative source for project identity and
 # Python packaging metadata. The application is NOT published to PyPI; it

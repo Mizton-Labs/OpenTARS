@@ -1,5 +1,5 @@
 """
-LangChain bridge for the existing Mizton-ThreatBox LLM registry.
+LangChain bridge for the existing OpenTARS LLM registry.
 
 Wraps the existing ``backend.llm.registry.get_client()`` / ``LLMClient``
 interface as a callable that the LangGraph agent nodes can use without

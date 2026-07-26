@@ -1,4 +1,4 @@
-# Contributing to Mizton-ThreatBox
+# Contributing to OpenTARS
 
 Thank you for your interest in contributing. This document covers the
 essentials for getting started, running tests, and submitting changes.
@@ -113,7 +113,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ## Versioning
 
-Mizton-ThreatBox uses [Semantic Versioning](https://semver.org/).
+OpenTARS uses [Semantic Versioning](https://semver.org/).
 
 The version string lives in **four places** that must all be updated together:
 

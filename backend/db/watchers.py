@@ -71,7 +71,7 @@ VALID_PUBLISH_TARGETS: frozenset[str] = frozenset({"local", "webhook", "http"})
 
 # Webhook payload shapes (issue_local_007 review_01). Only meaningful when
 # publish_target == "webhook":
-#   generic — the Mizton-ThreatBox envelope {watcher, watcher_id, ..., event}.
+#   generic — the OpenTARS envelope {watcher, watcher_id, ..., event}.
 #   discord — Discord webhook {"content": ...}.
 #   slack   — Slack / Mattermost incoming webhook {"text": ...}.
 #   teams   — Microsoft Teams legacy MessageCard connector payload.

@@ -90,7 +90,7 @@ export default function App() {
     staleTime: 5 * 60 * 1000,
   })
   useEffect(() => {
-    document.title = titleData?.app_title || 'Mizton-ThreatBox'
+    document.title = titleData?.app_title || 'OpenTARS'
   }, [titleData?.app_title])
 
   return (

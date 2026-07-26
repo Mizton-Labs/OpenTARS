@@ -239,9 +239,9 @@ def format_credential_box(username: str, password: str, *, context: str = "first
     Returns a multi-line string with every row padded to an equal width.
     """
     titles = {
-        "first-run": "Mizton-ThreatBox — first-run admin account",
-        "reset": "Mizton-ThreatBox — admin password reset",
-        "created": "Mizton-ThreatBox — admin account provisioned",
+        "first-run": "OpenTARS — first-run admin account",
+        "reset": "OpenTARS — admin password reset",
+        "created": "OpenTARS — admin account provisioned",
     }
     title = titles.get(context, titles["first-run"])
     lines = [
@@ -291,9 +291,9 @@ def _emit_credential(username: str, password: str, *, context: str = "first-run"
     that path does not go through this logger.
     """
     _HEADERS = {
-        "first-run": "Mizton-ThreatBox — first-run admin account",
-        "reset": "Mizton-ThreatBox — admin password reset",
-        "created": "Mizton-ThreatBox — admin account provisioned",
+        "first-run": "OpenTARS — first-run admin account",
+        "reset": "OpenTARS — admin password reset",
+        "created": "OpenTARS — admin account provisioned",
     }
     header = _HEADERS.get(context, _HEADERS["first-run"])
     content = (

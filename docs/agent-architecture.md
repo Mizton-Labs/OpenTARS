@@ -1,4 +1,4 @@
-# Agent Architecture — Mizton-ThreatBox
+# Agent Architecture — OpenTARS
 
 **Audience:** Engineers and security developers.  
 **Status:** Current (reflects issue-local-006)  

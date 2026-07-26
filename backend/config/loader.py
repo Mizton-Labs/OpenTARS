@@ -306,7 +306,7 @@ _APP_TITLE_MAX_LEN = 80
 def load_app_title() -> str:
     """Return the configured display title (empty string when unset).
 
-    An empty string means "use the default 'Mizton-ThreatBox'". The value is
+    An empty string means "use the default 'OpenTARS'". The value is
     branding-only; the About page always shows the static product name.
     """
     raw = load_app_config().get("app_title", "")

@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Mizton-ThreatBox bundles or depends on the third-party open-source packages
+OpenTARS bundles or depends on the third-party open-source packages
 listed below. Each package remains under its own license; the full license
 texts are distributed with the respective packages in their source
 repositories and installed distribution metadata.

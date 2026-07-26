@@ -92,7 +92,7 @@ def _render_xml(name: str, rows: list[dict[str, Any]], request: Request) -> Resp
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0">',
         "  <channel>",
-        f"    <title>{escape(name)} — Mizton-ThreatBox watcher</title>",
+        f"    <title>{escape(name)} — OpenTARS watcher</title>",
         f"    <link>{escape(self_url)}</link>",
         f"    <description>Triggered events for watcher {escape(name)}</description>",
         f"    <lastBuildDate>{escape(datetime.now(timezone.utc).isoformat())}</lastBuildDate>",

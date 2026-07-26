@@ -1,13 +1,13 @@
-# Mizton-ThreatBox — Platform Overview
+# OpenTARS — Platform Overview
 
 **Audience:** Security managers, SOC leads, non-technical stakeholders.  
 **Last updated:** 2026-06-21
 
 ---
 
-## What Is Mizton-ThreatBox?
+## What Is OpenTARS?
 
-Mizton-ThreatBox is a **security operations workbench** that helps threat hunting
+OpenTARS is a **security operations workbench** that helps threat hunting
 analysts do more in less time. It collects threat intelligence from many sources,
 uses an AI assistant to turn that intelligence into a structured hunting plan, and
 lets analysts execute that plan directly against their SIEM — all from a single
@@ -36,7 +36,7 @@ Threat hunting analysts routinely face:
 - **Documentation gap.** After a hunt, reconstructing what was done and why is
   painful and often incomplete.
 
-Mizton-ThreatBox automates the repetitive, research-heavy parts while preserving
+OpenTARS automates the repetitive, research-heavy parts while preserving
 the judgment that only a human analyst can provide.
 
 ---
@@ -227,7 +227,7 @@ live infrastructure requires a human decision.
 
 ## Deployment and Infrastructure
 
-Mizton-ThreatBox is designed to run **entirely on your own infrastructure**:
+OpenTARS is designed to run **entirely on your own infrastructure**:
 
 - No external cloud service required.
 - All data stored locally in SQLite databases under `data/`.

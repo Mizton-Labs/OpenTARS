@@ -1,63 +1,16 @@
-# Mizton-ThreatBox
+<p align="center">
+  <img src="docs/assets/tars-logo.png" alt="OpenTARS" width="480" />
+</p>
 
-A standalone **Threat Intel and Threat Hunting Operations Framework** for security teams.
-It ingests, normalizes, and analyzes threat intelligence from multiple sources, and
-drives end-to-end threat hunts using an LLM-powered agent pipeline backed by
-[LangGraph](https://github.com/langchain-ai/langgraph).
+<h1 align="center">OpenTARS</h1>
+<p align="center"><strong>Threat Agentic Research System</strong></p>
 
-## Modules
-
-| Module | What it does |
-|---|---|
-| **Threat Intel** | Ingest feeds (JSON, CSV, XML, NDJSON, push, RSS, API pull), LLM-powered field normalization, Smart Mappings proposals, Watchers with public syndication URLs and webhooks, natural-language (LLM) query |
-| **Threat Hunting** | Hunt Package wizard (file/URL/watcher/text evidence), IOC extraction + noise scoring, LangGraph agent pipeline (context → hypotheses → leads → TTPs → query drafts → Deep Retrohunt), operator approval gate, Splunk SIEM execution, structured HTML/Markdown reports |
-| **Configuration** | LLM provider management (OpenAI, Anthropic, Ollama, compatible), SIEM connector profiles (Splunk), feed sources, field defaults, application settings, user management |
-
-## Threat Hunting Workflow
-
-```
-1. Create Hunt Package     — name, description, tags
-2. Add Evidence            — upload files (PDF/DOCX/TXT/CSV), fetch URLs,
-                             import watcher events, paste manual notes
-3. Generate Analysis       — LangGraph agents produce: threat context,
-                             hypotheses, hunting leads, TTPs, SPL drafts,
-                             Deep Retrohunt IOC CSV
-4. Operator Approval       — review draft, approve or reject/revise
-5. SIEM Execution          — run SPL query against Splunk, collect events,
-                             LLM-interpreted findings
-6. Report                  — assembled executive summary + full structured
-                             report; export as JSON or Markdown
-```
-
----
-
-## Prerequisites
-
-| Dependency | Version | Notes |
-|---|---|---|
-| Python | 3.10+ | Required for the backend |
-| Node.js | 18+ | Required for the frontend |
-| npm | 9+ | Bundled with Node.js |
-| uv | latest | Recommended Python package manager |
-
-### Install uv
-
-**macOS / Linux**
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Windows**
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Homebrew**
-```bash
-brew install uv
-```
-
-> If `uv` is not installed, the startup script falls back to `python3 -m venv` + `pip` automatically.
+<p align="center">
+  A standalone, self-hosted <strong>Threat Intelligence and Agentic Threat Hunting platform</strong>.
+  It ingests, normalizes, and correlates threat intel from multiple sources, and drives end-to-end
+  threat hunts through an LLM-powered agent pipeline built on
+  <a href="https://github.com/langchain-ai/langgraph">LangGraph</a>.
+</p>
 
 ---
 
@@ -72,25 +25,124 @@ cd Mizton-ThreatBox
 ./mizton-threatbox start
 ```
 
-The runner script will automatically:
+The runner script automatically:
 
-- Create a Python virtual environment (`.venv/`) using `uv`
-- Install all Python dependencies from `backend/requirements.txt`
-- Build the frontend if `frontend/dist/` does not exist
-- Start the backend on **`127.0.0.1:8000`** (localhost only by default)
+- Creates a Python virtual environment (`.venv/`) using `uv` (falls back to `python3 -m venv` + `pip` if `uv` isn't installed)
+- Installs all Python dependencies from `backend/requirements.txt`
+- Builds the frontend if `frontend/dist/` does not exist
+- Starts the backend on **`127.0.0.1:8000`** (localhost only by default)
 
-Open your browser at **http://localhost:8000**
+Open your browser at **http://localhost:8000**.
 
-> By default the server binds to localhost only. To expose it on your network
-> or use a different port, see [Binding & ports](#binding--ports) below.
+> By default the server binds to localhost only. To expose it on your network or use a different
+> port, see [Binding & ports](#binding--ports).
 
-> **Authentication is on by default.** The first time you start the app, a default
-> `admin` account is provisioned and its password is displayed in the terminal and
-> written to `data/first-run-admin-credentials.txt` (mode `0600`). Change the
-> password on first login. To run without authentication (local / trusted-network,
-> single-user use), start with `./mizton-threatbox start --disable-auth` or set
-> `auth_enabled: false` in `config/application.yaml`. See
-> [Authentication](#authentication-optional) for roles and setup details.
+> **Authentication is on by default.** The first time you start the app, a default `admin` account
+> is provisioned and its password is displayed in the terminal and written to
+> `data/first-run-admin-credentials.txt` (mode `0600`). Change the password on first login. To run
+> without authentication (local / trusted-network, single-user use), start with
+> `./mizton-threatbox start --disable-auth` or set `auth_enabled: false` in
+> `config/application.yaml`. See [Authentication](#authentication-optional) for roles and setup.
+
+### Prerequisites
+
+| Dependency | Version | Notes |
+|---|---|---|
+| Python | 3.10+ | Required for the backend |
+| Node.js | 18+ | Required for the frontend |
+| npm | 9+ | Bundled with Node.js |
+| uv | latest | Recommended Python package manager |
+
+**Install uv:**
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Homebrew
+brew install uv
+```
+
+> If `uv` is not installed, the startup script falls back to `python3 -m venv` + `pip` automatically.
+
+---
+
+## Features
+
+### Threat Intel
+
+Ingest, normalize, and search threat intelligence from any combination of sources:
+
+- **Ingestion** — local file upload, remote URL pull, an authenticated push listener, and scheduled
+  RSS / API pulls. Accepts JSON, NDJSON, CSV/TSV, and XML, including `.gz`/`.zip` compressed payloads.
+- **Normalization** — an LLM-powered engine maps raw feed fields onto a canonical schema, with
+  **Smart Mappings** proposals an admin reviews and approves rather than blindly trusting.
+- **Viewer** — browse raw and normalized event tables side by side, with a configurable column
+  picker, full-text search, and a natural-language (LLM) query box.
+- **Watchers** — saved filters that continuously evaluate incoming events and publish matches to a
+  public syndication URL (JSON/CSV/XML/RSS) and, optionally, push them to a webhook, Discord, Slack,
+  or Microsoft Teams.
+
+### Threat Hunting
+
+An agentic, LangGraph-driven pipeline that turns raw evidence into a structured, reviewable hunt:
+
+- **Hunt Packages** — gather evidence from uploaded files (PDF/DOCX/TXT/CSV), fetched URLs, imported
+  watcher events, or manual notes.
+- **Agent pipeline** — generates threat context, hypotheses, hunting leads, MITRE ATT&CK TTPs, SPL
+  query drafts, and a Deep Retrohunt IOC set with noise scoring and defanging — all shown live in an
+  interactive workflow visualization (timeline, Mermaid, or ReactFlow).
+- **Operator approval gate** — every run pauses for human review before execution; nothing reaches
+  the SIEM without explicit sign-off.
+- **SIEM execution** — runs the approved SPL query against Splunk and interprets the results with an
+  LLM-backed findings summary.
+- **Two-phase Threat Intel Analyst** — correlates each run's actors, malware families, campaigns, and
+  IOCs against every other hunt package in the instance, both before and after execution.
+- **Threat Intel Tracking dashboard** — a cross-hunt view aggregating correlated IOCs, CVEs, threat
+  actors, campaigns, and TTPs across every non-excluded hunt, with per-hunt include/exclude controls.
+- **Comparison Module** — an "Assess & Compare" action that runs an LLM-backed comparison across a
+  chosen subset of a package's runs, producing a combined report (Markdown/PDF/JSON download).
+  Downstream reports (per-run and comparison) are professionally branded, structured, and exportable.
+- **Evidence content viewer** — every uploaded evidence item stays accessible after upload: a sidebar
+  list plus a content pane that renders PDFs inline and plaintext/extracted content in full.
+
+### Configuration
+
+- **LLM providers** — OpenAI, Anthropic (native API), Ollama, any OpenAI-compatible endpoint, and
+  Azure AI Foundry (both its unified Model Inference API and its Anthropic-native passthrough mode).
+  A staged Add-Provider wizard (Connect → Discover → Test → Add) and a config-drift-safe write-only
+  API key model keep credentials out of logs and off disk in plaintext views.
+- **SIEM connector profiles** (Splunk), feed sources, field defaults, application/branding settings,
+  and user management all live in the same admin Configuration area.
+- **Authentication** — session-based login with four roles (`admin`, `threat-researcher`,
+  `threat-viewer`, `feed-sender`), optional SSO/OIDC, per-user theme preferences, and an
+  admin-configurable password policy.
+- **Config-drift notice** — every live, operator-editable config file
+  (`application.yaml`/`sources.yaml`/`feed-fields.yaml`/`normalizer-config.yaml`) is gitignored, so
+  an operator's customizations never conflict with an upgrade. When a new release ships config content
+  a deployment doesn't have yet (e.g. a new built-in field), admins see a top-bar notice with a review
+  screen — nothing changes until they explicitly select and apply it.
+
+---
+
+## Threat Hunting Workflow
+
+```
+1. Create Hunt Package     — name, description, tags
+2. Add Evidence            — upload files (PDF/DOCX/TXT/CSV), fetch URLs,
+                             import watcher events, paste manual notes
+3. Generate Analysis       — LangGraph agents produce: threat context,
+                             hypotheses, hunting leads, TTPs, SPL drafts,
+                             Deep Retrohunt IOC CSV, preliminary Threat Intel
+4. Operator Approval       — review draft, approve or reject/revise
+5. SIEM Execution          — run SPL query against Splunk, collect events,
+                             LLM-interpreted findings, final Threat Intel pass
+6. Report                  — assembled executive summary + full structured
+                             report; export as PDF, Markdown, or JSON
+```
 
 ---
 
@@ -191,7 +243,9 @@ When enabled:
   - `threat-viewer` — read-only access to hunt packages, reports, and the Threat Intel Viewer. The natural-language query endpoint (`POST /api/query/nl`) is available to this role.
   - `feed-sender` — listener-only machine account that may **only** POST to `/api/ingest/listener` — ideal for unattended push automation.
 
-  The sidebar and API enforce role gating server-side independently of the UI. Existing users with the old `normal` role are automatically migrated to `threat-viewer`; existing `sender` users become `feed-sender` on first startup after upgrade.
+  The sidebar and API enforce role gating server-side independently of the UI.
+- **SSO/OIDC.** Optional single sign-on via an OpenID Connect provider, configured from the admin
+  Configuration area — see `config/sso.yaml.example` for the template.
 - **Sessions.** Login is session-cookie based; all API `401`s funnel through a
   single handler and the UI redirects to the login screen.
 - **First-run admin.** On first start with auth enabled, an `admin` account is
@@ -210,7 +264,7 @@ When enabled:
 - **Password policy.** Minimum-length and composition rules are enforced on both
   the backend and the frontend (create-user, self-service change, and admin
   reset all require a confirm-match field).
-- **Self-service Account** page (change your own password) and an admin-only
+- **Self-service Account** page (change your own password, pick a personal theme) and an admin-only
   **User Management** tab (create/delete users, reset passwords) live in the app.
 
 ---
@@ -255,7 +309,7 @@ curl -X POST http://127.0.0.1:8000/api/ingest/listener \
 ```
 
 Events are indexed into a **feed named after the authenticated user** that
-pushed them (prompts-058). When authentication is disabled the request is
+pushed them. When authentication is disabled the request is
 anonymous and falls back to a **feed named `Received Feed <epoch>`** (the Unix
 time of receipt). Every payload is logged (an INFO receipt summary in
 `logs/audit.log`; the full body at DEBUG), and per-entry failures are logged with
@@ -338,7 +392,7 @@ external endpoint. The payload is shaped by `webhook_format`:
 
 | `webhook_format` | Target |
 |---|---|
-| `generic` | Plain JSON POST |
+| `generic` | Plain JSON POST (the OpenTARS envelope) |
 | `discord` | Discord webhook |
 | `slack` | Slack incoming webhook |
 | `teams` | Microsoft Teams connector |
@@ -620,19 +674,19 @@ change is logged at WARNING level and the file is rewritten in place.
 
 ## LLM Provider (optional)
 
-The normaliser can optionally call an external LLM for smart-mode
-features (schema proposals, field-mapping suggestions). The plumbing
-is **disabled by default** and ships in `prompts-021D`; smart-mode
-behaviour itself lands in later phases.
+The normalizer and the Threat Hunting agent pipeline can both call an external LLM for smart-mode
+features (schema proposals, field-mapping suggestions, agentic hunting, natural-language query). The
+plumbing is **disabled by default**.
 
 ### Supported provider kinds
 
 | `kind`              | Notes |
 |---|---|
 | `openai`            | OpenAI public API |
-| `anthropic`         | Anthropic public API |
+| `anthropic`         | Anthropic public API only (`api.anthropic.com`) |
 | `ollama`            | Local Ollama (no API key) |
 | `openai_compatible` | Any server speaking OpenAI's chat-completions wire shape (Together, Groq, vLLM, LM Studio, …) |
+| `azure_ai_foundry`  | Azure AI Foundry, in either of its two deployment modes (`api_style: unified` — the OpenAI-compatible Model Inference API, or `api_style: anthropic` — the Anthropic-native passthrough for Claude models) |
 
 ### Configuration
 
@@ -720,7 +774,11 @@ runtime (branding, ingestion sources, custom fields, normalizer mappings), and t
 app itself edits meant every deployment's live customization permanently diverged its git HEAD
 from upstream — including the commit hash shown on the About page. Each ships a documented
 `config/<name>.yaml.example` template; the real file is bootstrapped from it automatically on
-first read if absent, so a fresh clone/deploy still starts with working defaults.
+first read if absent, so a fresh clone/deploy still starts with working defaults. If a later
+release introduces new config content a deployment doesn't have yet, an admin sees a top-bar
+notice offering to add it — see [Config-drift notice](#configuration) above.
+
+---
 
 ## Documentation
 
@@ -730,12 +788,13 @@ first read if absent, so a fresh clone/deploy still starts with working defaults
 | [`docs/agent-architecture.md`](docs/agent-architecture.md) | Engineers | LangGraph/LangChain usage, tool-calling design, per-agent skill matrix, pipeline DAG, state management |
 | [`docs/threat-hunting-framework-design.md`](docs/threat-hunting-framework-design.md) | Engineers | Full TH domain model: Hunt Package schema, evidence model, IOC model, SSRF policy, DB schema, API route map |
 | [`docs/architecture.md`](docs/architecture.md) | Engineers | Whole-platform module map, data flows, config files, external dependencies |
+| [`docs/rebranding-risk-analysis.md`](docs/rebranding-risk-analysis.md) | Maintainers | Inventory and risk tiering for renaming the remaining internal `mizton-threatbox` code references (launcher script, env vars, package identifiers, Docker artifacts) |
 
 ---
 
 ## License
 
-Mizton-ThreatBox is released under the Apache License 2.0. See the
+OpenTARS is released under the Apache License 2.0. See the
 [`LICENSE`](LICENSE) file for the full terms.
 
 This product includes third-party open-source software. Each bundled
@@ -745,8 +804,8 @@ runtime dependencies and their licenses.
 
 ## Development
 
-Mizton-ThreatBox is developed with a hybrid approach that combines AI-assisted, conversational coding using [OpenCode](https://opencode.ai) with manual development, review, and testing. Architecture, design decisions, and the final state of the code remain the maintainers' responsibility.
+OpenTARS is developed with a hybrid approach that combines AI-assisted, conversational coding using [OpenCode](https://opencode.ai) with manual development, review, and testing. Architecture, design decisions, and the final state of the code remain the maintainers' responsibility.
 
 ## Attribution
 
-Mizton-ThreatBox is based on a fork of [ThreatFeeds Lite](https://github.com/jusafing/ThreatFeeds-Lite), originally created by Javier S.A. The original project is licensed under the Apache License 2.0. Mizton-ThreatBox continues from that foundation as a new tool with its own project identity and roadmap.
+OpenTARS is based on a fork of [ThreatFeeds Lite](https://github.com/jusafing/ThreatFeeds-Lite), originally created by Javier S.A., and continued as Mizton-ThreatBox before this rebrand. The original project is licensed under the Apache License 2.0. OpenTARS continues from that foundation as its own tool with its own project identity and roadmap.

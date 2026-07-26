@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { Rss, GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale } from 'lucide-react'
+import { GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale } from 'lucide-react'
+import BrandLogo from '../components/BrandLogo'
 
 declare const __APP_VERSION__: string
 declare const __GIT_COMMIT__: string
@@ -17,18 +18,16 @@ export default function About() {
     <div className="p-6 max-w-lg space-y-6">
       <div>
         <h1 className="text-lg font-semibold text-gray-100">About</h1>
-        <p className="text-sm text-gray-500">Mizton-ThreatBox — version information.</p>
+        <p className="text-sm text-gray-500">OpenTARS — version information.</p>
       </div>
 
       <div className="card space-y-5">
         {/* App identity */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-brand-600 rounded-xl">
-            <Rss className="w-5 h-5 text-white" />
-          </div>
+          <BrandLogo size={40} />
           <div>
-            <p className="text-base font-semibold text-gray-100">Mizton-ThreatBox</p>
-            <p className="text-xs text-gray-500">Lightweight Threat Intelligence feed receiver</p>
+            <p className="text-base font-semibold text-gray-100">OpenTARS</p>
+            <p className="text-xs text-gray-500">Threat Agentic Research System</p>
           </div>
         </div>
 
@@ -96,7 +95,7 @@ export default function About() {
                 href="https://github.com/Mizton-Labs/Mizton-ThreatBox"
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Mizton-ThreatBox on GitHub"
+                title="OpenTARS on GitHub"
                 className="inline-flex items-center gap-1.5 text-brand-400 hover:text-brand-300"
               >
                 <Github className="w-4 h-4 shrink-0" />
@@ -127,9 +126,10 @@ export default function About() {
         <div className="border-t border-gray-800" />
 
         <p className="text-xs text-gray-600 leading-relaxed">
-          Mizton-ThreatBox is a standalone, local Threat Intelligence feed aggregator.
-          It listens for, pulls, and normalises threat intel from multiple sources,
-          stores data in SQLite, and exposes this web interface for viewing and configuration.
+          OpenTARS (Threat Agentic Research System) is a standalone, local Threat Intelligence and
+          Threat Hunting platform. It listens for, pulls, and normalises threat intel from multiple
+          sources, runs LLM-driven agentic threat-hunting workflows, stores data in SQLite, and
+          exposes this web interface for viewing, hunting, and configuration.
         </p>
       </div>
 
@@ -139,7 +139,7 @@ export default function About() {
           <h2 className="text-sm font-semibold text-gray-200">License</h2>
         </div>
         <p className="text-xs text-gray-500 leading-relaxed">
-          Mizton-ThreatBox is released under the Apache License 2.0. The full
+          OpenTARS is released under the Apache License 2.0. The full
           terms are in the <span className="font-mono text-gray-400">LICENSE</span>{' '}
           file at the project root.
         </p>

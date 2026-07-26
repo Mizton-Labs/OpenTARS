@@ -285,7 +285,7 @@ function AppTitleSetting() {
         <p className="text-sm text-gray-300">Application Display Title</p>
         <p className="text-xs text-gray-500">
           Branding name shown in the sidebar header and browser tab title.
-          Leave empty to use the default <span className="font-mono text-gray-400">Mizton-ThreatBox</span>.
+          Leave empty to use the default <span className="font-mono text-gray-400">OpenTARS</span>.
           Maximum {APP_TITLE_MAX_LEN} characters. Takes effect immediately (no restart).
         </p>
       </div>
@@ -294,7 +294,7 @@ function AppTitleSetting() {
           type="text"
           maxLength={APP_TITLE_MAX_LEN}
           className="input flex-1"
-          placeholder="Mizton-ThreatBox (default)"
+          placeholder="OpenTARS (default)"
           value={input}
           onChange={e => { setInput(e.target.value); setSaved(false); setError(null) }}
           spellCheck={false}

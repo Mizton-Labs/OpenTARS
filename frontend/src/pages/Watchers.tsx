@@ -36,7 +36,7 @@ const PUBLISH_TARGET_LABELS: Record<WatcherPublishTarget, string> = {
 }
 const WEBHOOK_FORMATS: WatcherWebhookFormat[] = ['generic', 'discord', 'slack', 'teams']
 const WEBHOOK_FORMAT_LABELS: Record<WatcherWebhookFormat, string> = {
-  generic: 'Generic (Mizton-ThreatBox envelope)',
+  generic: 'Generic (OpenTARS envelope)',
   discord: 'Discord',
   slack: 'Slack / Mattermost',
   teams: 'Microsoft Teams',
@@ -926,7 +926,7 @@ function WatcherForm({
                 </select>
                 <span className="text-[11px] text-gray-500">
                   {form.webhook_format === 'generic'
-                    ? 'POST the Mizton-ThreatBox envelope (watcher metadata + event).'
+                    ? 'POST the OpenTARS envelope (watcher metadata + event).'
                     : form.webhook_format === 'discord'
                       ? 'POST a Discord webhook message ({"content": …}).'
                       : form.webhook_format === 'slack'

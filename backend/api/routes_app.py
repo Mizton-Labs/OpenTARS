@@ -143,7 +143,7 @@ async def set_app_title(
 
     Body: {"app_title": "My Custom Name"}
 
-    An empty string clears the override (sidebar falls back to 'Mizton-ThreatBox').
+    An empty string clears the override (sidebar falls back to 'OpenTARS').
     Maximum 80 characters; no newlines. Takes effect immediately (no restart).
     """
     value = body.get("app_title")

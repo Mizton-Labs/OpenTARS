@@ -1,4 +1,4 @@
-# Architecture — Mizton-ThreatBox v0.1
+# Architecture — OpenTARS v0.1
 
 **Status:** Complete (Threat Hunting phases 1–6 implemented)
 **Last updated:** 2026-06-21
@@ -7,7 +7,7 @@
 
 ## Overview
 
-Mizton-ThreatBox is a standalone **Threat Intel and Threat Hunting Operations Framework**.
+OpenTARS is a standalone **Threat Intel and Threat Hunting Operations Framework**.
 It ingests and normalizes threat intel from multiple sources, and drives end-to-end
 threat hunts through an LLM-powered LangGraph agent pipeline to Splunk execution and
 structured reports. All data is stored locally in SQLite; no external database is required.

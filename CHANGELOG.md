@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Mizton-ThreatBox are documented in this file.
+All notable changes to OpenTARS are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -8,6 +8,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ---
 
 ## [Unreleased]
+
+### Changed — Rebrand to OpenTARS (issue-local-024)
+
+Project renamed from Mizton-ThreatBox to **OpenTARS** ("Threat Agentic Research System"). New logo
+and favicon throughout the app (login screen, sidebar, About page, browser tab); every user-visible
+string across the frontend and backend (credential prompts, watcher envelope naming, SSO copy,
+report/PDF headers) now reads OpenTARS. README.md rewritten with a hero banner, a proper Quick Start,
+and expanded Features subsections covering everything shipped since the last full README pass
+(Threat Intel Tracking, Comparison Module, Evidence content viewer, Azure AI Foundry provider,
+config-drift notice). All other docs (`architecture.md`, `agent-architecture.md`,
+`platform-overview.md`, `threat-hunting-framework-design.md`, `CONTRIBUTING.md`,
+`THIRD-PARTY-NOTICES.md`) retitled to match, while historical CHANGELOG entries and the still-current
+GitHub repo URL (`Mizton-Labs/Mizton-ThreatBox`, to be renamed manually and separately) were left
+untouched for factual accuracy.
+
+The remaining internal code references (the `./mizton-threatbox` launcher script name, three
+`MIZTON_THREATBOX_*` env vars, `pyproject.toml`/`package.json` package identifiers, and the Docker
+image/container naming) were deliberately **not** renamed in this pass — see
+[`docs/rebranding-risk-analysis.md`](docs/rebranding-risk-analysis.md) for the full inventory and
+risk tiering behind that decision (the short version: no Python/JS import namespace is brand-coupled,
+so the real exposure is a handful of specific identifiers, several of which silently break existing
+deployments' auth/proxy configuration if renamed without a coordinated migration).
 
 ### Added — Config-drift notice for admins
 
@@ -708,7 +730,7 @@ frontend SSO bypass, frontend local-user still blocked).
 - **SSO coexists with local login**: the login page shows a configurable "Sign in with SSO" button above a divider and the existing username/password form. Local admin always works as a break-glass path.
 - **Write-only-secret config** at `config/sso.yaml` (gitignored). Mirrors `llm-providers.yaml` hygiene: `client_secret` is always redacted to `"***"` on reads; sentinel round-trips preserve the stored value. `config/sso.yaml.example` committed with annotated Entra, Google, and generic OIDC templates. Env overrides: `MIZTON_THREATBOX_SSO_ENABLED`, `..._SSO_CLIENT_ID`, `..._SSO_CLIENT_SECRET`, `..._SSO_ISSUER`, `..._SSO_TENANT_ID`, `..._SSO_BUTTON_LABEL`, `..._SSO_DEFAULT_ROLE`.
 - **Role mapping**: configurable `role_claim` (e.g. `roles` for Entra App Roles, `groups` for group GUIDs) with a `role_mapping` dict (claim value → app role). Most-privileged match wins when a user has multiple matching claims. Unmapped users get `default_role` (default `threat-viewer`).
-- **Auto-provisioning**: on first SSO login, a Mizton-ThreatBox account is automatically created with an unusable local password. `auto_provision: false` requires manual account creation. Returning SSO users are matched by `(idp, sub)` first (stable across email renames), then by username.
+- **Auto-provisioning**: on first SSO login, a OpenTARS account is automatically created with an unusable local password. `auto_provision: false` requires manual account creation. Returning SSO users are matched by `(idp, sub)` first (stable across email renames), then by username.
 - **DB schema v4 migration**: two nullable columns added to `users` (`idp`, `external_id`) for SSO account tracking; new `oidc_flows` table stores short-lived OIDC state/nonce/PKCE (10-min TTL, consumed atomically on callback to prevent replay). Migration is idempotent; existing local accounts are unaffected (both columns NULL).
 - **New backend modules**: `backend/auth/oidc_config.py` (config load/save/validate/redact/map_claims), `backend/auth/oidc.py` (discovery cache, PKCE, authorization URL builder, callback handler, ID-token verification via joserfc/JWKS, user upsert).
 - **New routes** (all under `/api/auth`):

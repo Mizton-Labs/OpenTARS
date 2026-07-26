@@ -6,7 +6,7 @@ independently of) the public ``/feed/watcher/<id>/`` URL:
 
   * ``webhook`` — POST a JSON payload per event. The exact shape depends on the
     watcher's ``webhook_format``:
-        - ``generic`` — the Mizton-ThreatBox envelope
+        - ``generic`` — the OpenTARS envelope
               {"watcher", "watcher_id", "dataset", "source_name",
                "triggered_at", "event": {...}}
         - ``discord`` — Discord webhook: a ``content`` summary plus an embed
@@ -17,7 +17,7 @@ independently of) the public ``/feed/watcher/<id>/`` URL:
               list every event field.
 
   * ``http`` — POST the *bare* event JSON object per event, i.e. the same shape
-    the local ``/api/ingest/listener`` endpoint accepts, so one Mizton-ThreatBox
+    the local ``/api/ingest/listener`` endpoint accepts, so one OpenTARS
     instance can feed another.
 
 Delivery is best-effort and per-event: each pending event is POSTed on its own,
