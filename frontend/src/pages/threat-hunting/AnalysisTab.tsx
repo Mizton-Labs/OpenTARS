@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, lazy, Suspense } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
@@ -25,6 +25,10 @@ import {
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
 } from './runConfigUtils'
+
+// issue-local-022 (item 2): lazy-loaded, matching WorkflowVisualizer.tsx's
+// treatment of its own @xyflow/react-based visualizer.
+const HypothesisLeadIocChart = lazy(() => import('./HypothesisLeadIocChart'))
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
 // hypothesis or hunting-lead card — a standalone button card rather than a
@@ -416,6 +420,21 @@ function HuntingPackageDraft({
 
   return (
     <div className="space-y-5">
+      {/* issue-local-022 (item 2): relationship overview chart — a
+          navigational aid above the flat lists below, not a replacement
+          for them (those still carry the full text + approve/reject
+          workflow). */}
+      <Suspense
+        fallback={
+          <div className="card flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Loading relationship chart…
+          </div>
+        }
+      >
+        <HypothesisLeadIocChart record={record} iocs={iocsForChips} pkgId={pkgId} runId={runId} />
+      </Suspense>
+
       {/* Threat Context */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
 

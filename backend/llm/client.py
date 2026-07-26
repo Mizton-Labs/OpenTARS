@@ -1295,3 +1295,202 @@ class OpenAICompatibleClient(OpenAIClient):
         # Every candidate failed with a transport/HTTP error — the server
         # genuinely exposes no catalog. Caller falls back to free-text.
         return None
+
+
+# ── Azure AI Foundry (issue-local-022) ───────────────────────────────────────
+
+
+class AzureAIFoundryClient(LLMClient):
+    """Azure AI Foundry's unified Model Inference API.
+
+    Azure AI Foundry fronts multiple model families — OpenAI, Anthropic
+    Claude, Meta, and others — behind ONE consistent wire shape (the
+    "Azure AI Model Inference API"), so a single client kind covers all of
+    them. This is deliberately NOT the same as ``openai_compatible``: Azure's
+    endpoint differs in three specific ways that a plain OpenAI-compatible
+    client gets wrong (this was the root cause of connection failures when
+    operators tried using ``openai_compatible`` or ``anthropic`` for a
+    Foundry-hosted model):
+      - the path is ``{base_url}/models/chat/completions`` (note the
+        ``/models`` segment — Azure's unified inference route, not a plain
+        OpenAI-shaped ``/chat/completions``),
+      - the auth header is ``api-key: <key>`` (not ``Authorization: Bearer``
+        and not Anthropic's ``x-api-key``/``anthropic-version`` pair),
+      - every request carries a required ``api-version`` query parameter.
+    The request/response body shape itself IS the standard OpenAI
+    chat-completions envelope regardless of the underlying model family, so
+    the payload construction and response parsing below mirror
+    :class:`OpenAIClient` exactly — only the URL and headers differ.
+    """
+
+    # Bumped only when Azure deprecates the version this targets — same
+    # class-constant convention as AnthropicClient._ANTHROPIC_VERSION above.
+    _API_VERSION = "2024-05-01-preview"
+
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def _versioned_url(self, path: str) -> str:
+        return f"{self.base_url}{path}?api-version={self._API_VERSION}"
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "api-key": self.api_key,
+        }
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Azure AI Foundry function-calling: returns (text, tool_calls_list).
+
+        Same OpenAI-shaped function-calling payload as OpenAIClient — see
+        that method's docstring; only URL/headers differ here.
+        """
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        functions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["parameters"],
+                },
+            }
+            for t in tools
+        ]
+
+        payload: dict = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+            "tools": functions,
+            "tool_choice": "auto",
+        }
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+
+        body = json.dumps(payload).encode("utf-8")
+        status, _, resp = self._send(
+            "POST",
+            self._versioned_url("/models/chat/completions"),
+            headers=self._auth_headers(),
+            body=body,
+            timeout=timeout,
+            step="complete_with_tools",
+        )
+        body_str = resp.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-JSON response",
+                status=status,
+                body=body_str,
+            ) from exc
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+
+        raw_calls = message.get("tool_calls") or []
+        tool_calls: list[dict] = []
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            fn_name = fn.get("name", "")
+            fn_args_str = fn.get("arguments", "{}")
+            try:
+                fn_args = json.loads(fn_args_str)
+            except json.JSONDecodeError:
+                fn_args = {}
+            tool_calls.append({"name": fn_name, "arguments": fn_args})
+
+        text = message.get("content") or ""
+        return text, tool_calls
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> str:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+        body = json.dumps(payload).encode("utf-8")
+        status, _, resp = self._send(
+            "POST",
+            self._versioned_url("/models/chat/completions"),
+            headers=self._auth_headers(),
+            body=body,
+            timeout=timeout,
+            step="complete",
+        )
+        body_str = resp.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-OpenAI response shape ({type(exc).__name__})",
+                status=status,
+                body=body_str,
+            ) from exc
+        return _extract_openai_content(
+            data,
+            provider_name=self.name,
+            status=status,
+            body_str=body_str,
+        )
+
+    def list_models(self) -> list[str] | None:
+        status, _, resp = self._send(
+            "GET",
+            self._versioned_url("/models"),
+            headers=self._auth_headers(),
+            body=None,
+            step="list_models",
+        )
+        data = _parse_json_or_raise(
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="list_models",
+        )
+        try:
+            return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        except (AttributeError, TypeError) as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-OpenAI list_models shape "
+                f"({type(exc).__name__})",
+                status=status,
+                body=resp.decode("utf-8", errors="replace"),
+            ) from exc

@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.llm.client import (
     AnthropicClient,
+    AzureAIFoundryClient,
     LLMClient,
     OllamaClient,
     OpenAIClient,
@@ -23,12 +24,16 @@ _CLIENT_KINDS: dict[str, type[LLMClient]] = {
     "anthropic": AnthropicClient,
     "ollama": OllamaClient,
     "openai_compatible": OpenAICompatibleClient,
+    "azure_ai_foundry": AzureAIFoundryClient,
 }
 
 _DEFAULT_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "ollama": "http://localhost:11434",
+    # No sensible default for azure_ai_foundry — the resource name is
+    # operator-specific (https://<resource-name>.services.ai.azure.com),
+    # same reasoning as openai_compatible having none.
 }
 
 

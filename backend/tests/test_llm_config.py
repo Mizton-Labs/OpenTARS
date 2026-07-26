@@ -70,6 +70,12 @@ def test_validate_rejects_unknown_kind():
         cfg_mod.validate_config(bad)
 
 
+def test_validate_accepts_azure_ai_foundry_kind():
+    """issue-local-022: azure_ai_foundry is a valid provider kind."""
+    good = {"enabled": False, "providers": [{"name": "foundry", "kind": "azure_ai_foundry"}]}
+    cfg_mod.validate_config(good)  # must not raise
+
+
 def test_validate_rejects_duplicate_names():
     bad = {
         "enabled": False,

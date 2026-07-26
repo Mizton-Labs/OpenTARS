@@ -62,6 +62,7 @@ const KINDS: { id: LLMProviderKind; label: string }[] = [
   { id: 'anthropic', label: 'Anthropic' },
   { id: 'ollama', label: 'Ollama (local)' },
   { id: 'openai_compatible', label: 'OpenAI-compatible' },
+  { id: 'azure_ai_foundry', label: 'Azure AI Foundry' },
 ]
 
 const DEFAULT_BASE_URL: Record<LLMProviderKind, string> = {
@@ -69,6 +70,9 @@ const DEFAULT_BASE_URL: Record<LLMProviderKind, string> = {
   anthropic: 'https://api.anthropic.com',
   ollama: 'http://localhost:11434',
   openai_compatible: '',
+  // No sensible default — the resource name is operator-specific
+  // (https://<resource-name>.services.ai.azure.com), same as openai_compatible.
+  azure_ai_foundry: '',
 }
 
 /** Mirrors backend.llm.config.PROVIDER_NAME_RE exactly. */
@@ -499,6 +503,16 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
                   llama.cpp) — <code>http://host:port/api</code> (OpenWebUI).
                   For OpenWebUI, the API key is a JWT issued in
                   Settings → Account → API Keys.
+                </p>
+              )}
+              {kind === 'azure_ai_foundry' && (
+                <p className="text-xs text-gray-500 mt-1 italic">
+                  Your Foundry resource's base endpoint, e.g.{' '}
+                  <code>https://&lt;resource-name&gt;.services.ai.azure.com</code>
+                  {' '}— no trailing path. Works uniformly for OpenAI, Anthropic
+                  Claude, and other model families deployed through Foundry
+                  (its unified Model Inference API handles the routing). The
+                  API key is the resource's key, not a per-model key.
                 </p>
               )}
             </div>

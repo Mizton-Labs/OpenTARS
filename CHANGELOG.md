@@ -9,6 +9,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Azure AI Foundry LLM provider, Analysis relationship chart, run-config consistency (issue-local-022)
+
+**New `azure_ai_foundry` LLM provider kind** covers OpenAI, Anthropic Claude, and other model
+families deployed through Azure AI Foundry — they all answer Foundry's unified Model Inference API.
+Previously there was no way to connect a Foundry-hosted endpoint at all: the closest existing kinds
+(`anthropic`, `openai_compatible`) each sent the wrong path/auth-header/query-parameter shape,
+which is why Foundry connections consistently failed.
+
+**A new relationship chart on the Analysis tab** shows Hypotheses, Hunting Leads, and IOCs as a
+three-tier graph, so an analyst can see at a glance whether a hypothesis has one or multiple hunting
+leads, and which IOCs aren't cited by any hypothesis ("coverage"). It sits above the existing flat
+detail lists as a navigational overview, not a replacement. A "Deep view" toggle overlays this run's
+Threat Intel analysis (threat actors, malware families, campaigns, MITRE techniques) as an aggregate
+cluster, plus precise per-IOC edges for any IOC also seen in another hunt package.
+
+**Threat Intel workflow visibility and consistency.** Both Threat Intel Analyst phases (preliminary
+and post-execution) now log under distinct step ids so both appear in the workflow chart/list
+instead of the final phase silently overwriting the preliminary one. New Run and Re-run now share
+one `RunConfigForm` (previously two independently-drifting copies of the same form) with Threat
+Intel included by default on both. A new `threat_intel_status` field gates Re-run and report
+generation while an analysis is in flight, so they can no longer race it. Track Workflow now
+defaults on.
+
+**Run/tab UI polish.** The Execution/Threat-Intel/Report tabs now gate on the *active run's* own
+status rather than the package's (a stale `pkg.status` from a prior run no longer leaves them wrongly
+enabled while a new run is mid-pipeline). Tabs render as connected arrow/chevron segments. The
+Comparison Assessment trigger is a distinct purple button-card. The enriched Sanitized-IOC table
+(All/Sanitized/Removed filter, verdict toggles) now lives in the IOCs tab, replacing the old flat
+list, with better Keep/Remove contrast and deduplicated removal-reason text. The Threat Intel
+Tracking dashboard's Exclude/Delete actions are now gated on the researcher/admin role, matching
+every other mutating action in that feature.
+
+### Fixed — PDF generation, IOC step ordering (issue-local-022)
+
+PDF report downloads crashed inconsistently on runs whose LLM output had explicit-`null`
+hypothesis/lead/TTP fields (rather than merely absent ones), plus a Findings-section double-escape
+bug that corrupted `&`/`<`/`>` in generated text — both fixed at the source (`_esc()` made
+defensive; the double-escape removed).
+
+Both the header progress rail and the tab bar showed the IOC phase before Analysis, ahead of when
+IOCs are actually reviewed. Reordered to Evidence → Analysis → IOC → Execution.
+
+---
+
 ### Added — Threat Intel Tracking dashboard, two-phase Threat Intel Analyst, run picker, agent consistency (issue-local-021)
 
 **A new "Threat Intel Tracking" sidebar subsection aggregates data across every hunt package** —

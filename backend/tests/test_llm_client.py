@@ -11,6 +11,7 @@ from backend.llm import client as client_mod
 from backend.llm import config as cfg_mod
 from backend.llm.client import (
     AnthropicClient,
+    AzureAIFoundryClient,
     OllamaClient,
     OpenAIClient,
     OpenAICompatibleClient,
@@ -177,6 +178,76 @@ def test_openai_compatible_extra_body_cannot_override_core_keys():
     assert payload["stream"] is False
     assert payload["model"] == "gpt-oss:120b"
     assert payload["temperature"] == 0.0
+
+
+def test_azure_ai_foundry_client_request_shape():
+    """issue-local-022: Azure AI Foundry's unified Model Inference API needs
+    the /models/chat/completions path (not plain /chat/completions), an
+    api-key header (not Authorization: Bearer or x-api-key), and a required
+    api-version query param — the exact contract that neither the existing
+    ``anthropic`` nor ``openai_compatible`` kinds satisfied, which was the
+    root cause of "connection fails" reports for Foundry-hosted models."""
+    body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry-claude",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="claude-3-5-sonnet",
+        transport=tx,
+    )
+    out = c.complete("hello", system="be brief", max_tokens=10)
+    assert out == "hi"
+    call = tx.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"] == (
+        "https://my-resource.services.ai.azure.com/models/chat/completions"
+        "?api-version=2024-05-01-preview"
+    )
+    assert call["headers"]["api-key"] == "az-key"
+    assert "Authorization" not in call["headers"]
+    assert "x-api-key" not in call["headers"]
+    payload = json.loads(call["body"])
+    assert payload["model"] == "claude-3-5-sonnet"
+    assert payload["messages"][0] == {"role": "system", "content": "be brief"}
+    assert payload["messages"][1] == {"role": "user", "content": "hello"}
+    assert payload["stream"] is False
+
+
+def test_azure_ai_foundry_list_models_request_shape():
+    body = json.dumps({"data": [{"id": "gpt-4o"}, {"id": "claude-3-5-sonnet"}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="",
+        transport=tx,
+    )
+    assert c.list_models() == ["gpt-4o", "claude-3-5-sonnet"]
+    call = tx.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"] == (
+        "https://my-resource.services.ai.azure.com/models?api-version=2024-05-01-preview"
+    )
+    assert call["headers"]["api-key"] == "az-key"
+
+
+def test_azure_ai_foundry_extra_body_merged_when_configured():
+    body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="gpt-4o",
+        extra_body={"reasoning_effort": "low"},
+        transport=tx,
+    )
+    c.complete("hi")
+    payload = json.loads(tx.calls[0]["body"])
+    assert payload["reasoning_effort"] == "low"
+    assert payload["model"] == "gpt-4o"
 
 
 def test_openai_compatible_no_extra_body_keeps_payload_minimal():

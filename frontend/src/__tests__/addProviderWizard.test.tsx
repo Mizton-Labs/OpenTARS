@@ -508,6 +508,18 @@ describe('AddProviderWizard (027)', () => {
     expect(screen.getByText(/vLLM, LM Studio/i)).toBeInTheDocument()
   })
 
+  // issue-local-022: Azure AI Foundry kind — no azure/foundry kind existed
+  // before, so adding a Foundry-hosted Anthropic/OpenAI endpoint always
+  // failed silently (wrong path/header/query-param shape under the hood).
+  it('offers azure_ai_foundry as a Kind option and shows its base_url hint only for that kind', () => {
+    render(<AddProviderWizard existingNames={[]} onClose={() => {}} onAdded={() => {}} />)
+    expect(screen.queryByText(/services\.ai\.azure\.com/i)).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Kind'), {
+      target: { value: 'azure_ai_foundry' },
+    })
+    expect(screen.getByText(/services\.ai\.azure\.com/i)).toBeInTheDocument()
+  })
+
   // ── prompts-028: dropdown decoupled from aggregate status ──────────────
 
   it('reveals the dropdown when a 200 returned models but status==="error"', async () => {

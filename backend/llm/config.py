@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _LLM_CONFIG_PATH = _PROJECT_ROOT / "config" / "llm-providers.yaml"
 
-_VALID_KINDS = {"openai", "anthropic", "ollama", "openai_compatible"}
+_VALID_KINDS = {"openai", "anthropic", "ollama", "openai_compatible", "azure_ai_foundry"}
 _REDACTED = "***"
 
 # prompts-022: provider names are operator-facing identifiers used in

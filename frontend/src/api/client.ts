@@ -1472,7 +1472,7 @@ export interface SmartRejectRequest {
 
 // ── LLM provider types (prompts-021D-2, expanded in 022 step 5) ────────────
 
-export type LLMProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai_compatible'
+export type LLMProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai_compatible' | 'azure_ai_foundry'
 
 /** Single entry from GET /api/app/agent-tools/catalog (issue-007). */
 export interface ToolCatalogEntry {
