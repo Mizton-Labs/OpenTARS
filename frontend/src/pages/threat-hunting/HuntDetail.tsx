@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Loader2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -11,16 +11,28 @@ import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
 import ThreatIntelTab from './ThreatIntelTab'
 import ComparisonAssessmentTab from './ComparisonAssessmentTab'
+import ArrowTabs from './ArrowTabs'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { runStatusClass, runLabel, HUNT_ID_BADGE } from './runStatusUtils'
 import IocVerdictToggle from './IocVerdictToggle'
 import IocApplyBar from './IocApplyBar'
+import RetrohuntPanel from './RetrohuntPanel'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
 import RunsStatusTable from './RunsStatusTable'
+import RunConfigForm from './RunConfigForm'
+import {
+  buildRunConfig,
+  modelOptionsFromProviders,
+  DEFAULT_IOC_MODE,
+  DEFAULT_IOC_CLEANING_OPTIONS,
+  DEFAULT_INCLUDE_THREAT_INTEL,
+} from './runConfigUtils'
 
 type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'threat-intel' | 'comparison' | 'report' | 'comments'
 
-const EFFORT_OPTIONS = ['low', 'medium', 'high'] as const
+// issue-local-022 (item 5): run statuses at or past approval — the point
+// where Execution/Threat-Intel/Report tabs have something to show.
+const POST_APPROVAL_RUN_STATUSES = new Set(['approved', 'executing', 'reporting', 'completed'])
 
 export default function HuntDetail({
   pkgId,
@@ -50,14 +62,12 @@ export default function HuntDetail({
   const [showRerunDialog, setShowRerunDialog] = useState(false)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
   const [rerunEffort, setRerunEffort] = useState<string>('medium')
-  // issue-local-015: per-run IOC handling config
-  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>('tagging_only')
-  const [iocCleaningOptions, setIocCleaningOptions] = useState({
-    remove_noisy: true,
-    remove_legit_domains: true,
-    remove_cdn_ranges: true,
-    remove_legit_services: false,
-  })
+  // issue-local-022 (item 3): shared defaults with AnalysisTab.tsx's
+  // first-run form via RunConfigForm.tsx, instead of an independently-
+  // drifted copy.
+  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>(DEFAULT_IOC_MODE)
+  const [iocCleaningOptions, setIocCleaningOptions] = useState(DEFAULT_IOC_CLEANING_OPTIONS)
+  const [includeThreatIntel, setIncludeThreatIntel] = useState(DEFAULT_INCLUDE_THREAT_INTEL)
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -69,10 +79,13 @@ export default function HuntDetail({
     queryFn: () => api.threatHunting.listEvidence(pkgId),
   })
 
+  // issue-local-021: the IOCs tab is now always visible (not gated on
+  // iocs.length>0), so this query must load as soon as a run is selected —
+  // not only once the IOCs tab is actually visited.
   const { data: iocs = [] } = useQuery({
     queryKey: ['th-iocs', pkgId, activeRunId],
     queryFn: () => api.threatHunting.listIocs(pkgId, activeRunId),
-    enabled: activeTab === 'iocs' && !!activeRunId,
+    enabled: !!activeRunId,
   })
 
   // Load all generation runs for this package
@@ -129,19 +142,10 @@ export default function HuntDetail({
     enabled: showRerunDialog,
   })
 
-  const rerunModelOptions = useMemo(() => {
-    const opts: { provider: string; model: string }[] = []
-    const seen = new Set<string>()
-    for (const p of rerunProviders as LLMProviderSummary[]) {
-      for (const m of p.available_models ?? []) {
-        const key = `${p.name}\x00${m}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        opts.push({ provider: p.name, model: m })
-      }
-    }
-    return opts
-  }, [rerunProviders])
+  const rerunModelOptions = useMemo(
+    () => modelOptionsFromProviders(rerunProviders as LLMProviderSummary[]),
+    [rerunProviders],
+  )
 
   const rerunChosenModel = rerunModelChoice !== '' ? (rerunModelOptions[Number(rerunModelChoice)] ?? null) : null
 
@@ -191,10 +195,7 @@ export default function HuntDetail({
       research_effort: rerunEffort || 'medium',
       provider_name: rerunChosenModel?.provider ?? undefined,
       model_name: rerunChosenModel?.model ?? undefined,
-      run_config: {
-        ioc_mode: iocMode,
-        ioc_cleaning_options: iocMode === 'active_cleaning' ? iocCleaningOptions : undefined,
-      },
+      run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
     }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
@@ -216,16 +217,6 @@ export default function HuntDetail({
     },
   })
 
-  // issue-local-020: Comparison Module — compares ALL runs of this package
-  // regardless of status, independent of the run selector above.
-  const compareMut = useMutation({
-    mutationFn: () => api.threatHunting.compareRuns(pkgId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-comparison', pkgId] })
-      setActiveTab('comparison')
-    },
-  })
-
   const PARSE_STATUS_ICON = {
     ok: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
     partial: <Clock className="w-3.5 h-3.5 text-amber-400" />,
@@ -241,7 +232,17 @@ export default function HuntDetail({
   // `runs` inline.
   const activeRun = runs.find((r) => r.id === activeRunId)
 
-  const isFinished = pkg?.status === 'approved' || pkg?.status === 'completed'
+  // issue-local-022 (item 5): gated on the ACTIVE RUN's own generation_status,
+  // not the package's — pkg.status only ever moves forward and is never reset
+  // when a NEW run starts on an already-completed package, so it used to stay
+  // stuck on 'approved'/'completed' from the PRIOR run for the entire
+  // duration of the new run's pipeline, leaving Execution/Threat-Intel/Report
+  // tabs wrongly enabled while the active run was still mid-analysis.
+  const isFinished = !!activeRun && POST_APPROVAL_RUN_STATUSES.has(activeRun.generation_status)
+  // issue-local-022 (item 3): a Threat Intel analysis in flight for the
+  // active run — Re-run and report generation are gated on this so they
+  // don't race the analysis that's still writing to this same run.
+  const threatIntelRunning = activeRun?.threat_intel_status === 'running'
   // issue-local-014: re-run is available regardless of any run's status —
   // including while a run is still active — so parallel runs (e.g. a
   // different model/effort) can be started at any time. The run selector
@@ -258,10 +259,10 @@ export default function HuntDetail({
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-semibold text-gray-100 truncate flex items-center gap-2">
             {pkg?.hunt_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>
+              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{pkg.hunt_id_display}</span>
             )}
             {activeRun?.run_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{activeRun.run_id_display}</span>
+              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
             )}
             {pkg?.name ?? '…'}
           </h1>
@@ -284,28 +285,16 @@ export default function HuntDetail({
           {canRerun && (
             <button
               className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={rerunMut.isPending}
+              disabled={rerunMut.isPending || threatIntelRunning}
               onClick={() => setShowRerunDialog(true)}
-              title="Re-run this hunt package — choose model and effort level"
+              title={
+                threatIntelRunning
+                  ? 'Threat Intel analysis is still running for this run'
+                  : 'Re-run this hunt package — choose model and effort level'
+              }
             >
               <RefreshCw className="w-4 h-4" />
               Re-run
-            </button>
-          )}
-          {/* issue-local-020: Assess & Compare — available regardless of run status */}
-          {runs.length > 0 && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={compareMut.isPending}
-              onClick={() => compareMut.mutate()}
-              title="Compare all runs of this hunt package"
-            >
-              {compareMut.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <GitCompare className="w-4 h-4" />
-              )}
-              Assess &amp; Compare
             </button>
           )}
           {isResearcher && (
@@ -364,84 +353,75 @@ export default function HuntDetail({
           selector back and forth isn't needed just to check overall state. */}
       {runs.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
-            All runs
-          </p>
-          <RunsStatusTable pkgId={pkgId} runs={runs} onSelectRun={(runId) => setActiveRunId(runId)} />
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+              All runs
+            </p>
+            {/* issue-local-021: Comparison Assessment trigger relocated here
+                (was a tab-bar button) — signals this is a package-level view
+                across all runs, not a per-run one. The actual "Assess &
+                Compare" action (run picker + model dropdown) now lives
+                inside ComparisonAssessmentTab itself, mirroring
+                ThreatIntelTab's self-contained Analyze button.
+                issue-local-022 (item 4): restyled as its own bordered
+                button-card in purple/indigo — a color distinct from the
+                brand-blue used by the arrow tab bar's active state and
+                Threat Intel's highlighted button, so it visually reads as a
+                different KIND of action (package-level across all runs, not
+                a workflow phase). */}
+            <button
+              className={clsx(
+                'flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors font-medium',
+                activeTab === 'comparison'
+                  ? 'bg-purple-900/30 border-purple-600/60 text-purple-200'
+                  : 'bg-purple-900/10 border-purple-800/40 text-purple-300 hover:bg-purple-900/20 hover:border-purple-700/60',
+              )}
+              onClick={() => setActiveTab('comparison')}
+              title="View the comparison assessment across all runs"
+            >
+              <GitCompare className="w-3.5 h-3.5" />
+              Comparison Assessment
+            </button>
+          </div>
+          <RunsStatusTable pkgId={pkgId} runs={runs} onSelectRun={(runId) => setActiveRunId(runId)} activeRunId={activeRunId} />
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="border-b border-gray-800">
-        <nav className="flex gap-6">
-          <button
-            onClick={() => setActiveTab('evidence')}
-            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'evidence' ? 'tab-active' : 'tab-inactive')}
-          >
-            Evidence ({evidence.length})
-          </button>
-          {/* issue-008-2B: IOC tab only visible once analysis has produced IOCs */}
-          {(iocs as THExtractedIOC[]).length > 0 && (
-            <button
-              onClick={() => setActiveTab('iocs')}
-              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'iocs' ? 'tab-active' : 'tab-inactive')}
-            >
-              IOCs ({(iocs as THExtractedIOC[]).length})
-            </button>
-          )}
-          <button
-            onClick={() => setActiveTab('analysis')}
-            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'analysis' ? 'tab-active' : 'tab-inactive')}
-          >
-            Analysis
-          </button>
-          {/* Execution tab — shown when package is approved or completed */}
-          {isFinished && (
-            <button
-              onClick={() => setActiveTab('execution')}
-              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'execution' ? 'tab-active' : 'tab-inactive')}
-            >
-              Execution
-            </button>
-          )}
-          {/* Threat Intelligence tab (issue-local-020) — shown once the
-              package has finished at least one run's execution. */}
-          {isFinished && (
-            <button
-              onClick={() => setActiveTab('threat-intel')}
-              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'threat-intel' ? 'tab-active' : 'tab-inactive')}
-            >
-              Threat Intelligence
-            </button>
-          )}
-          {/* Comparison Assessment tab (issue-local-020) — independent of
-              status, available as soon as any run exists. */}
-          {runs.length > 0 && (
-            <button
-              onClick={() => setActiveTab('comparison')}
-              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'comparison' ? 'tab-active' : 'tab-inactive')}
-            >
-              Comparison Assessment
-            </button>
-          )}
-          {/* Report tab — shown when package is approved or completed */}
-          {isFinished && (
-            <button
-              onClick={() => setActiveTab('report')}
-              className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'report' ? 'tab-active' : 'tab-inactive')}
-            >
-              Report
-            </button>
-          )}
-          {/* Comments tab (issue-local-018) — always visible, per-run free-text notes */}
-          <button
-            onClick={() => setActiveTab('comments')}
-            className={clsx('pb-3 text-sm font-medium transition-colors', activeTab === 'comments' ? 'tab-active' : 'tab-inactive')}
-          >
-            Comments{comments.length > 0 ? ` (${comments.length})` : ''}
-          </button>
-        </nav>
-      </div>
+      {/* Tabs — issue-local-022 (item 5): SmartArt-style connected arrow
+          segments; disabled (not-yet-reached) phases stay visibly greyed. */}
+      <ArrowTabs
+        active={activeTab}
+        onSelect={(key) => setActiveTab(key as DetailTab)}
+        tabs={[
+          { key: 'evidence', label: `Evidence (${evidence.length})` },
+          // issue-local-021: IOCs tab always visible (was gated on iocs.length>0)
+          {
+            key: 'iocs',
+            label: `IOCs${(iocs as THExtractedIOC[]).length > 0 ? ` (${(iocs as THExtractedIOC[]).length})` : ''}`,
+          },
+          { key: 'analysis', label: 'Analysis' },
+          {
+            key: 'execution',
+            label: 'Execution',
+            disabled: !isFinished,
+            title: isFinished ? undefined : 'Available after execution starts',
+          },
+          {
+            key: 'threat-intel',
+            label: 'Threat Intelligence',
+            disabled: !isFinished,
+            title: isFinished ? undefined : 'Available after execution starts',
+          },
+          {
+            key: 'report',
+            label: 'Report',
+            disabled: !isFinished,
+            title: isFinished ? undefined : 'Available after execution starts',
+          },
+          // Comments tab (issue-local-018) — always visible, per-run free-text notes
+          { key: 'comments', label: `Comments${comments.length > 0 ? ` (${comments.length})` : ''}` },
+        ]}
+      />
 
       {/* Evidence tab */}
       {activeTab === 'evidence' && (
@@ -488,96 +468,121 @@ export default function HuntDetail({
         </div>
       )}
 
-      {/* IOCs tab */}
+      {/* IOCs tab — issue-local-022 (item 6): once the run's Deep Retrohunt
+          Lead exists, show the richer enriched All/Sanitized/Removed table
+          (RetrohuntPanel — previously only reachable via the Analysis tab's
+          collapsible section) instead of the plain flat list. Early in a
+          run, before deep_retrohunt_planner has produced that lead yet, fall
+          back to the flat extracted_iocs list so the tab isn't empty. */}
       {activeTab === 'iocs' && (
-        <div className="space-y-3">
-          {(iocs as THExtractedIOC[]).length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">No IOCs extracted yet.</p>
-          ) : (
-            <>
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex gap-4 text-sm text-gray-500">
-                  <span className="text-green-400">{cleanCount} actionable</span>
-                  <span className="text-amber-400">{noisyCount} noisy / flagged</span>
-                  {removedCount > 0 && (
-                    <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+        headerGenRecord?.deep_retrohunt ? (
+          <RetrohuntPanel
+            retrohunt={headerGenRecord.deep_retrohunt}
+            pkgId={pkgId}
+            pendingFor={isResearcher ? iocStaging.pendingFor : undefined}
+            onStageVerdict={isResearcher ? iocStaging.stage : undefined}
+            iocApplyBar={
+              isResearcher
+                ? {
+                    isDirty: iocStaging.isDirty,
+                    pendingCount: iocStaging.pendingCount,
+                    isApplying: iocStaging.isApplying,
+                    justApplied: iocStaging.justApplied,
+                    onApply: iocStaging.apply,
+                  }
+                : undefined
+            }
+          />
+        ) : (
+          <div className="space-y-3">
+            {(iocs as THExtractedIOC[]).length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-8">No IOCs extracted yet.</p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex gap-4 text-sm text-gray-500">
+                    <span className="text-green-400">{cleanCount} actionable</span>
+                    <span className="text-amber-400">{noisyCount} noisy / flagged</span>
+                    {removedCount > 0 && (
+                      <span className="text-red-400">{removedCount} removed (active cleaning)</span>
+                    )}
+                  </div>
+                  {isResearcher && (
+                    <IocApplyBar
+                      isDirty={iocStaging.isDirty}
+                      pendingCount={iocStaging.pendingCount}
+                      isApplying={iocStaging.isApplying}
+                      justApplied={iocStaging.justApplied}
+                      onApply={iocStaging.apply}
+                    />
                   )}
                 </div>
-                {isResearcher && (
-                  <IocApplyBar
-                    isDirty={iocStaging.isDirty}
-                    pendingCount={iocStaging.pendingCount}
-                    isApplying={iocStaging.isApplying}
-                    justApplied={iocStaging.justApplied}
-                    onApply={iocStaging.apply}
-                  />
-                )}
-              </div>
-              {/* Column headers */}
-              <div className="flex items-center gap-3 px-3 text-[11px] text-gray-600 uppercase tracking-wider">
-                <span className="w-24 shrink-0">Type</span>
-                <span className="flex-1">IOC</span>
-                <span className="w-28 shrink-0">Result</span>
-                <span className="w-32 shrink-0 text-right">Verdict</span>
-              </div>
-              <div className="space-y-1">
-                {(iocs as THExtractedIOC[]).map((ioc) => {
-                  const serverValue = ioc.action ?? 'keep'
-                  const removed = serverValue === 'remove'
-                  return (
-                    <div
-                      key={ioc.id}
-                      className={clsx(
-                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm',
-                        removed
-                          ? 'bg-red-900/10 border border-red-900/30 opacity-60'
-                          : ioc.flagged_noisy
-                            ? 'bg-amber-900/10 border border-amber-800/30'
-                            : 'bg-gray-800/40',
-                      )}
-                    >
-                      <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
-                      <span
+                {/* Column headers */}
+                <div className="flex items-center gap-3 px-3 text-[11px] text-gray-600 uppercase tracking-wider">
+                  <span className="w-24 shrink-0">Type</span>
+                  <span className="flex-1">IOC</span>
+                  <span className="w-28 shrink-0">Result</span>
+                  <span className="w-32 shrink-0 text-right">Verdict</span>
+                </div>
+                <div className="space-y-1">
+                  {(iocs as THExtractedIOC[]).map((ioc) => {
+                    const serverValue = ioc.action ?? 'keep'
+                    const removed = serverValue === 'remove'
+                    return (
+                      <div
+                        key={ioc.id}
                         className={clsx(
-                          'font-mono flex-1 truncate',
-                          removed ? 'text-gray-500 line-through' : 'text-gray-200',
+                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm',
+                          removed
+                            ? 'bg-red-900/10 border border-red-900/30 opacity-60'
+                            : ioc.flagged_noisy
+                              ? 'bg-amber-900/10 border border-amber-800/30'
+                              : 'bg-gray-800/40',
                         )}
                       >
-                        {ioc.ioc}
-                      </span>
-                      <span className="w-28 shrink-0 flex items-center gap-1.5">
-                        {ioc.flagged_noisy && (
-                          <span className="text-amber-500 text-[11px]">noisy</span>
-                        )}
-                        <span className="text-gray-600 text-[11px]">
-                          {(ioc.noise_score * 100).toFixed(0)}%
+                        <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
+                        <span
+                          className={clsx(
+                            'font-mono flex-1 truncate',
+                            removed ? 'text-gray-500 line-through' : 'text-gray-200',
+                          )}
+                        >
+                          {ioc.ioc}
                         </span>
-                      </span>
-                      <span className="w-32 shrink-0 flex justify-end">
-                        {isResearcher ? (
-                          <IocVerdictToggle
-                            value={serverValue}
-                            pending={iocStaging.pendingFor(ioc.ioc, ioc.ioc_type)}
-                            onChange={(next) => iocStaging.stage(ioc.ioc, ioc.ioc_type, next, serverValue)}
-                          />
-                        ) : (
-                          <span
-                            className={clsx(
-                              'text-[11px] font-medium',
-                              removed ? 'text-red-400' : 'text-green-400',
-                            )}
-                          >
-                            {removed ? 'remove' : 'keep'}
+                        <span className="w-28 shrink-0 flex items-center gap-1.5">
+                          {ioc.flagged_noisy && (
+                            <span className="text-amber-500 text-[11px]">noisy</span>
+                          )}
+                          <span className="text-gray-600 text-[11px]">
+                            {(ioc.noise_score * 100).toFixed(0)}%
                           </span>
-                        )}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </div>
+                        </span>
+                        <span className="w-32 shrink-0 flex justify-end">
+                          {isResearcher ? (
+                            <IocVerdictToggle
+                              value={serverValue}
+                              pending={iocStaging.pendingFor(ioc.ioc, ioc.ioc_type)}
+                              onChange={(next) => iocStaging.stage(ioc.ioc, ioc.ioc_type, next, serverValue)}
+                            />
+                          ) : (
+                            <span
+                              className={clsx(
+                                'text-[11px] font-medium',
+                                removed ? 'text-red-400' : 'text-green-400',
+                              )}
+                            >
+                              {removed ? 'remove' : 'keep'}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )
       )}
 
       {/* Analysis tab — passes activeRunId so it polls the correct run */}
@@ -590,20 +595,7 @@ export default function HuntDetail({
             qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
           }}
           onShowIocs={() => setActiveTab('iocs')}
-          pendingVerdictFor={isResearcher ? iocStaging.pendingFor : undefined}
-          onStageVerdict={isResearcher ? iocStaging.stage : undefined}
           iocVerdictsDirty={iocStaging.isDirty}
-          iocApplyBar={
-            isResearcher
-              ? {
-                  isDirty: iocStaging.isDirty,
-                  pendingCount: iocStaging.pendingCount,
-                  isApplying: iocStaging.isApplying,
-                  justApplied: iocStaging.justApplied,
-                  onApply: iocStaging.apply,
-                }
-              : undefined
-          }
         />
       )}
 
@@ -620,10 +612,12 @@ export default function HuntDetail({
       {activeTab === 'threat-intel' && <ThreatIntelTab pkgId={pkgId} runId={activeRunId} />}
 
       {/* Comparison Assessment tab (issue-local-020) */}
-      {activeTab === 'comparison' && <ComparisonAssessmentTab pkgId={pkgId} />}
+      {activeTab === 'comparison' && <ComparisonAssessmentTab pkgId={pkgId} runs={runs} />}
 
       {/* Report tab */}
-      {activeTab === 'report' && <ReportPanel pkgId={pkgId} runId={activeRunId} />}
+      {activeTab === 'report' && (
+        <ReportPanel pkgId={pkgId} runId={activeRunId} threatIntelRunning={threatIntelRunning} />
+      )}
 
       {/* Comments tab (issue-local-018) — free-text analyst notes on the active run */}
       {activeTab === 'comments' && (
@@ -731,91 +725,20 @@ export default function HuntDetail({
               </button>
             </div>
 
-            {/* Model selector */}
-            <div className="space-y-1.5">
-              <label className="block text-sm text-gray-400">Model</label>
-              <div className="relative">
-                <select
-                  className="input w-full text-sm pr-7 appearance-none"
-                  value={rerunModelChoice}
-                  onChange={(e) => setRerunModelChoice(e.target.value)}
-                >
-                  <option value="">Configured default</option>
-                  {rerunModelOptions.map((opt, i) => (
-                    <option key={`${opt.provider}:${opt.model}`} value={String(i)}>
-                      {opt.provider} · {opt.model}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Effort pills */}
-            <div className="space-y-1.5">
-              <label className="block text-sm text-gray-400">Research Effort</label>
-              <div className="flex gap-2">
-                {EFFORT_OPTIONS.map((e) => (
-                  <button
-                    key={e}
-                    className={clsx(
-                      'flex-1 py-1.5 text-sm rounded border transition-colors',
-                      rerunEffort === e
-                        ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
-                        : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
-                    )}
-                    onClick={() => setRerunEffort(e)}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* issue-local-015: IOC handling mode */}
-            <div className="space-y-1.5">
-              <label className="block text-sm text-gray-400">IOC Handling</label>
-              <div className="flex gap-2">
-                {(['tagging_only', 'active_cleaning'] as const).map((m) => (
-                  <button
-                    key={m}
-                    className={clsx(
-                      'flex-1 py-1.5 text-[12px] rounded border transition-colors',
-                      iocMode === m
-                        ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
-                        : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
-                    )}
-                    onClick={() => setIocMode(m)}
-                  >
-                    {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
-                  </button>
-                ))}
-              </div>
-              {iocMode === 'active_cleaning' && (
-                <div className="space-y-1 pt-1">
-                  {(
-                    [
-                      ['remove_noisy', 'Remove noisy IOCs'],
-                      ['remove_legit_domains', 'Remove known legit domains'],
-                      ['remove_cdn_ranges', 'Remove known CDN ranges'],
-                      ['remove_legit_services', 'Remove known legit services'],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
-                      <input
-                        type="checkbox"
-                        checked={iocCleaningOptions[key]}
-                        onChange={(e) =>
-                          setIocCleaningOptions((prev) => ({ ...prev, [key]: e.target.checked }))
-                        }
-                        className="accent-brand-500"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+            <RunConfigForm
+              variant="dialog"
+              effort={rerunEffort}
+              onEffortChange={setRerunEffort}
+              modelChoice={rerunModelChoice}
+              onModelChoiceChange={setRerunModelChoice}
+              modelOptions={rerunModelOptions}
+              iocMode={iocMode}
+              onIocModeChange={setIocMode}
+              iocCleaningOptions={iocCleaningOptions}
+              onIocCleaningOptionsChange={setIocCleaningOptions}
+              includeThreatIntel={includeThreatIntel}
+              onIncludeThreatIntelChange={setIncludeThreatIntel}
+            />
 
             {/* Selected summary */}
             <p className="text-[11px] text-gray-600">
@@ -823,6 +746,7 @@ export default function HuntDetail({
                 ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
                 : 'Default model'}{' '}
               · effort: {rerunEffort} · IOC: {iocMode === 'tagging_only' ? 'tagging only' : 'active cleaning'}
+              {' '}· Threat Intel: {includeThreatIntel ? 'on' : 'off'}
             </p>
 
             {/* Actions */}

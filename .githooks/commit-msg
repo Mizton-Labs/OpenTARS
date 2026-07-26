@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Enforces this repository's commit-authorship guideline.
+#
+# Commit authorship stays with the human contributor only (see
+# CONTRIBUTING.md). Some tooling defaults may
+# append co-author or session trailers
+# automatically — this hook is the enforcement backstop for that guideline so
+# it can't be silently skipped by forgetting to check the docs first.
+#
+# Setup (one-time, per clone): git config core.hooksPath .githooks
+
+set -euo pipefail
+
+msg_file="$1"
+
+if grep -qiE '^[[:space:]]*co-authored-by:|^[[:space:]]*[A-Za-z][A-Za-z-]*-session:' "$msg_file"; then
+  echo "commit-msg hook: rejected — commit message does not follow this repository's authorship guideline." >&2
+  echo "Commit authorship in this repository is the human contributor only." >&2
+  echo "Remove any additional authorship/session trailers and retry." >&2
+  exit 1
+fi

@@ -33,6 +33,8 @@ const PIPELINE_STEPS = [
   { id: 'hunting_lead_planner',   label: 'Hunting Lead Planner',    x: 250, y: 360 },
   { id: 'ttp_analyst',            label: 'TTP Analyst',             x: 250, y: 480 },
   { id: 'query_drafting_agent',   label: 'Query Drafting Agent',    x: 250, y: 600 },
+  // ── Threat Intel Analyst, preliminary phase (issue-local-020/021/022) ───────
+  { id: 'threat_intel_preliminary', label: 'Threat Intel (Preliminary)', x: 250, y: 660 },
   // ── Approval gate ───────────────────────────────────────────────────────────
   { id: 'approval_gate',          label: '⚑ Approval Gate',         x: 250, y: 720 },
   // ── SIEM execution (issue-local-009) ────────────────────────────────────────
@@ -41,6 +43,8 @@ const PIPELINE_STEPS = [
   { id: 'siem_poll',              label: 'SIEM Poll',               x: 250, y: 1080 },
   { id: 'siem_fetch',             label: 'SIEM Fetch',              x: 250, y: 1200 },
   { id: 'siem_interpret',         label: 'SIEM Interpret',          x: 250, y: 1320 },
+  // ── Threat Intel Analyst, final phase (issue-local-020/021/022) ────────────
+  { id: 'threat_intel_final',     label: 'Threat Intel (Final)',    x: 250, y: 1380 },
   // ── Report generation (issue-local-009) ─────────────────────────────────────
   { id: 'report_assemble',        label: 'Assemble Report',         x: 250, y: 1440 },
   { id: 'report_exec_summary',    label: 'Exec Summary',            x: 250, y: 1560 },
@@ -57,15 +61,17 @@ const PIPELINE_EDGES_DEF = [
   { source: 'hypothesis_generator',   target: 'hunting_lead_planner' },
   { source: 'hunting_lead_planner',   target: 'ttp_analyst' },
   { source: 'ttp_analyst',            target: 'query_drafting_agent' },
-  { source: 'query_drafting_agent',   target: 'approval_gate' },
+  { source: 'query_drafting_agent',   target: 'threat_intel_preliminary' },
+  { source: 'threat_intel_preliminary', target: 'approval_gate' },
   // Execution
   { source: 'approval_gate',          target: 'siem_connect' },
   { source: 'siem_connect',           target: 'siem_submit' },
   { source: 'siem_submit',            target: 'siem_poll' },
   { source: 'siem_poll',              target: 'siem_fetch' },
   { source: 'siem_fetch',             target: 'siem_interpret' },
+  { source: 'siem_interpret',         target: 'threat_intel_final' },
   // Report
-  { source: 'siem_interpret',         target: 'report_assemble' },
+  { source: 'threat_intel_final',     target: 'report_assemble' },
   { source: 'report_assemble',        target: 'report_exec_summary' },
   { source: 'report_exec_summary',    target: 'report_findings' },
   { source: 'report_findings',        target: 'report_render' },
@@ -272,7 +278,9 @@ export default function ReactFlowVisualizer({
   // around the single focused node regardless of its size on screen.
   useEffect(() => {
     if (!trackWorkflow || !active) return
-    instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 0.6, duration: 400 })
+    // issue-local-021: zoomed out slightly (0.6 -> 1.1) so neighboring
+    // nodes stay visible for context while still centering on the active one.
+    instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 1.1, duration: 400 })
   }, [trackWorkflow, active])
 
   return (

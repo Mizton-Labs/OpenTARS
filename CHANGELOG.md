@@ -9,6 +9,41 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Threat Intel Tracking dashboard, two-phase Threat Intel Analyst, run picker, agent consistency (issue-local-021)
+
+**A new "Threat Intel Tracking" sidebar subsection aggregates data across every hunt package** —
+IOCs, CVEs, threat actors, campaigns, malware families, and MITRE ATT&CK techniques, each showing
+which hunt package(s) it came from. A Dashboard tab has a deep-search box and six panels; a Hunts
+tab lets an analyst Include/Exclude a hunt from all cross-hunt aggregation (reversible) or
+permanently delete it. This is a pure read/aggregate layer over data that already existed per-hunt
+— no new agent runs.
+
+**The Threat Hunt Intelligence Analyst now runs in two phases.** A new "preliminary" phase fires
+right after the generation pipeline completes (before SIEM execution), and the existing
+post-execution phase now additionally ingests this run's SIEM findings to confirm or refine the
+preliminary assessment — previously the analyst never read execution results at all. Both phases
+are gated by a new "Include Threat Intel analysis" run option (default on), alongside a new
+default of active IOC cleaning (all four noise-reduction toggles on, including the one that
+previously defaulted off).
+
+**Assess & Compare now lets you pick which runs to include and which model to use**, via a dialog
+(all runs selected by default) rather than always comparing every run immediately. The trigger
+also moved off the per-run tab bar onto the "All runs" row, signaling it's a package-level view;
+the comparison itself now lives inside its own self-contained action (mirroring how the Threat
+Intelligence tab already worked), so re-running a comparison doesn't require leaving the tab.
+
+**Every hunt-detail tab is now always visible** (Execution/Threat Intelligence/Report grey out
+instead of disappearing until the package finishes; IOCs no longer wait for the Analysis tab to be
+visited first), the currently-open run is now highlighted in the all-runs table, and HuntID/RunID
+badges are a size larger.
+
+**Agent consistency**: five pipeline nodes (TTP Analyst, Hypothesis Generator, Hunting Lead
+Planner, Report Writer, Threat Intel Analyst) previously emitted no debug detail at all, leaving
+half the pipeline invisible in the run's Pipeline Log console. All five now record what they asked
+the LLM, what came back, and why a step fell back to a deterministic default. That console is also
+no longer debug-only — Verbose mode now shows a filtered view (errors and fallbacks only), with
+the full raw trace still reserved for Debug.
+
 ### Added — Search/time filter, Threat Intelligence Analyst, Comparison Module (issue-local-020)
 
 **The hunt package list now supports server-side deep search and a time-range filter.** The search

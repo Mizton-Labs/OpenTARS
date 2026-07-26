@@ -29,7 +29,7 @@ async def test_fresh_db_is_schema_v7_with_new_table_and_index(tmp_path: Path) ->
 
     assert "threat_intel_analysis" in tables
     assert "idx_extracted_iocs_ioc" in indexes
-    assert version == 7
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_v6_db_migrates_to_v7(tmp_path: Path) -> None:
     version = conn.execute("SELECT version FROM th_schema_version LIMIT 1").fetchone()[0]
     conn.close()
     assert "threat_intel_analysis" in tables
-    assert version == 7
+    assert version == th_db._TH_SCHEMA_VERSION
 
 
 @pytest.fixture

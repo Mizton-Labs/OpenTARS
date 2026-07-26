@@ -14,7 +14,7 @@
  * Execution (running the SPL against Splunk) is Phase 5.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { clsx } from 'clsx'
 import {
   ChevronDown,
@@ -108,6 +108,7 @@ function IOCRow({
   ioc,
   pendingFor,
   onStageVerdict,
+  commonRemovalReasons,
 }: {
   ioc: THSanitizedIOC
   /** When provided (together with onStageVerdict), the Action column becomes
@@ -115,13 +116,23 @@ function IOCRow({
    *  badge — omitted for read-only draft views. */
   pendingFor?: (ioc: string, iocType: string) => IocVerdict | undefined
   onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
+  /** issue-local-022 (item 6): reason strings shared by 2+ removed IOCs
+   *  (e.g. the deterministic "excluded by active cleaning (remove_noisy)"
+   *  text) — already surfaced once in the panel-level summary above the
+   *  table, so they're filtered out of each row's own expanded list rather
+   *  than repeated on every matching row. */
+  commonRemovalReasons?: Set<string>
 }) {
   const serverValue: IocVerdict = ioc.action ?? 'keep'
   const removed = serverValue === 'remove'
+  const displayReasons =
+    removed && commonRemovalReasons
+      ? ioc.noise_reasons.filter((r) => !commonRemovalReasons.has(r))
+      : ioc.noise_reasons
+  const hasReasons = displayReasons.length > 0
   // Removed IOCs default to expanded — the rationale for removal must be
   // fully visible, not hidden behind a click (issue-local-015 feedback).
-  const [expanded, setExpanded] = useState(removed)
-  const hasReasons = ioc.noise_reasons.length > 0
+  const [expanded, setExpanded] = useState(removed && hasReasons)
   const interactive = !!onStageVerdict
 
   return (
@@ -203,7 +214,7 @@ function IOCRow({
         <tr className="border-b border-gray-800/40">
           <td colSpan={6} className="pb-2 pt-0 pl-8 pr-2">
             <ul className="space-y-0.5">
-              {ioc.noise_reasons.map((r, i) => (
+              {displayReasons.map((r, i) => (
                 <li
                   key={i}
                   className={clsx(
@@ -315,6 +326,24 @@ export default function RetrohuntPanel({
     return true
   })
 
+  // issue-local-022 (item 6): reasons shared by 2+ removed IOCs (almost
+  // always the deterministic active-cleaning-toggle text, e.g. "Flagged as
+  // noisy — excluded by active cleaning (remove_noisy)") get hoisted into a
+  // single summary line instead of being repeated verbatim on every row.
+  const removalReasonCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const ioc of removedIocs) {
+      for (const reason of ioc.noise_reasons) {
+        counts.set(reason, (counts.get(reason) ?? 0) + 1)
+      }
+    }
+    return counts
+  }, [removedIocs])
+  const commonRemovalReasons = useMemo(
+    () => new Set([...removalReasonCounts.entries()].filter(([, count]) => count > 1).map(([r]) => r)),
+    [removalReasonCounts],
+  )
+
   return (
     <div className="space-y-5">
       {/* Header / statistics */}
@@ -419,6 +448,28 @@ export default function RetrohuntPanel({
             </div>
           </div>
 
+          {/* issue-local-022 (item 6): removal-reason summary — shown once,
+              here, instead of repeated verbatim on every matching row below. */}
+          {commonRemovalReasons.size > 0 && iocFilter !== 'sanitized' && (
+            <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-2.5 space-y-1">
+              <p className="text-[11px] font-semibold text-red-300 uppercase tracking-wider">
+                Removal reasons
+              </p>
+              <ul className="space-y-0.5">
+                {[...commonRemovalReasons]
+                  .map((reason) => [reason, removalReasonCounts.get(reason) ?? 0] as const)
+                  .map(([reason, count]) => (
+                    <li key={reason} className="text-[12px] text-red-300 flex items-start gap-1.5">
+                      <Ban className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span>
+                        {reason} — <span className="font-semibold">{count}</span> IOC{count !== 1 ? 's' : ''}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
           <div className="overflow-x-auto rounded-lg border border-gray-800">
             <table className="w-full min-w-[640px]">
               <thead>
@@ -439,6 +490,7 @@ export default function RetrohuntPanel({
                       ioc={ioc}
                       pendingFor={pendingFor}
                       onStageVerdict={onStageVerdict}
+                      commonRemovalReasons={commonRemovalReasons}
                     />
                   ))
                 ) : (

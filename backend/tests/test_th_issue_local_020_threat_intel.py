@@ -205,7 +205,8 @@ class TestAnalyzeThreatIntel:
 
             run = await th_db.get_generation_run("run-1")
             steps = {s.get("step") for s in (run.get("step_logs") or [])}
-            assert "threat_intel_analyst" in steps
+            # issue-local-022: step id now includes the phase (default "final").
+            assert "threat_intel_final" in steps
 
 
 def test_executor_calls_threat_intel_after_completed_before_report() -> None:

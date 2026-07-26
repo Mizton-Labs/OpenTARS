@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   Radar,
   Crosshair,
+  Network,
   Home as HomeIcon,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -72,6 +73,9 @@ const navSections: NavSection[] = [
     icon: Crosshair,
     items: [
       { to: 'threat-hunting', label: 'Threat Hunting', icon: Crosshair, adminOnly: false, authOnly: false },
+      // issue-local-021: cross-hunt correlation dashboard — nested under
+      // threat-hunting/ like the existing new/:id routes (App.tsx).
+      { to: 'threat-hunting/tracking', label: 'Threat Intel Tracking', icon: Network, adminOnly: false, authOnly: false },
     ],
   },
 ]

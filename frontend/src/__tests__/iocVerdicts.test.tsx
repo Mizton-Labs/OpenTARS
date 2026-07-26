@@ -64,8 +64,9 @@ describe('IocVerdictToggle', () => {
   it('renders Keep active when value is keep, no dirty ring', () => {
     const onChange = vi.fn()
     render(<IocVerdictToggle value="keep" onChange={onChange} />)
-    expect(screen.getByRole('button', { name: 'Keep' })).toHaveClass('bg-green-900/40')
-    expect(screen.getByRole('button', { name: 'Remove' })).not.toHaveClass('bg-red-900/40')
+    // issue-local-022 (item 6): brighter active-state fill for contrast.
+    expect(screen.getByRole('button', { name: 'Keep' })).toHaveClass('bg-green-700/70')
+    expect(screen.getByRole('button', { name: 'Remove' })).not.toHaveClass('bg-red-700/70')
   })
 
   it('calls onChange with the clicked verdict', () => {
@@ -77,7 +78,7 @@ describe('IocVerdictToggle', () => {
 
   it('shows a dirty ring and reflects the pending value when it differs from the server value', () => {
     const { container } = render(<IocVerdictToggle value="keep" pending="remove" onChange={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Remove' })).toHaveClass('bg-red-900/40')
+    expect(screen.getByRole('button', { name: 'Remove' })).toHaveClass('bg-red-700/70')
     expect(container.querySelector('[title*="staged"]')).toBeInTheDocument()
   })
 })
@@ -229,6 +230,44 @@ describe('RetrohuntPanel — three-way filter + verdict column', () => {
       render(<RetrohuntPanel retrohunt={makeRetrohunt(sanitized)} pkgId="pkg-1" />)
       expect(screen.queryByText(/staged/)).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('RetrohuntPanel — removal-reason dedupe (issue-local-022 item 6)', () => {
+  const REMOVE_NOISY_REASON = 'Flagged as noisy — excluded by active cleaning (remove_noisy)'
+
+  const manyRemoved: THSanitizedIOC[] = [
+    { ioc: 'noisy1.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.9, noise_reasons: [REMOVE_NOISY_REASON], search_token: 'tok-1', action: 'remove' },
+    { ioc: 'noisy2.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.9, noise_reasons: [REMOVE_NOISY_REASON], search_token: 'tok-2', action: 'remove' },
+    { ioc: 'noisy3.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.9, noise_reasons: [REMOVE_NOISY_REASON, 'also unusually long TLD'], search_token: 'tok-3', action: 'remove' },
+    { ioc: 'kept.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.1, noise_reasons: [], search_token: 'tok-4', action: 'keep' },
+  ]
+
+  it('shows the shared removal reason once, with a count, instead of repeating it per row', () => {
+    render(<RetrohuntPanel retrohunt={makeRetrohunt(manyRemoved)} pkgId="pkg-1" />)
+    fireEvent.click(screen.getByRole('button', { name: /^Removed/ }))
+
+    // Summary line: exactly one occurrence, with the count of affected IOCs.
+    const summaryOccurrences = screen.getAllByText(
+      (_, node) => node?.tagName === 'SPAN' && node?.textContent === `${REMOVE_NOISY_REASON} — 3 IOCs`,
+    )
+    expect(summaryOccurrences.length).toBe(1)
+  })
+
+  it('still shows a reason unique to one IOC inline on that row, not just in the summary', () => {
+    render(<RetrohuntPanel retrohunt={makeRetrohunt(manyRemoved)} pkgId="pkg-1" />)
+    fireEvent.click(screen.getByRole('button', { name: /^Removed/ }))
+    expect(screen.getByText('also unusually long TLD')).toBeInTheDocument()
+  })
+
+  it('does not show a removal-reason summary when no reason is shared by more than one IOC', () => {
+    const uniqueOnly: THSanitizedIOC[] = [
+      { ioc: 'a.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.9, noise_reasons: ['reason A'], search_token: 'tok-a', action: 'remove' },
+      { ioc: 'b.com', ioc_type: 'domain', ioc_description: '', noise_score: 0.9, noise_reasons: ['reason B'], search_token: 'tok-b', action: 'remove' },
+    ]
+    render(<RetrohuntPanel retrohunt={makeRetrohunt(uniqueOnly)} pkgId="pkg-1" />)
+    fireEvent.click(screen.getByRole('button', { name: /^Removed/ }))
+    expect(screen.queryByText('Removal reasons')).not.toBeInTheDocument()
   })
 })
 

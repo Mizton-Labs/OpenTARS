@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Radar, Ban, RotateCcw,
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -15,11 +15,16 @@ import {
   type LLMProviderSummary,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
-import RetrohuntPanel from './RetrohuntPanel'
 import WorkflowVisualizer from './WorkflowVisualizer'
-import type { IocVerdict } from './IocVerdictToggle'
-import type { IocApplyBarProps } from './IocApplyBar'
 import { asDisplayText } from './llmTextUtils'
+import RunConfigForm from './RunConfigForm'
+import {
+  buildRunConfig,
+  modelOptionsFromProviders,
+  DEFAULT_IOC_MODE,
+  DEFAULT_IOC_CLEANING_OPTIONS,
+  DEFAULT_INCLUDE_THREAT_INTEL,
+} from './runConfigUtils'
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
 // hypothesis or hunting-lead card — a standalone button card rather than a
@@ -72,29 +77,20 @@ export default function AnalysisTab({
   runId,
   onRunCreated,
   onShowIocs,
-  pendingVerdictFor,
-  onStageVerdict,
   iocVerdictsDirty,
-  iocApplyBar,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
   /** Called when the user clicks "View IOCs" in the workflow timeline. */
   onShowIocs?: () => void
-  /** issue-local-016: manual IOC verdict staging, lifted to HuntDetail.tsx so
-   *  a change staged here survives switching to the IOCs tab and back. */
-  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
-  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
   /** issue-local-018 follow-up: true while there are staged-but-unapplied
-   *  IOC keep/remove overrides for this run (HuntDetail.tsx's iocStaging).
+   *  IOC keep/remove overrides for this run (HuntDetail.tsx's iocStaging —
+   *  staging itself now happens in HuntDetail's IOCs tab, issue-local-022
+   *  item 6, but Approve here still must not proceed on stale IOC data).
    *  Approving with unsaved verdicts would move the package into Execution
    *  using stale IOC data, so Approve is disabled until they're applied. */
   iocVerdictsDirty?: boolean
-  /** issue-local-018 follow-up: passed through to RetrohuntPanel's Sanitized
-   *  IOCs filter row so "Apply changes" sits right next to the
-   *  All/Sanitized/Removed filter, instead of a page-wide banner. */
-  iocApplyBar?: IocApplyBarProps
 }) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
@@ -102,15 +98,11 @@ export default function AnalysisTab({
   const [showApproveForm, setShowApproveForm] = useState(false)
   const [selectedEffort, setSelectedEffort] = useState<string>('')
   const [modelChoice, setModelChoice] = useState<string>('')
-  // issue-local-015: per-run IOC handling config (first-run form — the
-  // re-run dialog in HuntDetail.tsx has its own equivalent state).
-  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>('tagging_only')
-  const [iocCleaningOptions, setIocCleaningOptions] = useState({
-    remove_noisy: true,
-    remove_legit_domains: true,
-    remove_cdn_ranges: true,
-    remove_legit_services: false,
-  })
+  // issue-local-022 (item 3): shared defaults with HuntDetail.tsx's Re-run
+  // dialog via RunConfigForm.tsx, instead of an independently-drifted copy.
+  const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>(DEFAULT_IOC_MODE)
+  const [iocCleaningOptions, setIocCleaningOptions] = useState(DEFAULT_IOC_CLEANING_OPTIONS)
+  const [includeThreatIntel, setIncludeThreatIntel] = useState(DEFAULT_INCLUDE_THREAT_INTEL)
 
   // Load global default effort for the Generate screen
   const { data: effortData } = useQuery({
@@ -127,19 +119,10 @@ export default function AnalysisTab({
   })
 
   // Build flat list of provider·model options (mirrors SmartProposalConfirmModal)
-  const modelOptions = useMemo(() => {
-    const opts: { provider: string; model: string }[] = []
-    const seen = new Set<string>()
-    for (const p of providers as LLMProviderSummary[]) {
-      for (const m of p.available_models ?? []) {
-        const key = `${p.name}\x00${m}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        opts.push({ provider: p.name, model: m })
-      }
-    }
-    return opts
-  }, [providers])
+  const modelOptions = useMemo(
+    () => modelOptionsFromProviders(providers as LLMProviderSummary[]),
+    [providers],
+  )
 
   const chosenModel = modelChoice !== '' ? (modelOptions[Number(modelChoice)] ?? null) : null
 
@@ -163,10 +146,7 @@ export default function AnalysisTab({
         research_effort: effort,
         provider_name: chosenModel?.provider ?? undefined,
         model_name: chosenModel?.model ?? undefined,
-        run_config: {
-          ioc_mode: iocMode,
-          ioc_cleaning_options: iocMode === 'active_cleaning' ? iocCleaningOptions : undefined,
-        },
+        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
       })
     },
     onSuccess: (data) => {
@@ -235,88 +215,20 @@ export default function AnalysisTab({
           </div>
           {isResearcher ? (
             <div className="space-y-3">
-              {/* Research effort selector */}
-              <div className="flex items-center gap-2 justify-center text-sm">
-                <span className="text-gray-500">Research effort:</span>
-                {(['low', 'medium', 'high'] as const).map((e) => {
-                  const active = (selectedEffort || effortData?.th_research_effort || 'high') === e
-                  return (
-                    <button
-                      key={e}
-                      onClick={() => setSelectedEffort(e)}
-                      className={clsx(
-                        'px-2.5 py-1 rounded text-sm border transition-colors capitalize',
-                        active
-                          ? 'border-brand-500 bg-brand-900/20 text-brand-300'
-                          : 'border-gray-700 text-gray-500 hover:border-gray-500',
-                      )}
-                    >
-                      {e}
-                    </button>
-                  )
-                })}
-              </div>
-              {/* Model selector (mirrors SmartProposalConfirmModal) */}
-              <div className="flex items-center gap-2 justify-center text-sm">
-                <label htmlFor="th-model-select" className="text-gray-500 shrink-0">Model:</label>
-                <select
-                  id="th-model-select"
-                  className="input text-sm max-w-xs"
-                  value={modelChoice}
-                  onChange={(e) => setModelChoice(e.target.value)}
-                >
-                  <option value="">Configured default</option>
-                  {modelOptions.map((o, i) => (
-                    <option key={`${o.provider}\x00${o.model}`} value={String(i)}>
-                      {o.provider} · {o.model}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {/* issue-local-015: IOC handling mode */}
-              <div className="flex flex-col items-center gap-1.5 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">IOC handling:</span>
-                  {(['tagging_only', 'active_cleaning'] as const).map((m) => (
-                    <button
-                      key={m}
-                      className={clsx(
-                        'px-2.5 py-1 rounded text-sm border transition-colors',
-                        iocMode === m
-                          ? 'border-brand-500 bg-brand-900/20 text-brand-300'
-                          : 'border-gray-700 text-gray-500 hover:border-gray-500',
-                      )}
-                      onClick={() => setIocMode(m)}
-                    >
-                      {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
-                    </button>
-                  ))}
-                </div>
-                {iocMode === 'active_cleaning' && (
-                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pt-1">
-                    {(
-                      [
-                        ['remove_noisy', 'Noisy'],
-                        ['remove_legit_domains', 'Legit domains'],
-                        ['remove_cdn_ranges', 'CDN ranges'],
-                        ['remove_legit_services', 'Legit services'],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <label key={key} className="flex items-center gap-1 text-[12px] text-gray-400">
-                        <input
-                          type="checkbox"
-                          checked={iocCleaningOptions[key]}
-                          onChange={(e) =>
-                            setIocCleaningOptions((prev) => ({ ...prev, [key]: e.target.checked }))
-                          }
-                          className="accent-brand-500"
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <RunConfigForm
+                variant="compact"
+                effort={selectedEffort || effortData?.th_research_effort || 'high'}
+                onEffortChange={setSelectedEffort}
+                modelChoice={modelChoice}
+                onModelChoiceChange={setModelChoice}
+                modelOptions={modelOptions}
+                iocMode={iocMode}
+                onIocModeChange={setIocMode}
+                iocCleaningOptions={iocCleaningOptions}
+                onIocCleaningOptionsChange={setIocCleaningOptions}
+                includeThreatIntel={includeThreatIntel}
+                onIncludeThreatIntelChange={setIncludeThreatIntel}
+              />
               <button
                 className="btn-primary flex items-center gap-2 mx-auto"
                 disabled={startMut.isPending}
@@ -418,14 +330,7 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft
-          record={genRecord}
-          pkgId={pkgId}
-          runId={runId}
-          pendingVerdictFor={pendingVerdictFor}
-          onStageVerdict={onStageVerdict}
-          iocApplyBar={iocApplyBar}
-        />
+        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
       </div>
     )
   }
@@ -449,17 +354,11 @@ function HuntingPackageDraft({
   pkgId,
   runId,
   readOnly = false,
-  pendingVerdictFor,
-  onStageVerdict,
-  iocApplyBar,
 }: {
   record: THGenerationRecord
   pkgId: string
   runId?: string
   readOnly?: boolean
-  pendingVerdictFor?: (ioc: string, iocType: string) => IocVerdict | undefined
-  onStageVerdict?: (ioc: string, iocType: string, action: IocVerdict, serverValue: IocVerdict) => void
-  iocApplyBar?: IocApplyBarProps
 }) {
   const qc = useQueryClient()
 
@@ -520,22 +419,10 @@ function HuntingPackageDraft({
       {/* Threat Context */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
 
-      {/* Deep Retrohunt Lead */}
-      {record.deep_retrohunt && (
-        <CollapsibleSection
-          title={`Deep Retrohunt Lead — ${record.deep_retrohunt.total_ioc_count} IOCs`}
-          icon={Radar}
-          defaultOpen
-        >
-          <RetrohuntPanel
-            retrohunt={record.deep_retrohunt}
-            pkgId={pkgId}
-            pendingFor={!readOnly ? pendingVerdictFor : undefined}
-            onStageVerdict={!readOnly ? onStageVerdict : undefined}
-            iocApplyBar={!readOnly ? iocApplyBar : undefined}
-          />
-        </CollapsibleSection>
-      )}
+      {/* issue-local-022 (item 6): the Deep Retrohunt Lead / Sanitized IOCs
+          table used to render here — it now lives in HuntDetail.tsx's IOCs
+          tab (the enriched All/Sanitized/Removed table replaced the old flat
+          list there), so it isn't duplicated across two tabs. */}
 
       {/* Hypotheses */}
       {record.hypotheses && record.hypotheses.length > 0 && (

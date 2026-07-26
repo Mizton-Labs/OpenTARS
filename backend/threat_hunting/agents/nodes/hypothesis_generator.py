@@ -44,6 +44,9 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
     logs = list(state.get("step_logs") or [])
     errors = list(state.get("errors") or [])
     completed = list(state.get("completed_steps") or [])
+    # issue-local-021: feeds WorkflowVisualizer.tsx's per-run "Pipeline Log"
+    # debug console — this node previously emitted none.
+    debug_lines: list[str] = []
     try:
         from backend.llm.errors import LLMDisabledError
 
@@ -83,6 +86,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             ),
         )
 
+        debug_lines.append(f"LLM_CALL: requesting {h_min}-{h_max} hypotheses")
         response = await call_llm(
             user,
             system=system,
@@ -98,12 +102,14 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
             hypotheses = parsed
         elif isinstance(parsed, dict):
             log.warning("hypothesis_generator: got dict instead of list, wrapping")
+            debug_lines.append("LLM_RESPONSE: got dict instead of list, wrapping as single item")
             hypotheses = [parsed]
         else:
             log.error(
                 "hypothesis_generator: unexpected parse result type=%s", type(parsed).__name__
             )
             errors.append(f"{step}: unexpected LLM response type, using empty list")
+            debug_lines.append(f"LLM_PARSE_ERROR: unexpected type {type(parsed).__name__}")
             hypotheses = []
 
         # issue-local-015: confidence is LLM-provided but defensively
@@ -126,6 +132,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
                 preferred_keys=("action", "text", "description"),
             )
 
+        debug_lines.append(f"LLM_RESPONSE: {len(hypotheses)} hypothesis(es) parsed")
         elapsed = time.monotonic() - start
         logs.append(
             {
@@ -134,6 +141,7 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
                 "elapsed_s": round(elapsed, 2),
                 "item_count": len(hypotheses),
                 "effort": state.get("research_effort", "medium"),
+                "debug_lines": debug_lines,
             }
         )
         completed.append(step)
@@ -149,12 +157,20 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
 
         if isinstance(exc, LLMDisabledError):
             log.warning("Node %s: LLM is disabled — skipping", step)
+            debug_lines.append("LLM_DISABLED: skipping hypothesis generation")
         else:
             log.exception("Node %s failed: %s", step, exc)
+            debug_lines.append(f"LLM_ERROR: {exc}")
         errors.append(f"{step}: {exc}")
         elapsed = time.monotonic() - start
         logs.append(
-            {"step": step, "status": "error", "elapsed_s": round(elapsed, 2), "error": str(exc)}
+            {
+                "step": step,
+                "status": "error",
+                "elapsed_s": round(elapsed, 2),
+                "error": str(exc),
+                "debug_lines": debug_lines,
+            }
         )
         return {
             "current_step": step,

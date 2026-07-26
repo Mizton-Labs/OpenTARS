@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 7
+_TH_SCHEMA_VERSION = 9
 
 
 def _utc_now_iso() -> str:
@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS hunt_packages (
     created_by  TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    hunt_seq    INTEGER
+    hunt_seq    INTEGER,
+    excluded_from_correlation INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -133,7 +134,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     step_logs           TEXT,
     research_effort     TEXT,
     run_config          TEXT DEFAULT '{}',
-    run_seq             INTEGER
+    run_seq             INTEGER,
+    threat_intel_status TEXT
 );
 """
 
@@ -382,6 +384,35 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v7 "
             "(added threat_intel_analysis table, extracted_iocs.ioc index)"
+        )
+    if current_version < 8:
+        # v8 (issue-local-021): excluded_from_correlation flag on
+        # hunt_packages for the new Threat Intel Tracking dashboard — a
+        # reversible per-hunt opt-out from all cross-hunt aggregation
+        # queries (Dashboard tab's Hunts tab "Exclude" action).
+        try:
+            await db.execute(
+                "ALTER TABLE hunt_packages ADD COLUMN excluded_from_correlation "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v8 "
+            "(added hunt_packages.excluded_from_correlation)"
+        )
+    if current_version < 9:
+        # v9 (issue-local-022 item 3): threat_intel_status on hunting_packages
+        # (the per-run table) — 'running' while either Threat Intel phase is
+        # active for that run, else NULL. Lets the UI gate Re-run/report
+        # generation while a Threat Intel analysis is in flight instead of
+        # letting them race against it.
+        try:
+            await db.execute("ALTER TABLE hunting_packages ADD COLUMN threat_intel_status TEXT")
+        except Exception:
+            pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v9 (added hunting_packages.threat_intel_status)"
         )
 
 
@@ -1580,6 +1611,7 @@ def _decode_hunting_package_row(d: dict) -> dict:
         "generation_errors",
         "completed_steps",
         "step_logs",
+        "run_config",
     ):
         raw = d.get(field)
         if raw and isinstance(raw, str):
@@ -1635,7 +1667,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs, deep_retrohunt, run_seq
+                      step_logs, deep_retrohunt, run_seq, threat_intel_status
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -1966,6 +1998,268 @@ async def find_cross_package_ioc_matches(
     return [dict(row) for row in rows]
 
 
+# ── Threat Intel Tracking dashboard (issue-local-021) ─────────────────────────
+# Cross-hunt aggregations for the new "Threat Intel Tracking" sidebar
+# subsection. All raw material already exists per-hunt (extracted_iocs,
+# threat_intel_analysis, hunting_packages.ttp_analysis) — this is purely a
+# read/aggregate layer, no new agent runs. Aggregation across hunts is done
+# in Python (not SQL json_each), matching this module's existing convention
+# (see find_cross_package_ioc_matches, list_hunt_packages's deep search).
+# Every aggregation excludes archived and excluded_from_correlation packages.
+
+
+async def set_hunt_correlation_excluded(hunt_package_id: str, excluded: bool) -> None:
+    """Toggle a hunt package's exclusion from every cross-hunt aggregation
+    below. Reversible — the hunt package and its data are untouched, just
+    filtered out of Dashboard/Hunts-tab aggregation results."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            "UPDATE hunt_packages SET excluded_from_correlation = ? WHERE id = ?",
+            (1 if excluded else 0, hunt_package_id),
+        )
+        await db.commit()
+
+
+async def list_correlated_iocs(
+    *, ioc_type: str | None = None, search: str | None = None, limit: int = 200
+) -> list[dict[str, Any]]:
+    """Aggregate extracted_iocs across all non-excluded, non-archived hunt
+    packages, grouped by (ioc, ioc_type), with each group's source hunt
+    packages attached (the "relationship of the source of the data" the
+    dashboard spec asks for). Powers both the IOC panel and the CVE panel
+    (``ioc_type="cve"`` — CVEs are already extracted as a normal IOC type,
+    see iocs.py's ``_RE_CVE``) from one shared function.
+    """
+    where = [
+        "ei.action != 'remove'",
+        "hp.status != 'archived'",
+        "hp.excluded_from_correlation = 0",
+    ]
+    params: list[Any] = []
+    if ioc_type:
+        where.append("ei.ioc_type = ?")
+        params.append(ioc_type)
+    if search:
+        where.append("ei.ioc LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(search)}%")
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            f"""SELECT ei.ioc, ei.ioc_type, hp.id AS hunt_package_id, hp.name AS hunt_name,
+                       hp.hunt_seq
+                FROM extracted_iocs ei
+                JOIN hunt_packages hp ON hp.id = ei.hunt_package_id
+                WHERE {" AND ".join(where)}""",  # noqa: S608
+            params,
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    prefix = load_hunt_id_prefix()
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["ioc"], row["ioc_type"])
+        entry = grouped.setdefault(
+            key, {"ioc": row["ioc"], "ioc_type": row["ioc_type"], "hunt_packages": {}}
+        )
+        entry["hunt_packages"][row["hunt_package_id"]] = {
+            "id": row["hunt_package_id"],
+            "name": row["hunt_name"],
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+        }
+
+    result = [
+        {
+            "ioc": entry["ioc"],
+            "ioc_type": entry["ioc_type"],
+            "hunt_count": len(entry["hunt_packages"]),
+            "hunt_packages": list(entry["hunt_packages"].values()),
+        }
+        for entry in grouped.values()
+    ]
+    result.sort(key=lambda r: (-r["hunt_count"], r["ioc"]))
+    return result[:limit]
+
+
+async def _latest_threat_intel_per_package() -> list[dict[str, Any]]:
+    """Return the latest threat_intel_analysis row per non-excluded,
+    non-archived hunt package — shared source for aggregate_threat_actors/
+    campaigns/malware_families below (all three read from the same rows)."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT tia.*, hp.name AS hunt_name, hp.hunt_seq
+               FROM threat_intel_analysis tia
+               JOIN hunt_packages hp ON hp.id = tia.hunt_package_id
+               WHERE hp.status != 'archived' AND hp.excluded_from_correlation = 0
+               ORDER BY tia.hunt_package_id, tia.created_at DESC"""
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    prefix = load_hunt_id_prefix()
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pkg_id = row["hunt_package_id"]
+        if pkg_id in latest:
+            continue  # rows are ORDER BY ... created_at DESC, so first wins
+        decoded = _decode_threat_intel_row(dict(row))
+        decoded["hunt_name"] = row["hunt_name"]
+        decoded["hunt_id_display"] = format_hunt_id(prefix, row["hunt_seq"])
+        latest[pkg_id] = decoded
+    return list(latest.values())
+
+
+def _dedupe_by_name(
+    records: list[dict[str, Any]], field: str, extra_fields: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """Shared dedupe helper for aggregate_threat_actors/campaigns/
+    malware_families: items are dicts (or plain strings, for
+    malware_families) with a "name", deduped case-insensitively, each
+    accumulating the set of hunt packages it was seen in."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for record in records:
+        source = {
+            "id": record["hunt_package_id"],
+            "name": record["hunt_name"],
+            "hunt_id_display": record["hunt_id_display"],
+        }
+        for item in record.get(field) or []:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            entry = by_name.setdefault(key, {"name": name, "sources": {}})
+            if isinstance(item, dict):
+                for extra in extra_fields:
+                    if item.get(extra) and not entry.get(extra):
+                        entry[extra] = item.get(extra)
+            entry["sources"][source["id"]] = source
+    out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_name.values()]
+    out.sort(key=lambda r: -len(r["sources"]))
+    return out
+
+
+async def aggregate_threat_actors() -> list[dict[str, Any]]:
+    """Dedupe threat actors (by normalized name) across every hunt's latest
+    Threat Intel analysis, attaching each actor's source hunt package(s)."""
+    records = await _latest_threat_intel_per_package()
+    return _dedupe_by_name(records, "threat_actors", extra_fields=("confidence", "rationale"))
+
+
+async def aggregate_campaigns() -> list[dict[str, Any]]:
+    """Dedupe campaigns (by normalized name) across every hunt's latest
+    Threat Intel analysis, attaching each campaign's source hunt package(s)."""
+    records = await _latest_threat_intel_per_package()
+    return _dedupe_by_name(records, "campaigns", extra_fields=("description",))
+
+
+async def aggregate_malware_families() -> list[dict[str, Any]]:
+    """Dedupe malware families (by normalized name) across every hunt's
+    latest Threat Intel analysis, attaching each family's source hunt
+    package(s)."""
+    records = await _latest_threat_intel_per_package()
+    return _dedupe_by_name(records, "malware_families")
+
+
+async def aggregate_ttps() -> list[dict[str, Any]]:
+    """Dedupe MITRE ATT&CK techniques (by technique_id) across each hunt's
+    latest run's ttp_analysis, attaching each technique's source hunt
+    package(s)."""
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT hpk.hunt_package_id, hpk.ttp_analysis, hp.name AS hunt_name, hp.hunt_seq
+               FROM hunting_packages hpk
+               JOIN hunt_packages hp ON hp.id = hpk.hunt_package_id
+               WHERE hp.status != 'archived' AND hp.excluded_from_correlation = 0
+               ORDER BY hpk.hunt_package_id, hpk.created_at DESC"""
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    prefix = load_hunt_id_prefix()
+    seen_pkg: set[str] = set()
+    by_technique: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pkg_id = row["hunt_package_id"]
+        if pkg_id in seen_pkg:
+            continue  # rows are ORDER BY ... created_at DESC, first = latest
+        seen_pkg.add(pkg_id)
+        raw = row["ttp_analysis"]
+        if not raw:
+            continue
+        try:
+            ttp = _json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            continue
+        source = {
+            "id": pkg_id,
+            "name": row["hunt_name"],
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+        }
+        for tech in (ttp or {}).get("techniques") or []:
+            tid = str(tech.get("technique_id") or "").strip()
+            if not tid:
+                continue
+            entry = by_technique.setdefault(
+                tid,
+                {
+                    "technique_id": tid,
+                    "technique_name": tech.get("technique_name") or "",
+                    "tactic": tech.get("tactic") or "",
+                    "sources": {},
+                },
+            )
+            entry["sources"][source["id"]] = source
+
+    out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_technique.values()]
+    out.sort(key=lambda r: -len(r["sources"]))
+    return out
+
+
+async def list_tracking_hunts() -> list[dict[str, Any]]:
+    """List every non-archived hunt package with its correlation-inclusion
+    state and a couple of summary counts, for the Threat Intel Tracking
+    dashboard's Hunts tab (include/exclude/delete controls)."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT hp.id, hp.name, hp.hunt_seq, hp.status, hp.excluded_from_correlation,
+                      COUNT(DISTINCT ei.id) AS ioc_count,
+                      COUNT(DISTINCT tia.id) AS threat_intel_count
+               FROM hunt_packages hp
+               LEFT JOIN extracted_iocs ei
+                      ON ei.hunt_package_id = hp.id AND ei.action != 'remove'
+               LEFT JOIN threat_intel_analysis tia ON tia.hunt_package_id = hp.id
+               WHERE hp.status != 'archived'
+               GROUP BY hp.id
+               ORDER BY hp.created_at DESC"""
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    prefix = load_hunt_id_prefix()
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+            "status": row["status"],
+            "excluded_from_correlation": bool(row["excluded_from_correlation"]),
+            "ioc_count": row["ioc_count"],
+            "has_threat_intel": row["threat_intel_count"] > 0,
+        }
+        for row in rows
+    ]
+
+
 # ── Run Comments CRUD (issue-local-018) ───────────────────────────────────────
 # Durable analyst free-text notes tied to a specific run. Mirrors the
 # hunt_reports shape (id/hunt_package_id/run_id/created_at/created_by) — the
@@ -2064,6 +2358,24 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
         await db.execute(
             "UPDATE hunting_packages SET step_logs = ? WHERE id = ?",
             (_json.dumps(logs, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+
+
+async def set_run_threat_intel_status(run_id: str, status: str | None) -> None:
+    """Set/clear ``hunting_packages.threat_intel_status`` (issue-local-022 item 3).
+
+    ``status='running'`` while either Threat Intel Analyst phase is active for
+    this run, ``None`` once it finishes (success or failure) — callers should
+    wrap this around ``analyze_threat_intel()`` in a try/finally so it always
+    clears. Lets the frontend gate Re-run/report-generation buttons on "is a
+    Threat Intel analysis currently running for this run" without a poll of
+    the analysis itself. No-ops when *run_id* is not found.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            "UPDATE hunting_packages SET threat_intel_status = ? WHERE id = ?",
+            (status, run_id),
         )
         await db.commit()
 

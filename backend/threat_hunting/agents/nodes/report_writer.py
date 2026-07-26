@@ -316,7 +316,7 @@ async def _generate_findings(
 
     hyp_lines = "\n".join(
         f"- [{h.get('id', '')}] {h.get('title', '')} ({h.get('relevance', '')}) — "
-        f"{h.get('description', '')[:200]}"
+        f"{str(h.get('description') or '')[:200]}"
         for h in hypotheses
     )
     total_events = sum(r.get("event_count", 0) for r in exec_results)
@@ -451,8 +451,13 @@ async def _report_step_log(
     *,
     elapsed_s: float | None = None,
     decision: str = "",
+    debug_lines: list[str] | None = None,
 ) -> None:
-    """Write a report-phase step entry into the run's step_logs (soft-fail)."""
+    """Write a report-phase step entry into the run's step_logs (soft-fail).
+
+    issue-local-021: *debug_lines* feeds WorkflowVisualizer.tsx's per-run
+    "Pipeline Log" debug console — this node previously never populated it.
+    """
     if not run_id:
         return
     try:
@@ -463,6 +468,8 @@ async def _report_step_log(
             entry["elapsed_s"] = round(elapsed_s, 2)
         if decision:
             entry["decision"] = decision
+        if debug_lines:
+            entry["debug_lines"] = debug_lines
         await th_db.append_run_step_log(run_id, entry)
     except Exception as exc:  # noqa: BLE001
         get_run_logger(__name__, None, run_id).debug(
@@ -566,8 +573,10 @@ async def write_report(
 
         if isinstance(exc, LLMDisabledError):
             log.info("report_writer: LLM disabled — skipping executive summary")
+            fallback_debug = ["LLM_DISABLED: skipping executive summary, using template"]
         else:
             log.exception("report_writer: executive summary generation failed: %s", exc)
+            fallback_debug = [f"LLM_ERROR: {exc}"]
         executive_summary = _build_fallback_summary(full_report)
         await _report_step_log(
             run_id,
@@ -575,6 +584,7 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Executive summary generated (template fallback)",
+            debug_lines=fallback_debug,
         )
 
     full_report["executive_summary"] = executive_summary
@@ -603,8 +613,10 @@ async def write_report(
 
         if isinstance(exc, LLMDisabledError):
             log.info("report_writer: LLM disabled — using templated findings")
+            fallback_debug = ["LLM_DISABLED: skipping findings section, using template"]
         else:
             log.warning("report_writer: findings generation failed: %s", exc)
+            fallback_debug = [f"LLM_ERROR: {exc}"]
         findings = _build_fallback_findings(full_report)
         await _report_step_log(
             run_id,
@@ -612,6 +624,7 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Findings/Conclusion section generated (template fallback)",
+            debug_lines=fallback_debug,
         )
     full_report["findings"] = findings or None
 
@@ -1022,9 +1035,19 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
 
     story: list = []
 
-    def _esc(text: str) -> str:
-        """Escape XML chars for reportlab Paragraph."""
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _esc(text: str | None) -> str:
+        """Escape XML chars for reportlab Paragraph.
+
+        issue-local-022: defensive `str(text or "")` — LLM-generated report
+        fields (relevance/priority/hypothesis_id/task description/technique
+        fields, etc.) are frequently explicitly `None` rather than merely
+        absent, and `dict.get(key, default)` only substitutes the default
+        when the key is *missing*, not when its value is `None`. Every call
+        site used to assume a non-None string; some didn't, causing
+        run-dependent PDF-download crashes. Guarding here, once, is more
+        robust than chasing every call site.
+        """
+        return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _h1(text: str) -> None:
         story.append(Paragraph(_esc(text), h1_style))
@@ -1313,7 +1336,7 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                             t.get("technique_id", ""),
                             t.get("technique_name", ""),
                             t.get("tactic", ""),
-                            t.get("description", "")[:80],
+                            str(t.get("description") or "")[:80],
                         ]
                     )
                 story.append(
@@ -1371,11 +1394,14 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     findings = full_report.get("findings")
     if findings:
         _h2("Findings and Conclusion")
-        # Split into paragraphs (double newline) for readable PDF rendering
+        # Split into paragraphs (double newline) for readable PDF rendering.
+        # issue-local-022: _p() already calls _esc() internally — escaping
+        # here too double-escaped every '&'/'<'/'>' in LLM-generated text
+        # (e.g. "&" -> "&amp;" -> "&amp;amp;", rendering literally in the PDF).
         for para in str(findings).split("\n\n"):
             para = para.strip()
             if para:
-                _p(_esc(para))
+                _p(para)
         _sp(8)
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -1546,8 +1572,11 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
 
     story: list = []
 
-    def _esc(text: str) -> str:
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _esc(text: str | None) -> str:
+        """Escape XML chars for reportlab Paragraph (issue-local-022:
+        defensive against explicit-None dict values — see render_report_pdf's
+        `_esc()` docstring for why)."""
+        return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _h1(text: str) -> None:
         story.append(Paragraph(_esc(text), h1_style))

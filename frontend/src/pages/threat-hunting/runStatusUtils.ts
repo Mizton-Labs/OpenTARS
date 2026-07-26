@@ -68,5 +68,6 @@ export function runTabLabel(run: THRunSummary | THuntPackageRun): string {
 // primary way analysts refer to a package/run, so they render as an
 // emphasized bordered chip rather than a plain gray label. Shared across
 // every hunt_id_display/run_id_display render site.
+// issue-local-021: slightly larger padding across every usage.
 export const HUNT_ID_BADGE =
-  'inline-flex items-center px-1.5 py-0.5 rounded-md border border-brand-700/60 bg-brand-900/25 font-mono font-bold text-brand-300 shrink-0'
+  'inline-flex items-center px-2 py-1 rounded-md border border-brand-700/60 bg-brand-900/25 font-mono font-bold text-brand-300 shrink-0'
