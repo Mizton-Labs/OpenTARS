@@ -31,6 +31,64 @@ def test_load_sources_missing_file_returns_empty(tmp_path, monkeypatch):
     assert loader.load_sources() == {}
 
 
+def test_load_fields_bootstraps_from_example_on_first_run(tmp_path, monkeypatch):
+    """issue-local-024 follow-up: feed-fields.yaml is gitignored (live,
+    operator-editable instance state) — a missing file is seeded from a
+    sibling .example on first read so a fresh clone/deploy still ships a
+    working core-field schema instead of an empty one."""
+    import backend.config.loader as loader
+
+    target = tmp_path / "feed-fields.yaml"
+    example = tmp_path / "feed-fields.yaml.example"
+    example.write_text(
+        "ingest_all_fields: true\ncore_fields:\n  - name: indicator\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(loader, "FIELDS_PATH", target)
+
+    result = loader.load_fields()
+
+    assert result == {"ingest_all_fields": True, "core_fields": [{"name": "indicator"}]}
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == example.read_text(encoding="utf-8")
+
+
+def test_load_fields_does_not_overwrite_an_existing_file(tmp_path, monkeypatch):
+    """Bootstrap only fires when the real file is absent — an existing
+    (possibly operator-edited) file is never clobbered by the .example."""
+    import backend.config.loader as loader
+
+    target = tmp_path / "feed-fields.yaml"
+    target.write_text("ingest_all_fields: false\n", encoding="utf-8")
+    (tmp_path / "feed-fields.yaml.example").write_text(
+        "ingest_all_fields: true\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(loader, "FIELDS_PATH", target)
+
+    assert loader.load_fields() == {"ingest_all_fields": False}
+
+
+def test_load_sources_bootstraps_from_example_on_first_run(tmp_path, monkeypatch):
+    import backend.config.loader as loader
+
+    target = tmp_path / "sources.yaml"
+    (tmp_path / "sources.yaml.example").write_text("listener:\n  enabled: true\n", encoding="utf-8")
+    monkeypatch.setattr(loader, "SOURCES_PATH", target)
+
+    assert loader.load_sources() == {"listener": {"enabled": True}}
+    assert target.exists()
+
+
+def test_load_app_config_bootstraps_from_example_on_first_run(tmp_path, monkeypatch):
+    import backend.config.loader as loader
+
+    target = tmp_path / "application.yaml"
+    (tmp_path / "application.yaml.example").write_text("theme: classic\n", encoding="utf-8")
+    monkeypatch.setattr(loader, "APP_CONFIG_PATH", target)
+
+    assert loader.load_app_config() == {"theme": "classic"}
+    assert target.exists()
+
+
 def test_load_default_sources_missing_file_returns_empty(tmp_path, monkeypatch):
     """When default-sources.yaml is missing, load_default_sources() returns []."""
     import backend.config.loader as loader

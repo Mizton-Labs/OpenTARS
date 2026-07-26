@@ -23,7 +23,36 @@ DEFAULT_SOURCES_PATH = _PROJECT_ROOT / "config" / "default-sources.yaml"
 APP_CONFIG_PATH = _PROJECT_ROOT / "config" / "application.yaml"
 
 
-def _read_yaml(path: Path) -> dict[str, Any]:
+def _bootstrap_from_example(path: Path) -> None:
+    """Seed *path* from a sibling ``<name>.example`` file on first read.
+
+    application.yaml / sources.yaml / feed-fields.yaml hold live,
+    operator-editable instance state (branding, ingestion sources, custom
+    fields) and are gitignored so a site's edits never risk landing in a
+    commit — that previously caused a deployment's git HEAD to permanently
+    diverge from upstream just because someone toggled a setting. Each real
+    file is seeded from its committed ``.example`` template so a fresh
+    clone/deploy still starts with working defaults instead of an empty file.
+
+    ``example`` is derived from ``path`` itself (not a separate hardcoded
+    constant) so tests that monkeypatch the module-level ``*_PATH`` constants
+    to an isolated ``tmp_path`` automatically get an isolated, normally-absent
+    example path too — no bootstrap occurs unless a test deliberately places
+    one there.
+    """
+    if path.exists():
+        return
+    example = path.with_name(path.name + ".example")
+    if not example.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    logger.info("Bootstrapped %s from %s (first run)", path, example)
+
+
+def _read_yaml(path: Path, *, bootstrap: bool = False) -> dict[str, Any]:
+    if bootstrap:
+        _bootstrap_from_example(path)
     if not path.exists():
         logger.warning("Config file missing at %s; returning empty dict", path)
         return {}
@@ -41,8 +70,8 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def load_fields() -> dict[str, Any]:
-    """Return parsed feed-fields.yaml."""
-    return _read_yaml(FIELDS_PATH)
+    """Return parsed feed-fields.yaml (bootstrapped from .example on first run)."""
+    return _read_yaml(FIELDS_PATH, bootstrap=True)
 
 
 def get_enabled_core_field_names() -> list[str]:
@@ -138,8 +167,8 @@ def save_flatten_max_depth(value: int) -> None:
 
 
 def load_sources() -> dict[str, Any]:
-    """Return parsed sources.yaml."""
-    return _read_yaml(SOURCES_PATH)
+    """Return parsed sources.yaml (bootstrapped from .example on first run)."""
+    return _read_yaml(SOURCES_PATH, bootstrap=True)
 
 
 def save_sources(data: dict[str, Any]) -> None:
@@ -193,8 +222,8 @@ def _is_valid_app_prefix(value: str) -> bool:
 
 
 def load_app_config() -> dict[str, Any]:
-    """Return parsed application.yaml (empty dict if missing)."""
-    return _read_yaml(APP_CONFIG_PATH)
+    """Return parsed application.yaml (bootstrapped from .example on first run)."""
+    return _read_yaml(APP_CONFIG_PATH, bootstrap=True)
 
 
 def load_app_base_prefix() -> str:

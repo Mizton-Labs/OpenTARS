@@ -9,6 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Live instance config no longer tracked in git
+
+`config/application.yaml`, `config/sources.yaml`, `config/feed-fields.yaml`, and
+`config/normalizer-config.yaml` were tracked in git despite being written to at runtime by the app
+itself (branding, ingestion sources, custom fields, normalizer mappings). Any deployment where an
+operator changed one of these settings via the UI permanently diverged that deployment's git HEAD
+from upstream — most visibly, the About page's build-time-baked commit hash would never match the
+actual released commit again, since every future `git pull`/checkout needed a merge to reconcile
+the local edit. Fixed by gitignoring all four (matching the existing `llm-providers.yaml`/
+`sso.yaml` pattern) and shipping a `config/<name>.yaml.example` template for each; the real file is
+now bootstrapped from its `.example` automatically on first read if absent, so a fresh clone/deploy
+still starts with working defaults. Audited the full git history of all four paths — confirmed no
+real/live configuration was ever committed to any of them.
+
 ### Fixed — Anthropic `temperature` rejection, Azure AI Foundry provider consistency
 
 Newer Claude models (confirmed: `claude-sonnet-5` via Azure AI Foundry's Anthropic passthrough)

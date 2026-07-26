@@ -700,8 +700,10 @@ Runs backend tests (`pytest`) and frontend tests (`vitest`).
 ```
 mizton-threatbox        # Startup script — entry point
 config/
-  feed-fields.yaml          # Core + custom field definitions
-  sources.yaml              # Configured ingestion sources
+  feed-fields.yaml          # Core + custom field definitions (gitignored — see below)
+  sources.yaml              # Configured ingestion sources (gitignored — see below)
+  application.yaml          # App-wide/branding settings (gitignored — see below)
+  normalizer-config.yaml    # Normalizer mode + manual mappings (gitignored — see below)
 backend/                    # Python / FastAPI backend
   requirements.txt          # Python dependencies
 frontend/                   # React / TypeScript frontend
@@ -710,6 +712,15 @@ data/                       # SQLite databases (auto-created, gitignored)
 docs/                       # Architecture, plans, session log
 scripts/                    # check.sh, test.sh, security-check.sh, api_client.py
 ```
+
+`config/application.yaml`, `config/sources.yaml`, `config/feed-fields.yaml`, and
+`config/normalizer-config.yaml` hold **live, operator-editable instance state** and are
+**gitignored** for the same reason as `config/llm-providers.yaml` above: the app writes to them at
+runtime (branding, ingestion sources, custom fields, normalizer mappings), and tracking a file the
+app itself edits meant every deployment's live customization permanently diverged its git HEAD
+from upstream — including the commit hash shown on the About page. Each ships a documented
+`config/<name>.yaml.example` template; the real file is bootstrapped from it automatically on
+first read if absent, so a fresh clone/deploy still starts with working defaults.
 
 ## Documentation
 

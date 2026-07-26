@@ -150,7 +150,28 @@ def _deep_merge(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str
     return out
 
 
+def _bootstrap_from_example() -> None:
+    """Seed normalizer-config.yaml from its committed .example on first run.
+
+    The real file is gitignored (issue-local-024 follow-up) so a site's live
+    edits (manual_mappings, smart_mode toggles) never diverge the repo's git
+    HEAD from upstream. Missing entirely already degrades gracefully via
+    ``_DEFAULTS`` above, but bootstrapping still gives the operator a real,
+    documented, editable file on disk from the first run rather than one
+    that only appears after the first programmatic write.
+    """
+    if _NORMALIZER_CONFIG_PATH.exists():
+        return
+    example = _NORMALIZER_CONFIG_PATH.with_name(_NORMALIZER_CONFIG_PATH.name + ".example")
+    if not example.exists():
+        return
+    _NORMALIZER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _NORMALIZER_CONFIG_PATH.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    logger.info("Bootstrapped %s from %s (first run)", _NORMALIZER_CONFIG_PATH, example)
+
+
 def _read() -> dict[str, Any]:
+    _bootstrap_from_example()
     if not _NORMALIZER_CONFIG_PATH.exists():
         logger.warning(
             "Normalizer config file missing at %s; using defaults",

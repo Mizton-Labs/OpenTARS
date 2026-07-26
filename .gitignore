@@ -25,6 +25,27 @@ config/llm-providers.yaml
 config/sso.yaml
 
 # ──────────────────────────────────────────
+# Live, operator-editable instance config
+# ──────────────────────────────────────────
+# These hold per-deployment runtime state (branding, ingestion sources,
+# custom fields, normalizer mappings) that the app itself writes to at
+# runtime. Tracking them caused every site's live edits to permanently
+# diverge that deployment's git HEAD from upstream (e.g. the About page's
+# baked-in commit hash never matching the actual released commit again).
+# Only the .example template — the shipped default content — is committed;
+# each real file is bootstrapped from its .example on first read if absent
+# (see backend/config/loader.py::_bootstrap_from_example and
+# backend/normalizer/config.py::_bootstrap_from_example).
+config/application.yaml
+config/sources.yaml
+config/feed-fields.yaml
+config/normalizer-config.yaml
+
+# Operator-uploaded branding assets (logo images) — instance-specific,
+# referenced by application.yaml's logo_path.
+data/branding/
+
+# ──────────────────────────────────────────
 # Python
 # ──────────────────────────────────────────
 __pycache__/

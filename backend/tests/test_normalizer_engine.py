@@ -226,6 +226,28 @@ def test_load_normalizer_config_missing_file_returns_defaults(tmp_path, monkeypa
     assert result["manual_mappings"] == {}
 
 
+def test_load_normalizer_config_bootstraps_from_example_on_first_run(tmp_path, monkeypatch):
+    """issue-local-024 follow-up: normalizer-config.yaml is gitignored (live
+    instance state) — a missing file is seeded from a sibling .example on
+    first read, mirroring backend.config.loader's application/sources/
+    feed-fields bootstrap."""
+    import backend.normalizer.config as cfg_mod
+
+    target = tmp_path / "normalizer-config.yaml"
+    (tmp_path / "normalizer-config.yaml.example").write_text(
+        "mode: manual\nenabled: false\ninterval_minutes: 5\nmanual_mappings: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg_mod, "_NORMALIZER_CONFIG_PATH", target)
+
+    result = cfg_mod.load_normalizer_config()
+
+    assert result["mode"] == "manual"
+    assert result["enabled"] is False
+    assert result["interval_minutes"] == 5
+    assert target.exists()
+
+
 def test_load_normalizer_config_partial_yaml_merges_defaults(tmp_path, monkeypatch):
     """A partial YAML is merged over defaults so all keys are present."""
     import backend.normalizer.config as cfg_mod
