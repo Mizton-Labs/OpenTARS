@@ -41,6 +41,19 @@ vi.mock('../auth/useAuth', () => ({
   }),
 }))
 
+// issue-local-023: AnalysisTab lazy-renders HypothesisLeadIocChart once its
+// "Show Hunting Artifacts Relationship" toggle is clicked — mocked here the
+// same minimal way as hypothesisLeadIocChart.test.tsx/
+// reactFlowVisualizerTracking.test.tsx, so actual SVG/canvas graph layout
+// isn't a dependency of these otherwise-unrelated IOC-verdict tests.
+vi.mock('@xyflow/react', () => ({
+  ReactFlow: ({ nodes }: { nodes: { id: string }[] }) => (
+    <div data-testid="react-flow-stub">{nodes.length}</div>
+  ),
+  Background: () => null,
+  Controls: () => null,
+}))
+
 import { api } from '../api/client'
 import IocVerdictToggle from '../pages/threat-hunting/IocVerdictToggle'
 import { useIocVerdictStaging } from '../pages/threat-hunting/useIocVerdictStaging'
@@ -316,6 +329,35 @@ describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
     await screen.findByText('evil.com')
     await waitFor(() => expect(screen.getByText('evil.com')).toHaveClass('line-through'))
     expect(screen.getByText('good.com')).not.toHaveClass('line-through')
+  })
+
+  // issue-local-023: the Hypothesis/Lead/IOC relationship chart moved below
+  // the main (Threat Context) summary and is collapsed by default behind an
+  // emphasized "Show Hunting Artifacts Relationship" toggle, instead of
+  // always rendering above everything.
+  it('keeps the relationship chart collapsed by default, below Threat Context, revealed by its toggle button', async () => {
+    vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+      hunt_package_id: 'pkg-1',
+      run_id: 'run-1',
+      generation_status: 'completed',
+      threat_context: { summary: 'A summary of the threat.' },
+      hypotheses: [],
+    })
+    vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+
+    renderTab()
+
+    const summary = await screen.findByText('A summary of the threat.')
+    const toggle = screen.getByRole('button', { name: /Show Hunting Artifacts Relationship/i })
+    // Threat Context renders before the chart's toggle button in DOM order.
+    expect(summary.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Collapsed by default — the chart itself hasn't rendered yet.
+    expect(screen.queryByTestId('react-flow-stub')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(await screen.findByRole('button', { name: /Hide Hunting Artifacts Relationship/i })).toBeInTheDocument()
   })
 
   describe('Approve gating on unapplied IOC verdict changes (issue-local-018 follow-up)', () => {
