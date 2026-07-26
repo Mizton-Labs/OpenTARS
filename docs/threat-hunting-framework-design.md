@@ -1,8 +1,7 @@
 # Threat Hunting Framework — Design Document
 
 **Status:** Implemented — Phases 1–6 complete + issue-006 tooling  
-**Last updated:** 2026-06-21  
-**Source:** `.coding_agent/developer_notes/issue-local-002.md`
+**Last updated:** 2026-06-21
 
 ---
 

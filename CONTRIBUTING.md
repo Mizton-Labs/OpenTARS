@@ -45,8 +45,8 @@ the Vite dev server for hot-reload frontend development.
 git config core.hooksPath .githooks
 ```
 This enables `.githooks/commit-msg`, which enforces this repository's
-commit-authorship guideline. Commit
-authorship in this repo is the human contributor only.
+commit-authorship guideline. Commit authorship in this repo is the human
+contributor only.
 
 ---
 
