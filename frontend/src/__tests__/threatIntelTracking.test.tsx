@@ -12,6 +12,7 @@ import type {
   THTrackingHunt,
 } from '../api/client'
 
+vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
   return {
@@ -32,6 +33,7 @@ vi.mock('../api/client', async () => {
 })
 
 import { api } from '../api/client'
+import { useAuth } from '../auth/useAuth'
 import ThreatIntelTracking from '../pages/threat-hunting/ThreatIntelTracking'
 
 function emptyDashboard(): THTrackingDashboard {
@@ -71,6 +73,13 @@ beforeEach(() => {
   vi.mocked(api.threatHunting.tracking.listHunts).mockReset().mockResolvedValue([])
   vi.mocked(api.threatHunting.tracking.setHuntExcluded).mockReset()
   vi.mocked(api.threatHunting.tracking.deleteHunt).mockReset()
+  vi.mocked(useAuth).mockReturnValue({
+    authEnabled: false,
+    isAdmin: true,
+    isResearcher: true,
+    user: null,
+    logout: vi.fn(),
+  } as unknown as ReturnType<typeof useAuth>)
 })
 
 describe('ThreatIntelTracking — Dashboard tab', () => {
@@ -183,5 +192,25 @@ describe('ThreatIntelTracking — Hunts tab', () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Hunts' }))
     expect(await screen.findByText('No hunt packages yet.')).toBeInTheDocument()
+  })
+
+  // issue-local-021 gap fix (found during issue-local-022's quality/
+  // consistency/security review): these destructive actions never checked
+  // isResearcher, unlike every sibling mutation elsewhere in this feature.
+  it('hides the Exclude/Delete actions for a non-researcher (read-only) role', async () => {
+    vi.mocked(useAuth).mockReturnValue({
+      authEnabled: true,
+      isAdmin: false,
+      isResearcher: false,
+      user: null,
+      logout: vi.fn(),
+    } as unknown as ReturnType<typeof useAuth>)
+    vi.mocked(api.threatHunting.tracking.listHunts).mockResolvedValue([makeHunt()])
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Hunts' }))
+    await screen.findByText('Test Hunt')
+
+    expect(screen.queryByRole('button', { name: /Exclude/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
   })
 })

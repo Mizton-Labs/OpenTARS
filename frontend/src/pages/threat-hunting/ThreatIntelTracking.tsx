@@ -42,6 +42,7 @@ import {
 } from '../../api/client'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { HUNT_ID_BADGE } from './runStatusUtils'
+import { useAuth } from '../../auth/useAuth'
 
 type TrackingTab = 'dashboard' | 'hunts'
 
@@ -221,6 +222,12 @@ function DashboardTab() {
 
 function HuntsTab() {
   const qc = useQueryClient()
+  // issue-local-021 gap fix (found during issue-local-022's quality/
+  // consistency/security review): Exclude/Delete are destructive,
+  // package-affecting mutations — every sibling action in this feature
+  // (ThreatIntelTab's Analyze, ComparisonAssessmentTab's Assess & Compare)
+  // already gates on isResearcher; this tab never did.
+  const { isResearcher } = useAuth()
   const [deleteTarget, setDeleteTarget] = useState<THTrackingHunt | null>(null)
 
   const { data: hunts = [], isLoading } = useQuery({
@@ -294,33 +301,37 @@ function HuntsTab() {
                   )}
                 </td>
                 <td className="py-1.5 px-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 transition-colors"
-                      disabled={excludeMut.isPending}
-                      onClick={() =>
-                        excludeMut.mutate({ id: hunt.id, excluded: !hunt.excluded_from_correlation })
-                      }
-                      title={hunt.excluded_from_correlation ? 'Include in correlation' : 'Exclude from correlation'}
-                    >
-                      {hunt.excluded_from_correlation ? (
-                        <Eye className="w-3.5 h-3.5" />
-                      ) : (
-                        <EyeOff className="w-3.5 h-3.5" />
-                      )}
-                      {hunt.excluded_from_correlation ? 'Include' : 'Exclude'}
-                    </button>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-[11px] text-red-400 hover:text-red-300 transition-colors"
-                      onClick={() => setDeleteTarget(hunt)}
-                      title="Delete hunt package"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Delete
-                    </button>
-                  </div>
+                  {isResearcher ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 transition-colors"
+                        disabled={excludeMut.isPending}
+                        onClick={() =>
+                          excludeMut.mutate({ id: hunt.id, excluded: !hunt.excluded_from_correlation })
+                        }
+                        title={hunt.excluded_from_correlation ? 'Include in correlation' : 'Exclude from correlation'}
+                      >
+                        {hunt.excluded_from_correlation ? (
+                          <Eye className="w-3.5 h-3.5" />
+                        ) : (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        )}
+                        {hunt.excluded_from_correlation ? 'Include' : 'Exclude'}
+                      </button>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-[11px] text-red-400 hover:text-red-300 transition-colors"
+                        onClick={() => setDeleteTarget(hunt)}
+                        title="Delete hunt package"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] text-gray-600">—</span>
+                  )}
                 </td>
               </tr>
             ))}
