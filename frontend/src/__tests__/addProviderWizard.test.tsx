@@ -303,7 +303,7 @@ describe('AddProviderWizard (027)', () => {
     await waitFor(() => expect(screen.getByTestId('stage-2')).toBeInTheDocument())
     const modelInput = screen.getByLabelText('Model') as HTMLInputElement
     expect(modelInput.tagName).toBe('INPUT')
-    expect(modelInput.placeholder).toMatch(/claude-3-5/)
+    expect(modelInput.placeholder).toMatch(/claude-sonnet/)
   })
 
   it('"Test Model" is disabled until a model is selected', async () => {
@@ -520,19 +520,28 @@ describe('AddProviderWizard (027)', () => {
     expect(screen.getAllByText(/services\.ai\.azure\.com/i).length).toBeGreaterThan(0)
   })
 
-  // issue-local-023: confirmed against a real Azure AI Foundry resource that
-  // Anthropic Claude deployments are sometimes exposed as a NATIVE
-  // PASSTHROUGH (not the unified Model Inference API azure_ai_foundry
-  // implements) — the existing anthropic kind already sends the right
-  // shape for that mode, it just needs base_url pointed at Foundry's
-  // /anthropic path. The wizard must say so, since nothing else does.
-  it('shows the Azure Foundry native-passthrough hint only for the anthropic kind', () => {
+  // issue-local-022 follow-up: confirmed against a real Azure AI Foundry
+  // resource that Anthropic Claude deployments are sometimes exposed as a
+  // native passthrough rather than the unified Model Inference API. That
+  // mode now lives INSIDE the azure_ai_foundry kind as an explicit
+  // deployment-mode toggle, rather than as a workaround of configuring the
+  // anthropic kind with an Azure base_url (confusing — same protocol,
+  // different kind). The anthropic kind is pinned to the native API only.
+  it('offers an Anthropic-passthrough deployment mode under azure_ai_foundry, and points the anthropic kind elsewhere', () => {
     render(<AddProviderWizard existingNames={[]} onClose={() => {}} onAdded={() => {}} />)
-    expect(screen.queryByText(/native passthrough/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Deployment mode')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Kind'), {
+      target: { value: 'azure_ai_foundry' },
+    })
+    expect(screen.getByText('Deployment mode')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Anthropic passthrough/i })).toBeInTheDocument()
+
     fireEvent.change(screen.getByLabelText('Kind'), {
       target: { value: 'anthropic' },
     })
-    expect(screen.getByText(/native passthrough/i)).toBeInTheDocument()
+    expect(screen.queryByText('Deployment mode')).not.toBeInTheDocument()
+    expect(screen.getByText(/Native Anthropic API only/i)).toBeInTheDocument()
   })
 
   // ── prompts-028: dropdown decoupled from aggregate status ──────────────

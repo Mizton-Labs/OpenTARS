@@ -9,6 +9,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Anthropic `temperature` rejection, Azure AI Foundry provider consistency
+
+Newer Claude models (confirmed: `claude-sonnet-5` via Azure AI Foundry's Anthropic passthrough)
+reject the `temperature` request field outright with HTTP 400 (`` `temperature` is deprecated for
+this model``), which broke every Test/complete call against such a provider. Both `AnthropicClient`
+and `AzureAIFoundryClient` now retry once without `temperature` specifically when the provider
+reports that exact deprecation — any other 400 still fails immediately, and models that still expect
+`temperature` for deterministic output are unaffected.
+
+While fixing this, folded in the Azure AI Foundry Anthropic-passthrough mode documented in
+issue-local-023 as a proper `api_style: anthropic` option on the `azure_ai_foundry` provider kind
+itself, rather than the previous guidance of configuring an `anthropic` kind provider with an Azure
+base_url — same protocol, but a different kind was confusing for operators to reason about. The
+`anthropic` kind is now pinned to the native `api.anthropic.com` API only; both the Add Provider
+wizard and the persisted-provider edit form expose the deployment-mode choice directly under
+`azure_ai_foundry`.
+
 ### Added — Evidence content viewer (issue-local-023)
 
 The Evidence tab is now a two-pane view — a sidebar list of evidence items on the left, and a

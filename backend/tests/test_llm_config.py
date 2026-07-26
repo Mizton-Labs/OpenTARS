@@ -76,6 +76,28 @@ def test_validate_accepts_azure_ai_foundry_kind():
     cfg_mod.validate_config(good)  # must not raise
 
 
+def test_validate_accepts_azure_ai_foundry_api_style_values():
+    """issue-local-022 follow-up: api_style picks between Azure AI Foundry's
+    two deployment modes (unified Model Inference API vs. Anthropic-native
+    passthrough). Both documented values must validate cleanly, as must a
+    provider with no api_style set at all (defaults to 'unified' at
+    construction time, not at validation time)."""
+    for style in ("unified", "anthropic", None):
+        provider = {"name": "foundry", "kind": "azure_ai_foundry"}
+        if style is not None:
+            provider["api_style"] = style
+        cfg_mod.validate_config({"enabled": False, "providers": [provider]})  # must not raise
+
+
+def test_validate_rejects_unknown_azure_ai_foundry_api_style():
+    bad = {
+        "enabled": False,
+        "providers": [{"name": "foundry", "kind": "azure_ai_foundry", "api_style": "bogus"}],
+    }
+    with pytest.raises(LLMConfigError, match="api_style"):
+        cfg_mod.validate_config(bad)
+
+
 def test_validate_rejects_duplicate_names():
     bad = {
         "enabled": False,

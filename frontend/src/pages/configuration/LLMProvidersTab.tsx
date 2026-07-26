@@ -76,7 +76,15 @@ const KINDS: { id: LLMProviderKind; label: string }[] = [
   { id: 'anthropic',          label: 'Anthropic' },
   { id: 'ollama',             label: 'Ollama (local)' },
   { id: 'openai_compatible',  label: 'OpenAI-compatible' },
+  { id: 'azure_ai_foundry',   label: 'Azure AI Foundry' },
 ]
+
+/** True for any draft whose kind speaks the Anthropic Messages API
+ *  protocol (no /models list endpoint) — native anthropic, or Azure AI
+ *  Foundry configured for its anthropic passthrough deployment mode. */
+function isAnthropicProtocolDraft(d: Pick<ProviderDraft, 'kind' | 'api_style'>): boolean {
+  return d.kind === 'anthropic' || (d.kind === 'azure_ai_foundry' && d.api_style === 'anthropic')
+}
 
 const REDACTED = '***'
 
@@ -126,6 +134,7 @@ function probeHash(d: ProviderDraft): string {
     d.timeout_seconds ?? 30,
     d.max_retries ?? 2,
     !!d.skip_tls_verify,
+    d.kind === 'azure_ai_foundry' ? d.api_style ?? 'unified' : null,
   ])
 }
 
@@ -706,6 +715,21 @@ function ProviderFields({
         </select>
       </div>
 
+      {draft.kind === 'azure_ai_foundry' && (
+        <div className="col-span-2">
+          <label className="label" htmlFor={`api-style-${draft.name || 'new'}`}>Deployment mode</label>
+          <select
+            id={`api-style-${draft.name || 'new'}`}
+            className="input"
+            value={draft.api_style ?? 'unified'}
+            onChange={e => onChange({ api_style: e.target.value as 'unified' | 'anthropic' })}
+          >
+            <option value="unified">Unified Model Inference API</option>
+            <option value="anthropic">Anthropic passthrough (Claude)</option>
+          </select>
+        </div>
+      )}
+
       <div className="col-span-2">
         <label className="label">Base URL</label>
         <input
@@ -738,14 +762,14 @@ function ProviderFields({
         <label className="label" htmlFor={`model-${draft.name || 'new'}`}>
           Default model to use
         </label>
-        {availableModels.length > 0 || draft.kind === 'anthropic' ? (
-          draft.kind === 'anthropic' ? (
+        {availableModels.length > 0 || isAnthropicProtocolDraft(draft) ? (
+          isAnthropicProtocolDraft(draft) ? (
             <input
               id={`model-${draft.name || 'new'}`}
               className="input"
               value={draft.model ?? ''}
               onChange={e => onChange({ model: e.target.value })}
-              placeholder="claude-3-5-sonnet-20241022"
+              placeholder="claude-sonnet-5"
             />
           ) : (
             <select

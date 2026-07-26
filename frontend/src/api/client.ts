@@ -1508,6 +1508,13 @@ export interface LLMProvider {
   max_retries?: number
   skip_tls_verify?: boolean
   /**
+   * issue-local-022 follow-up: only meaningful when kind === 'azure_ai_foundry'.
+   * 'unified' (default) is Azure's OpenAI-compatible Model Inference API;
+   * 'anthropic' is the Anthropic-native passthrough mode for Claude models.
+   * See AzureAIFoundryClient's docstring in backend/llm/client.py.
+   */
+  api_style?: 'unified' | 'anthropic'
+  /**
    * prompts-027: persisted list of models last returned by the
    * "Discover Models" button on the persisted ProviderCard. Lets the
    * default-model dropdown render on first paint without forcing the
