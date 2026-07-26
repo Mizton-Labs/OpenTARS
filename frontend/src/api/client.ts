@@ -782,6 +782,18 @@ export const api = {
     }),
   getAgentToolsCatalog: () => request<{ catalog: ToolCatalogEntry[] }>('/app/agent-tools/catalog'),
 
+  // Config drift (issue-local-024 follow-up): application.yaml/sources.yaml/
+  // feed-fields.yaml/normalizer-config.yaml are gitignored instance state
+  // bootstrapped from a .example template on first run. This detects the one
+  // gap that doesn't self-heal on upgrade (feed-fields.yaml's core_fields
+  // list) plus any brand-new top-level key a future .example introduces.
+  getConfigDrift: () => request<{ reports: ConfigDriftReport[] }>('/app/config-drift'),
+  applyConfigDriftFix: (file: string, patch: { keys?: string[]; core_field_names?: string[] }) =>
+    request<{ reports: ConfigDriftReport[] }>('/app/config-drift/apply', {
+      method: 'POST',
+      body: JSON.stringify({ file, ...patch }),
+    }),
+
   // Normalizer
   getNormalizerConfig: () => request<Record<string, unknown>>('/normalizer/config'),
   updateNormalizerConfig: (cfg: Record<string, unknown>) =>
@@ -1491,6 +1503,15 @@ export interface ToolCatalogEntry {
   implication_if_disabled: string
   /** Runtime availability (always true for agent tools; reflects pip install for marker). */
   available: boolean
+}
+
+/** issue-local-024 follow-up: one gitignored instance-config file's detected
+ *  drift against its shipped .example template. Omitted entirely from the
+ *  GET /api/app/config-drift response when it has none. */
+export interface ConfigDriftReport {
+  file: string
+  missing_keys: string[]
+  missing_core_fields: { name: string; description: string }[]
 }
 
 export interface LLMProvider {

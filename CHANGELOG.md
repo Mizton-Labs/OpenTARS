@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Config-drift notice for admins
+
+Every setting in the gitignored instance-config files (`application.yaml`, `sources.yaml`,
+`normalizer-config.yaml`) already self-heals when a new one is introduced in code — each loader
+merges the live file over a coded-in default. The one gap was `feed-fields.yaml`'s `core_fields`
+list, which has no coded default to merge new entries against, so a deployment bootstrapped before
+a new built-in field shipped had no way to notice or receive it. Admins now see a top-bar notice
+(new `GET /api/app/config-drift`) whenever a newer release's shipped `.example` templates introduce
+core fields or top-level settings the live files don't have yet, with a review screen listing
+exactly what's new — nothing is added until the admin selects it and clicks Apply
+(`POST /api/app/config-drift/apply`); anything they've customized or deliberately removed is never
+touched or re-added.
+
 ### Fixed — Live instance config no longer tracked in git
 
 `config/application.yaml`, `config/sources.yaml`, `config/feed-fields.yaml`, and

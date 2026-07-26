@@ -16,6 +16,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import ChangePasswordCard from './ChangePasswordCard'
+import ConfigDriftBanner from './ConfigDriftBanner'
 import { useAuth } from '../auth/useAuth'
 
 export default function ProtectedLayout() {
@@ -69,11 +70,14 @@ export default function ProtectedLayout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950">
-      <Sidebar />
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+    <div className="flex flex-col h-screen overflow-hidden bg-gray-950">
+      <ConfigDriftBanner />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

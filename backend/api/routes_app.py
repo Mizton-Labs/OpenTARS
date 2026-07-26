@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from backend.auth.dependencies import require_admin_when_enabled
+from backend.config.drift import apply_config_drift_fix, compute_config_drift
 from backend.config.loader import (
     load_agent_show_subtasks,
     load_agent_tools,
@@ -627,3 +628,58 @@ async def delete_logo(
         old.unlink(missing_ok=True)
     save_logo_path("")
     return {"has_logo": False}
+
+
+# ── Config drift (issue-local-024 follow-up) ─────────────────────────────────
+#
+# Admin-only: application.yaml/sources.yaml/feed-fields.yaml/normalizer-
+# config.yaml are gitignored instance state (see backend/config/drift.py's
+# module docstring). Every scalar setting already self-heals on upgrade; this
+# surfaces the one gap that doesn't (feed-fields.yaml's core_fields list) plus,
+# generically, any brand-new top-level key a future release's .example ships.
+
+
+@router.get("/config-drift")
+async def get_config_drift(
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Return drift reports for every tracked config file that has any.
+
+    Empty ``reports`` means every live config file already has everything
+    the shipped .example templates introduce.
+    """
+    return {"reports": compute_config_drift()}
+
+
+@router.post("/config-drift/apply")
+async def apply_config_drift(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Apply an admin-selected subset of a file's detected drift.
+
+    Body: {"file": "feed-fields.yaml", "keys": [...], "core_field_names": [...]}
+    Only the named keys/fields are added; everything else in the live file
+    (including any customization) is left untouched. Returns the refreshed
+    drift report list so the UI can confirm what's left, if anything.
+    """
+    file = body.get("file")
+    if not isinstance(file, str) or not file:
+        raise HTTPException(status_code=400, detail="Body must contain 'file' as a string")
+    keys = body.get("keys") or []
+    core_field_names = body.get("core_field_names") or []
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise HTTPException(status_code=400, detail="'keys' must be a list of strings")
+    if not isinstance(core_field_names, list) or not all(
+        isinstance(n, str) for n in core_field_names
+    ):
+        raise HTTPException(status_code=400, detail="'core_field_names' must be a list of strings")
+    if not keys and not core_field_names:
+        raise HTTPException(
+            status_code=400, detail="Body must select at least one key or core field to apply"
+        )
+    try:
+        apply_config_drift_fix(file, keys=keys, core_field_names=core_field_names)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"reports": compute_config_drift()}
