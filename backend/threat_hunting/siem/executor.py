@@ -354,21 +354,33 @@ async def _run_execution(
         #     config flag (default on).
         try:
             record = await th_db.get_generation_run(run_id) if run_id else None
-            include_threat_intel = (record.get("run_config") or {}).get(
-                "include_threat_intel", True
-            ) if record else True
+            include_threat_intel = (
+                (record.get("run_config") or {}).get("include_threat_intel", True)
+                if record
+                else True
+            )
             if include_threat_intel:
                 from backend.threat_hunting.agents.nodes.threat_intel_analyst import (
                     analyze_threat_intel,
                 )
 
-                await analyze_threat_intel(
-                    hunt_package_id,
-                    run_id=run_id,
-                    phase="final",
-                    provider_name=provider_name,
-                    model_name=model_name,
-                )
+                # issue-local-022 (item 3): mark this run's Threat Intel
+                # analysis as in-flight so the frontend can gate Re-run/report
+                # generation for it — always cleared in `finally`, even on
+                # failure.
+                if run_id:
+                    await th_db.set_run_threat_intel_status(run_id, "running")
+                try:
+                    await analyze_threat_intel(
+                        hunt_package_id,
+                        run_id=run_id,
+                        phase="final",
+                        provider_name=provider_name,
+                        model_name=model_name,
+                    )
+                finally:
+                    if run_id:
+                        await th_db.set_run_threat_intel_status(run_id, None)
                 logger.info("Execution [%s]: threat intel analysis complete", task_result_id[:8])
         except Exception as intel_exc:
             logger.warning(

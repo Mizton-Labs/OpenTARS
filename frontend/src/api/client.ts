@@ -1916,6 +1916,10 @@ export interface THRunSummary {
   llm_model?: string | null
   research_effort?: string | null
   created_at: string
+  /** issue-local-022 (item 3): 'running' while either Threat Intel Analyst
+   *  phase (preliminary/final) is active for this run, else null/undefined —
+   *  used to gate Re-run/report-generation so they don't race the analysis. */
+  threat_intel_status?: string | null
 }
 
 /**

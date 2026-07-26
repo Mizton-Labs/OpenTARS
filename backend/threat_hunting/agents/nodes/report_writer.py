@@ -316,7 +316,7 @@ async def _generate_findings(
 
     hyp_lines = "\n".join(
         f"- [{h.get('id', '')}] {h.get('title', '')} ({h.get('relevance', '')}) — "
-        f"{h.get('description', '')[:200]}"
+        f"{str(h.get('description') or '')[:200]}"
         for h in hypotheses
     )
     total_events = sum(r.get("event_count", 0) for r in exec_results)
@@ -1035,9 +1035,19 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
 
     story: list = []
 
-    def _esc(text: str) -> str:
-        """Escape XML chars for reportlab Paragraph."""
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _esc(text: str | None) -> str:
+        """Escape XML chars for reportlab Paragraph.
+
+        issue-local-022: defensive `str(text or "")` — LLM-generated report
+        fields (relevance/priority/hypothesis_id/task description/technique
+        fields, etc.) are frequently explicitly `None` rather than merely
+        absent, and `dict.get(key, default)` only substitutes the default
+        when the key is *missing*, not when its value is `None`. Every call
+        site used to assume a non-None string; some didn't, causing
+        run-dependent PDF-download crashes. Guarding here, once, is more
+        robust than chasing every call site.
+        """
+        return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _h1(text: str) -> None:
         story.append(Paragraph(_esc(text), h1_style))
@@ -1326,7 +1336,7 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                             t.get("technique_id", ""),
                             t.get("technique_name", ""),
                             t.get("tactic", ""),
-                            t.get("description", "")[:80],
+                            str(t.get("description") or "")[:80],
                         ]
                     )
                 story.append(
@@ -1384,11 +1394,14 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     findings = full_report.get("findings")
     if findings:
         _h2("Findings and Conclusion")
-        # Split into paragraphs (double newline) for readable PDF rendering
+        # Split into paragraphs (double newline) for readable PDF rendering.
+        # issue-local-022: _p() already calls _esc() internally — escaping
+        # here too double-escaped every '&'/'<'/'>' in LLM-generated text
+        # (e.g. "&" -> "&amp;" -> "&amp;amp;", rendering literally in the PDF).
         for para in str(findings).split("\n\n"):
             para = para.strip()
             if para:
-                _p(_esc(para))
+                _p(para)
         _sp(8)
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
@@ -1559,8 +1572,11 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
 
     story: list = []
 
-    def _esc(text: str) -> str:
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _esc(text: str | None) -> str:
+        """Escape XML chars for reportlab Paragraph (issue-local-022:
+        defensive against explicit-None dict values — see render_report_pdf's
+        `_esc()` docstring for why)."""
+        return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _h1(text: str) -> None:
         story.append(Paragraph(_esc(text), h1_style))

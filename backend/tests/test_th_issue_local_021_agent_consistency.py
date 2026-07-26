@@ -115,8 +115,9 @@ class TestThreatIntelAnalystDebugLines:
                 await threat_intel_analyst.analyze_threat_intel(pkg["id"], run_id="run-1")
 
             run = await th_db.get_generation_run("run-1")
+            # issue-local-022: step id now includes the phase (default "final").
             steps = [
-                s for s in (run.get("step_logs") or []) if s.get("step") == "threat_intel_analyst"
+                s for s in (run.get("step_logs") or []) if s.get("step") == "threat_intel_final"
             ]
             assert len(steps) == 1
             assert any("LLM_ERROR" in line for line in steps[0]["debug_lines"])

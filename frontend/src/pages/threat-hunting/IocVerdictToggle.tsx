@@ -32,13 +32,17 @@ export default function IocVerdictToggle({
       )}
       title={dirty ? 'Change staged — click Apply changes to save' : undefined}
     >
+      {/* issue-local-022 (item 6): brighter fill + a border matching the fill
+          color on the active state — the previous bg-*-900/40 + *-300 text
+          combination was too close in luminance against the dark theme to
+          read at a glance. */}
       <button
         type="button"
         className={clsx(
-          'px-1.5 py-0.5 transition-colors',
+          'px-1.5 py-0.5 transition-colors font-medium',
           effective === 'keep'
-            ? 'bg-green-900/40 text-green-300'
-            : 'bg-transparent text-gray-500 hover:text-gray-300',
+            ? 'bg-green-700/70 text-green-100 border-r border-green-500/60'
+            : 'bg-transparent text-gray-400 hover:text-gray-200',
         )}
         onClick={() => onChange('keep')}
       >
@@ -47,10 +51,10 @@ export default function IocVerdictToggle({
       <button
         type="button"
         className={clsx(
-          'px-1.5 py-0.5 transition-colors',
+          'px-1.5 py-0.5 transition-colors font-medium',
           effective === 'remove'
-            ? 'bg-red-900/40 text-red-300'
-            : 'bg-transparent text-gray-500 hover:text-gray-300',
+            ? 'bg-red-700/70 text-red-100 border-l border-red-500/60'
+            : 'bg-transparent text-gray-400 hover:text-gray-200',
         )}
         onClick={() => onChange('remove')}
       >

@@ -58,12 +58,16 @@ const PIPELINE_STEPS = [
   { id: 'hunting_lead_planner',    label: 'Hunting Lead Planner',    description: 'Converts hypotheses into concrete hunting leads' },
   { id: 'ttp_analyst',             label: 'TTP Analyst',             description: 'Maps evidence to MITRE ATT&CK techniques' },
   { id: 'query_drafting_agent',    label: 'Query Drafting Agent',    description: 'Drafts SPL, KQL, and ES DSL SIEM queries' },
+  // ── Threat Intel Analyst, preliminary phase (issue-local-020/021/022) ───────
+  { id: 'threat_intel_preliminary', label: 'Threat Intel (Preliminary)', description: 'Correlates threat context/hypotheses/TTPs/IOCs against other hunts, before execution' },
   // ── SIEM execution (issue-local-009) ────────────────────────────────────────
   { id: 'siem_connect',            label: 'SIEM Connect',            description: 'Builds and verifies the SIEM connector' },
   { id: 'siem_submit',             label: 'SIEM Submit',             description: 'Submits SPL retrohunt search, obtains job SID' },
   { id: 'siem_poll',               label: 'SIEM Poll',               description: 'Polls search job until complete, tracks progress' },
   { id: 'siem_fetch',              label: 'SIEM Fetch',              description: 'Retrieves result rows from completed search job' },
   { id: 'siem_interpret',          label: 'SIEM Interpret',          description: 'LLM interprets SIEM results into plain findings' },
+  // ── Threat Intel Analyst, final phase (issue-local-020/021/022) ────────────
+  { id: 'threat_intel_final',      label: 'Threat Intel (Final)',    description: 'Re-correlates, now also ingesting this run\'s SIEM execution findings' },
   // ── Report generation (issue-local-009) ─────────────────────────────────────
   { id: 'report_assemble',         label: 'Assemble Report',         description: 'Loads all hunt data and assembles report structure' },
   { id: 'report_exec_summary',     label: 'Exec Summary',            description: 'LLM generates executive summary for stakeholders' },
@@ -324,7 +328,8 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   // centered on the currently active agent/task node as the run progresses,
   // instead of a static initial fit. Local-only (no server persistence, unlike
   // showSubtasks) since it's a viewing preference for the current session.
-  const [trackWorkflow, setTrackWorkflow] = useState(false)
+  // issue-local-022 (item 7): defaults on.
+  const [trackWorkflow, setTrackWorkflow] = useState(true)
 
   const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as 'info' | 'verbose' | 'debug'
   const visualization = (vizData?.agent_workflow_visualization ?? 'timeline') as 'timeline' | 'mermaid' | 'reactflow'

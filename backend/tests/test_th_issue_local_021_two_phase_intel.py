@@ -157,11 +157,14 @@ class TestTwoPhaseAnalysis:
                 )
 
             run = await th_db.get_generation_run("run-1")
+            # issue-local-022: distinct step id per phase (was a single
+            # "threat_intel_analyst" name with a "[phase]" decision prefix).
             steps = [
-                s for s in (run.get("step_logs") or []) if s.get("step") == "threat_intel_analyst"
+                s
+                for s in (run.get("step_logs") or [])
+                if s.get("step") == "threat_intel_preliminary"
             ]
             assert len(steps) == 1
-            assert "[preliminary]" in steps[0]["decision"]
 
 
 class TestRunConfigDecoding:

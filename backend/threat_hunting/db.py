@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 8
+_TH_SCHEMA_VERSION = 9
 
 
 def _utc_now_iso() -> str:
@@ -134,7 +134,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     step_logs           TEXT,
     research_effort     TEXT,
     run_config          TEXT DEFAULT '{}',
-    run_seq             INTEGER
+    run_seq             INTEGER,
+    threat_intel_status TEXT
 );
 """
 
@@ -399,6 +400,19 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v8 "
             "(added hunt_packages.excluded_from_correlation)"
+        )
+    if current_version < 9:
+        # v9 (issue-local-022 item 3): threat_intel_status on hunting_packages
+        # (the per-run table) — 'running' while either Threat Intel phase is
+        # active for that run, else NULL. Lets the UI gate Re-run/report
+        # generation while a Threat Intel analysis is in flight instead of
+        # letting them race against it.
+        try:
+            await db.execute("ALTER TABLE hunting_packages ADD COLUMN threat_intel_status TEXT")
+        except Exception:
+            pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v9 (added hunting_packages.threat_intel_status)"
         )
 
 
@@ -1653,7 +1667,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs, deep_retrohunt, run_seq
+                      step_logs, deep_retrohunt, run_seq, threat_intel_status
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -2205,9 +2219,7 @@ async def aggregate_ttps() -> list[dict[str, Any]]:
             )
             entry["sources"][source["id"]] = source
 
-    out = [
-        {**entry, "sources": list(entry["sources"].values())} for entry in by_technique.values()
-    ]
+    out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_technique.values()]
     out.sort(key=lambda r: -len(r["sources"]))
     return out
 
@@ -2346,6 +2358,24 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
         await db.execute(
             "UPDATE hunting_packages SET step_logs = ? WHERE id = ?",
             (_json.dumps(logs, ensure_ascii=False, default=str), run_id),
+        )
+        await db.commit()
+
+
+async def set_run_threat_intel_status(run_id: str, status: str | None) -> None:
+    """Set/clear ``hunting_packages.threat_intel_status`` (issue-local-022 item 3).
+
+    ``status='running'`` while either Threat Intel Analyst phase is active for
+    this run, ``None`` once it finishes (success or failure) — callers should
+    wrap this around ``analyze_threat_intel()`` in a try/finally so it always
+    clears. Lets the frontend gate Re-run/report-generation buttons on "is a
+    Threat Intel analysis currently running for this run" without a poll of
+    the analysis itself. No-ops when *run_id* is not found.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            "UPDATE hunting_packages SET threat_intel_status = ? WHERE id = ?",
+            (status, run_id),
         )
         await db.commit()
 

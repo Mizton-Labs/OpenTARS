@@ -23,12 +23,15 @@ const STEP_LABELS: Record<string, string> = {
   hunting_lead_planner: 'Hunting Lead Planner',
   ttp_analyst: 'TTP Analyst',
   query_drafting_agent: 'Query Drafting Agent',
+  // Threat Intel Analyst — two phases (issue-local-020/021/022)
+  threat_intel_preliminary: 'Threat Intel (Preliminary)',
   // SIEM execution
   siem_connect: 'SIEM Connect',
   siem_submit: 'SIEM Submit',
   siem_poll: 'SIEM Poll',
   siem_fetch: 'SIEM Fetch',
   siem_interpret: 'SIEM Interpret',
+  threat_intel_final: 'Threat Intel (Final)',
   // Report generation
   report_assemble: 'Assemble Report',
   report_exec_summary: 'Exec Summary',
@@ -78,6 +81,9 @@ function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false
     '',
   )
 
+  // Threat Intel Analyst — preliminary phase (issue-local-020/021/022)
+  lines.push(`  threat_intel_preliminary["${STEP_LABELS.threat_intel_preliminary}"]`, '')
+
   // Approval gate
   lines.push('  approval_gate{{"Approval Gate"}}', '')
 
@@ -90,6 +96,9 @@ function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false
     `  siem_interpret["${STEP_LABELS.siem_interpret}"]`,
     '',
   )
+
+  // Threat Intel Analyst — final phase (issue-local-020/021/022)
+  lines.push(`  threat_intel_final["${STEP_LABELS.threat_intel_final}"]`, '')
 
   // Report generation nodes (issue-local-009)
   lines.push(
@@ -127,7 +136,8 @@ function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false
     '  hypothesis_generator --> hunting_lead_planner',
     '  hunting_lead_planner --> ttp_analyst',
     '  ttp_analyst --> query_drafting_agent',
-    '  query_drafting_agent --> approval_gate',
+    '  query_drafting_agent --> threat_intel_preliminary',
+    '  threat_intel_preliminary --> approval_gate',
     '',
   )
 
@@ -138,7 +148,8 @@ function buildMermaidDiagram(genRecord: THGenerationRecord, showSubtasks = false
     '  siem_submit --> siem_poll',
     '  siem_poll --> siem_fetch',
     '  siem_fetch --> siem_interpret',
-    '  siem_interpret --> report_assemble',
+    '  siem_interpret --> threat_intel_final',
+    '  threat_intel_final --> report_assemble',
     '',
   )
 

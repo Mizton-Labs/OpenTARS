@@ -382,7 +382,18 @@ function RecommendationsSection({ recommendations }: { recommendations: string[]
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: string }) {
+export default function ReportPanel({
+  pkgId,
+  runId,
+  threatIntelRunning = false,
+}: {
+  pkgId: string
+  runId?: string
+  /** issue-local-022 (item 3): true while a Threat Intel analysis is in
+   *  flight for the active run — generating/regenerating the report while
+   *  it's still writing would race it, so the button is disabled meanwhile. */
+  threatIntelRunning?: boolean
+}) {
   const { isResearcher } = useAuth()
   const qc = useQueryClient()
 
@@ -429,7 +440,8 @@ export default function ReportPanel({ pkgId, runId }: { pkgId: string; runId?: s
           {isResearcher && (
             <button
               className="btn-secondary text-sm flex items-center gap-1.5"
-              disabled={generateMut.isPending}
+              disabled={generateMut.isPending || threatIntelRunning}
+              title={threatIntelRunning ? 'Threat Intel analysis is still running for this run' : undefined}
               onClick={() => generateMut.mutate()}
             >
               {generateMut.isPending

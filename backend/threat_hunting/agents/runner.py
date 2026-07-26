@@ -369,13 +369,21 @@ async def _run_pipeline(
                     analyze_threat_intel,
                 )
 
-                await analyze_threat_intel(
-                    pkg_id,
-                    run_id=run_id,
-                    phase="preliminary",
-                    provider_name=final_state.get("provider_name"),
-                    model_name=final_state.get("model_name"),
-                )
+                # issue-local-022 (item 3): mark this run's Threat Intel
+                # analysis as in-flight so the frontend can gate Re-run/report
+                # generation for it — always cleared in `finally`, even on
+                # failure.
+                await th_db.set_run_threat_intel_status(run_id, "running")
+                try:
+                    await analyze_threat_intel(
+                        pkg_id,
+                        run_id=run_id,
+                        phase="preliminary",
+                        provider_name=final_state.get("provider_name"),
+                        model_name=final_state.get("model_name"),
+                    )
+                finally:
+                    await th_db.set_run_threat_intel_status(run_id, None)
                 log.info("TH pipeline: preliminary threat intel analysis complete")
             except Exception as intel_exc:  # noqa: BLE001
                 log.warning(
@@ -416,7 +424,10 @@ async def _run_pipeline(
             await _save_generation_state(
                 run_id,
                 pkg_id,
-                {**final_state, "errors": [*(final_state.get("errors") or []), "Cancelled by operator"]},
+                {
+                    **final_state,
+                    "errors": [*(final_state.get("errors") or []), "Cancelled by operator"],
+                },
                 status="cancelled",
             )
         else:

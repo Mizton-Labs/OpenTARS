@@ -110,8 +110,13 @@ async def analyze_threat_intel(
     det_attack_vector = str(threat_context.get("attack_vector") or "").strip()
 
     threat_actors: list[dict[str, Any]] = (
-        [{"name": det_actor, "confidence": str(threat_context.get("confidence") or "unknown"),
-          "rationale": "From this run's threat context analysis."}]
+        [
+            {
+                "name": det_actor,
+                "confidence": str(threat_context.get("confidence") or "unknown"),
+                "rationale": "From this run's threat context analysis.",
+            }
+        ]
         if det_actor
         else []
     )
@@ -124,7 +129,9 @@ async def analyze_threat_intel(
         if det_actor
         else None
     )
-    campaigns: list[dict[str, Any]] = [{"name": det_campaign, "description": ""}] if det_campaign else []
+    campaigns: list[dict[str, Any]] = (
+        [{"name": det_campaign, "description": ""}] if det_campaign else []
+    )
     related_vendors: list[dict[str, Any]] = []
     summary = str(threat_context.get("summary") or "")
 
@@ -132,7 +139,9 @@ async def analyze_threat_intel(
     # LLM-generated (the LLM only gets a capped preview for narrative context).
     try:
         this_run_iocs = await th_db.list_extracted_iocs(hunt_package_id, run_id)
-        kept_iocs = [i["ioc"] for i in this_run_iocs if i.get("action") != "remove" and i.get("ioc")]
+        kept_iocs = [
+            i["ioc"] for i in this_run_iocs if i.get("action") != "remove" and i.get("ioc")
+        ]
         correlated_iocs = await th_db.find_cross_package_ioc_matches(hunt_package_id, kept_iocs)
     except Exception as exc:  # noqa: BLE001
         log.warning("threat_intel_analyst: IOC correlation query failed (non-fatal): %s", exc)
@@ -162,9 +171,7 @@ async def analyze_threat_intel(
                 else "SIEM execution completed with no matching events"
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "threat_intel_analyst: execution-results fetch failed (non-fatal): %s", exc
-            )
+            log.warning("threat_intel_analyst: execution-results fetch failed (non-fatal): %s", exc)
             execution_findings_line = "execution results unavailable"
 
     # LLM enrichment — soft-fail, deterministic fields above still get persisted.
@@ -187,10 +194,15 @@ async def analyze_threat_intel(
             ),
             context_sections=[
                 ("Threat Context Summary", str(threat_context.get("summary") or "")[:1000]),
-                ("Threat Actor / Campaign / Attack Vector",
-                 f"actor={det_actor or 'unknown'}, campaign={det_campaign or 'unknown'}, "
-                 f"vector={det_attack_vector or 'unknown'}"),
-                ("Malware Families (from threat context)", ", ".join(det_malware_families) or "none"),
+                (
+                    "Threat Actor / Campaign / Attack Vector",
+                    f"actor={det_actor or 'unknown'}, campaign={det_campaign or 'unknown'}, "
+                    f"vector={det_attack_vector or 'unknown'}",
+                ),
+                (
+                    "Malware Families (from threat context)",
+                    ", ".join(det_malware_families) or "none",
+                ),
                 ("Top Hypotheses", hyp_titles or "none"),
                 ("MITRE ATT&CK Techniques", techniques or "none mapped"),
                 (
@@ -277,10 +289,17 @@ async def analyze_threat_intel(
         await th_db.append_run_step_log(
             run_id,
             {
-                "step": "threat_intel_analyst",
+                # issue-local-022: distinct step id per phase — both phases
+                # previously logged under the same "threat_intel_analyst"
+                # name, so the frontend's step_logs-keyed-by-step-name lookup
+                # silently overwrote the preliminary phase's entry the moment
+                # the final phase ran. Must match PIPELINE_STEPS entries in
+                # WorkflowVisualizer.tsx/MermaidVisualizer.tsx/
+                # ReactFlowVisualizer.tsx.
+                "step": f"threat_intel_{phase}",
                 "status": "ok",
                 "decision": (
-                    f"[{phase}] {len(threat_actors)} actor(s), {len(correlated_iocs)} "
+                    f"{len(threat_actors)} actor(s), {len(correlated_iocs)} "
                     f"cross-package IOC match(es)"
                 ),
                 "debug_lines": debug_lines,

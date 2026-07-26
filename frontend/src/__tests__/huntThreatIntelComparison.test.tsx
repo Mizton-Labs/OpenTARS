@@ -190,8 +190,13 @@ describe('HuntDetail tabs (issue-local-020)', () => {
     expect(reportIdx).toBeGreaterThan(tiIdx)
   })
 
-  it('shows Threat Intelligence/Report tabs disabled (not absent) when the package is not finished', async () => {
+  it('shows Threat Intelligence/Report tabs disabled (not absent) when the active run is not finished', async () => {
+    // issue-local-022 (item 5): gating now derives from the ACTIVE RUN's own
+    // generation_status, not the package's — a stale-but-still-'completed'
+    // pkg.status from a PRIOR run must no longer keep these tabs enabled
+    // while the current run is still mid-pipeline.
     vi.mocked(api.threatHunting.getPackage).mockResolvedValue(makePkg({ status: 'planning' }))
+    vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ generation_status: 'running' })])
     renderDetail()
     expect(await screen.findByRole('button', { name: 'Comparison Assessment' })).toBeInTheDocument()
     // issue-local-021: always rendered, just greyed/disabled — not absent.
