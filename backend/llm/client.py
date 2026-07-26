@@ -921,82 +921,100 @@ class OpenAIClient(LLMClient):
 # ── Anthropic ───────────────────────────────────────────────────────────────
 
 
-class AnthropicClient(LLMClient):
+def _temperature_is_deprecated(exc: LLMProviderError) -> bool:
+    """Detect Anthropic's "`temperature` is deprecated for this model" 400.
+
+    Newer Claude models (confirmed: claude-sonnet-5 via Azure AI Foundry's
+    Anthropic passthrough) reject the ``temperature`` field outright with
+    HTTP 400 ``{"error": {"type": "invalid_request_error", "message":
+    "`temperature` is deprecated for this model."}}``. Older models still
+    expect it for deterministic output, so we can't just stop sending it —
+    instead every Anthropic-protocol call site retries once without it,
+    only when the provider itself says the field is unsupported.
+    """
+    if exc.status != 400 or not exc.body:
+        return False
+    try:
+        data = json.loads(exc.body)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    message = (data.get("error") or {}).get("message", "") if isinstance(data, dict) else ""
+    return "temperature" in message and "deprecated" in message
+
+
+def _anthropic_extract_text(data: dict) -> str:
+    blocks = data.get("content", [])
+    return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
+
+def _anthropic_extract_tool_calls(data: dict) -> tuple[str, list[dict]]:
+    blocks = data.get("content", [])
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    for block in blocks:
+        if block.get("type") == "text":
+            text_parts.append(block.get("text", ""))
+        elif block.get("type") == "tool_use":
+            tool_calls.append(
+                {
+                    "name": block.get("name", ""),
+                    "arguments": block.get("input", {}),
+                }
+            )
+    return "".join(text_parts), tool_calls
+
+
+class _AnthropicProtocolMixin:
+    """Anthropic Messages API wire logic, shared across every client that
+    speaks this exact protocol.
+
+    :class:`AnthropicClient` (native ``api.anthropic.com``) and
+    :class:`AzureAIFoundryClient` when configured with
+    ``api_style="anthropic"`` (Azure AI Foundry's Anthropic-passthrough
+    deployment mode) send byte-identical request/response shapes — only
+    ``base_url`` differs. Centralizing the wire logic here means the
+    temperature-deprecation retry (see :func:`_temperature_is_deprecated`)
+    and any future protocol fix only need to exist once.
+    """
+
     _ANTHROPIC_VERSION = "2023-06-01"
 
-    @property
-    def supports_tools(self) -> bool:
-        return True
+    def _anthropic_url(self) -> str:
+        return f"{self.base_url}/v1/messages"
 
-    def complete_with_tools(
-        self,
-        prompt: str,
-        tools: list[dict],
-        *,
-        system: str | None = None,
-        max_tokens: int = 512,
-        temperature: float = 0.0,
-        timeout: float | None = None,
-        model: str | None = None,
-    ) -> tuple[str, list[dict]]:
-        """Anthropic tool-use: returns (text, tool_calls_list)."""
-        # Convert OpenAI-style tool specs to Anthropic tool format
-        anthropic_tools = [
-            {
-                "name": t["name"],
-                "description": t["description"],
-                "input_schema": t["parameters"],
-            }
-            for t in tools
-        ]
-
-        payload: dict = {
-            "model": model or self.model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
-            "tools": anthropic_tools,
-        }
-        if system:
-            payload["system"] = system
-
-        body = json.dumps(payload).encode("utf-8")
-        headers = {
+    def _anthropic_headers(self) -> dict[str, str]:
+        return {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
             "anthropic-version": self._ANTHROPIC_VERSION,
         }
-        status, _, resp = self._send(
-            "POST",
-            f"{self.base_url}/v1/messages",
-            headers=headers,
-            body=body,
-            timeout=timeout,
-            step="complete_with_tools",
-        )
-        data = _parse_json_or_raise(
-            provider_name=self.name,
-            body=resp,
-            status=status,
-            where="complete_with_tools",
-        )
 
-        blocks = data.get("content", [])
-        text_parts: list[str] = []
-        tool_calls: list[dict] = []
-        for block in blocks:
-            if block.get("type") == "text":
-                text_parts.append(block.get("text", ""))
-            elif block.get("type") == "tool_use":
-                tool_calls.append(
-                    {
-                        "name": block.get("name", ""),
-                        "arguments": block.get("input", {}),
-                    }
-                )
-        return "".join(text_parts), tool_calls
+    def _anthropic_send(self, payload: dict, *, step: str, timeout: float | None) -> dict:
+        headers = self._anthropic_headers()
+        url = self._anthropic_url()
+        body = json.dumps(payload).encode("utf-8")
+        try:
+            status, _, resp = self._send(
+                "POST", url, headers=headers, body=body, timeout=timeout, step=step
+            )
+        except LLMProviderError as exc:
+            if "temperature" not in payload or not _temperature_is_deprecated(exc):
+                raise
+            logger.info(
+                "llm.temperature_unsupported provider=%s model=%s step=%s — "
+                "retrying once without temperature",
+                self.name,
+                payload.get("model"),
+                step,
+            )
+            retry_payload = {k: v for k, v in payload.items() if k != "temperature"}
+            retry_body = json.dumps(retry_payload).encode("utf-8")
+            status, _, resp = self._send(
+                "POST", url, headers=headers, body=retry_body, timeout=timeout, step=step
+            )
+        return _parse_json_or_raise(provider_name=self.name, body=resp, status=status, where=step)
 
-    def complete(
+    def _anthropic_complete(
         self,
         prompt: str,
         *,
@@ -1014,38 +1032,104 @@ class AnthropicClient(LLMClient):
         }
         if system:
             payload["system"] = system
-        body = json.dumps(payload).encode("utf-8")
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": self._ANTHROPIC_VERSION,
-        }
-        status, _, resp = self._send(
-            "POST",
-            f"{self.base_url}/v1/messages",
-            headers=headers,
-            body=body,
-            timeout=timeout,
-            step="complete",
-        )
-        # prompts-025: defensive parse (see _parse_json_or_raise).
-        data = _parse_json_or_raise(
-            provider_name=self.name,
-            body=resp,
-            status=status,
-            where="complete",
-        )
+        data = self._anthropic_send(payload, step="complete", timeout=timeout)
         # Anthropic returns content as a list of blocks.
         try:
-            blocks = data.get("content", [])
-            return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            return _anthropic_extract_text(data)
         except (AttributeError, TypeError) as exc:
             raise LLMProviderError(
                 f"provider {self.name!r} returned non-Anthropic response shape "
                 f"({type(exc).__name__})",
-                status=status,
-                body=resp.decode("utf-8", errors="replace"),
+                status=None,
+                body=json.dumps(data),
             ) from exc
+
+    def _anthropic_complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Anthropic tool-use: returns (text, tool_calls_list)."""
+        anthropic_tools = [
+            {
+                "name": t["name"],
+                "description": t["description"],
+                "input_schema": t["parameters"],
+            }
+            for t in tools
+        ]
+        payload: dict = {
+            "model": model or self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+            "tools": anthropic_tools,
+        }
+        if system:
+            payload["system"] = system
+        data = self._anthropic_send(payload, step="complete_with_tools", timeout=timeout)
+        return _anthropic_extract_tool_calls(data)
+
+
+class AnthropicClient(_AnthropicProtocolMixin, LLMClient):
+    """Native Anthropic API (``api.anthropic.com``) only.
+
+    For Claude models exposed through Azure AI Foundry, use the
+    ``azure_ai_foundry`` kind with ``api_style: anthropic`` instead — that
+    keeps "which provider kind talks to which endpoint" unambiguous rather
+    than overloading this kind with an Azure base_url. See
+    :class:`AzureAIFoundryClient`.
+    """
+
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        return self._anthropic_complete_with_tools(
+            prompt,
+            tools,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+            model=model,
+        )
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> str:
+        return self._anthropic_complete(
+            prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+            model=model,
+        )
 
     def list_models(self) -> list[str] | None:
         # Anthropic has no stable public list-models endpoint at a fixed
@@ -1295,3 +1379,247 @@ class OpenAICompatibleClient(OpenAIClient):
         # Every candidate failed with a transport/HTTP error — the server
         # genuinely exposes no catalog. Caller falls back to free-text.
         return None
+
+
+# ── Azure AI Foundry (issue-local-022) ───────────────────────────────────────
+
+
+class AzureAIFoundryClient(_AnthropicProtocolMixin, LLMClient):
+    """Azure AI Foundry, in either of its two distinct deployment modes.
+
+    Azure AI Foundry resources expose Claude models in one of two,
+    mutually-exclusive ways depending on how the resource was provisioned —
+    operators get this wrong easily since both look superficially similar,
+    which is why both live under this ONE provider kind rather than
+    splitting the choice across kinds (see ``api_style``):
+
+    - ``api_style="unified"`` (default): the "Azure AI Model Inference API"
+      — one OpenAI-compatible wire shape fronting multiple model families
+      (OpenAI, Anthropic Claude, Meta, ...). Path is
+      ``{base_url}/models/chat/completions`` (note the ``/models`` segment),
+      auth header is ``api-key: <key>``, and every request carries a
+      required ``api-version`` query parameter. Body shape mirrors
+      :class:`OpenAIClient` exactly — only URL and headers differ.
+    - ``api_style="anthropic"``: Azure's Anthropic-native passthrough for
+      Claude models — the wire shape is byte-identical to calling
+      ``api.anthropic.com`` directly (see :class:`AnthropicClient` /
+      :class:`_AnthropicProtocolMixin`), just against
+      ``{base_url}/anthropic/v1/messages`` instead. This is the mode
+      confirmed working for Claude models exposed via Foundry's Anthropic
+      passthrough; the unified mode 404s against resources provisioned that
+      way. Use this instead of configuring an ``anthropic`` kind provider
+      with an Azure base_url — that split was confusing (same protocol,
+      different kind) and is no longer the documented path.
+
+    Getting the mode wrong surfaces as an immediate 404 (unified hit against
+    an anthropic-only resource) — see ``AddProviderWizard.tsx`` for the
+    operator-facing guidance on picking between the two.
+    """
+
+    # Bumped only when Azure deprecates the version this targets — same
+    # class-constant convention as AnthropicClient._ANTHROPIC_VERSION above.
+    _API_VERSION = "2024-05-01-preview"
+
+    def __init__(self, *, api_style: str = "unified", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.api_style = api_style if api_style in ("unified", "anthropic") else "unified"
+
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def _anthropic_url(self) -> str:
+        # Override of _AnthropicProtocolMixin: Foundry's passthrough lives
+        # under an /anthropic prefix on the same resource base_url, unlike
+        # native api.anthropic.com.
+        return f"{self.base_url}/anthropic/v1/messages"
+
+    def _versioned_url(self, path: str) -> str:
+        return f"{self.base_url}{path}?api-version={self._API_VERSION}"
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "api-key": self.api_key,
+        }
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Azure AI Foundry function-calling: returns (text, tool_calls_list).
+
+        Same OpenAI-shaped function-calling payload as OpenAIClient — see
+        that method's docstring; only URL/headers differ here. In
+        ``api_style="anthropic"`` mode, delegates to the shared Anthropic
+        tool-use path instead (see :class:`_AnthropicProtocolMixin`).
+        """
+        if self.api_style == "anthropic":
+            return self._anthropic_complete_with_tools(
+                prompt,
+                tools,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+                model=model,
+            )
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        functions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["parameters"],
+                },
+            }
+            for t in tools
+        ]
+
+        payload: dict = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+            "tools": functions,
+            "tool_choice": "auto",
+        }
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+
+        body = json.dumps(payload).encode("utf-8")
+        status, _, resp = self._send(
+            "POST",
+            self._versioned_url("/models/chat/completions"),
+            headers=self._auth_headers(),
+            body=body,
+            timeout=timeout,
+            step="complete_with_tools",
+        )
+        body_str = resp.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-JSON response",
+                status=status,
+                body=body_str,
+            ) from exc
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+
+        raw_calls = message.get("tool_calls") or []
+        tool_calls: list[dict] = []
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            fn_name = fn.get("name", "")
+            fn_args_str = fn.get("arguments", "{}")
+            try:
+                fn_args = json.loads(fn_args_str)
+            except json.JSONDecodeError:
+                fn_args = {}
+            tool_calls.append({"name": fn_name, "arguments": fn_args})
+
+        text = message.get("content") or ""
+        return text, tool_calls
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+        timeout: float | None = None,
+        model: str | None = None,
+    ) -> str:
+        if self.api_style == "anthropic":
+            return self._anthropic_complete(
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+                model=model,
+            )
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+        body = json.dumps(payload).encode("utf-8")
+        status, _, resp = self._send(
+            "POST",
+            self._versioned_url("/models/chat/completions"),
+            headers=self._auth_headers(),
+            body=body,
+            timeout=timeout,
+            step="complete",
+        )
+        body_str = resp.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-OpenAI response shape ({type(exc).__name__})",
+                status=status,
+                body=body_str,
+            ) from exc
+        return _extract_openai_content(
+            data,
+            provider_name=self.name,
+            status=status,
+            body_str=body_str,
+        )
+
+    def list_models(self) -> list[str] | None:
+        if self.api_style == "anthropic":
+            # Same rationale as AnthropicClient.list_models: no stable
+            # public list-models endpoint on this passthrough; smoke tests
+            # fall back to complete().
+            return None
+        status, _, resp = self._send(
+            "GET",
+            self._versioned_url("/models"),
+            headers=self._auth_headers(),
+            body=None,
+            step="list_models",
+        )
+        data = _parse_json_or_raise(
+            provider_name=self.name,
+            body=resp,
+            status=status,
+            where="list_models",
+        )
+        try:
+            return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        except (AttributeError, TypeError) as exc:
+            raise LLMProviderError(
+                f"provider {self.name!r} returned non-OpenAI list_models shape "
+                f"({type(exc).__name__})",
+                status=status,
+                body=resp.decode("utf-8", errors="replace"),
+            ) from exc

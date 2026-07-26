@@ -192,6 +192,25 @@ class TestCallSiteStructure:
         assert "include_threat_intel" in source
         assert source.index("analyze_threat_intel") < source.index("write_report(")
 
+    def test_runner_preliminary_call_gated_on_awaiting_approval_not_completed(self) -> None:
+        """issue-local-023: the preliminary call used to gate on
+        final_status == "completed", which only happens on the RESUMED run
+        after a human approves it — i.e. it ran AFTER approval, not before
+        it, contradicting the "preliminary" naming and the pipeline
+        diagrams (which already show threat_intel_preliminary positioned
+        before approval_gate). Must gate on "awaiting_approval" instead —
+        the point the pipeline first reaches the approval gate."""
+        from backend.threat_hunting.agents import runner
+
+        source = inspect.getsource(runner._run_pipeline)
+        preliminary_idx = source.index('phase="preliminary"')
+        # Walk backward from the preliminary call to its own `if` gate,
+        # not report_writer's separate final_status == "completed" block.
+        gate_start = source.rindex("if final_status ==", 0, preliminary_idx)
+        gate_line = source[gate_start : source.index(":", gate_start)]
+        assert '"awaiting_approval"' in gate_line
+        assert '"completed"' not in gate_line
+
     def test_executor_final_call_gated_and_passes_phase(self) -> None:
         from backend.threat_hunting.siem import executor
 

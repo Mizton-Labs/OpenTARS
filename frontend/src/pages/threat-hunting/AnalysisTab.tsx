@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, lazy, Suspense } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw,
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw, Network,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -25,6 +25,10 @@ import {
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
 } from './runConfigUtils'
+
+// issue-local-022 (item 2): lazy-loaded, matching WorkflowVisualizer.tsx's
+// treatment of its own @xyflow/react-based visualizer.
+const HypothesisLeadIocChart = lazy(() => import('./HypothesisLeadIocChart'))
 
 // issue-local-015: prominent, highly-visible discard/restore action for a
 // hypothesis or hunting-lead card — a standalone button card rather than a
@@ -398,6 +402,11 @@ function HuntingPackageDraft({
     return map
   }, [iocsForChips])
 
+  // issue-local-023: relationship chart collapsed by default — the analyst
+  // opts in via the emphasized button below rather than it always taking
+  // up space above the main summary.
+  const [showChart, setShowChart] = useState(false)
+
   const discardMut = useMutation({
     mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
       api.threatHunting.discardHypothesis(pkgId, runId ?? '', hypothesisId, discarded),
@@ -416,8 +425,36 @@ function HuntingPackageDraft({
 
   return (
     <div className="space-y-5">
-      {/* Threat Context */}
+      {/* Threat Context (main summary) */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
+
+      {/* issue-local-023: relationship overview chart — moved below the main
+          summary, collapsed by default behind an emphasized toggle rather
+          than always taking up space. Still a navigational aid above the
+          flat lists below it, not a replacement for them (those still carry
+          the full text + approve/reject workflow). */}
+      <div className="space-y-3">
+        <button
+          onClick={() => setShowChart((v) => !v)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border-2 border-brand-600/60 bg-brand-900/20 text-brand-300 hover:bg-brand-900/30 hover:border-brand-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          <Network className="w-4 h-4" />
+          {showChart ? 'Hide Hunting Artifacts Relationship' : 'Show Hunting Artifacts Relationship'}
+          {showChart ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        </button>
+        {showChart && (
+          <Suspense
+            fallback={
+              <div className="card flex items-center gap-2 text-sm text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Loading relationship chart…
+              </div>
+            }
+          >
+            <HypothesisLeadIocChart record={record} iocs={iocsForChips} pkgId={pkgId} runId={runId} />
+          </Suspense>
+        )}
+      </div>
 
       {/* issue-local-022 (item 6): the Deep Retrohunt Lead / Sanitized IOCs
           table used to render here — it now lives in HuntDetail.tsx's IOCs

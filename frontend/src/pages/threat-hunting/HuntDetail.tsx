@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THEvidenceItem, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
+import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
+import EvidenceTab from './EvidenceTab'
 import ExecutionPanel from './ExecutionPanel'
 import PipelineStepper from './PipelineStepper'
 import ReportPanel from './ReportPanel'
@@ -53,8 +54,6 @@ export default function HuntDetail({
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
   const [newComment, setNewComment] = useState('')
 
-  // Part 4: evidence delete confirmation
-  const [confirmEvidenceId, setConfirmEvidenceId] = useState<string | null>(null)
   // issue-local-019: cancel-run confirmation
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
 
@@ -165,15 +164,6 @@ export default function HuntDetail({
   // pending when switching to the other. Scoped to the active run only.
   const iocStaging = useIocVerdictStaging(pkgId, activeRunId)
 
-  const deleteEvidenceMut = useMutation({
-    mutationFn: (itemId: string) => api.threatHunting.deleteEvidence(pkgId, itemId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-evidence', pkgId] })
-      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
-      qc.invalidateQueries({ queryKey: ['th-packages'] })
-    },
-  })
-
   // issue-local-018: per-run analyst comments
   const createCommentMut = useMutation({
     mutationFn: (body: string) => api.threatHunting.createRunComment(pkgId, activeRunId!, body),
@@ -216,12 +206,6 @@ export default function HuntDetail({
       setShowCancelConfirm(false)
     },
   })
-
-  const PARSE_STATUS_ICON = {
-    ok: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
-    partial: <Clock className="w-3.5 h-3.5 text-amber-400" />,
-    error: <AlertTriangle className="w-3.5 h-3.5 text-red-400" />,
-  }
 
   const noisyCount = (iocs as THExtractedIOC[]).filter((i) => i.flagged_noisy).length
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
@@ -394,12 +378,13 @@ export default function HuntDetail({
         onSelect={(key) => setActiveTab(key as DetailTab)}
         tabs={[
           { key: 'evidence', label: `Evidence (${evidence.length})` },
+          { key: 'analysis', label: 'Analysis' },
           // issue-local-021: IOCs tab always visible (was gated on iocs.length>0)
+          // issue-local-022: moved after Analysis, matching PipelineStepper's order.
           {
             key: 'iocs',
             label: `IOCs${(iocs as THExtractedIOC[]).length > 0 ? ` (${(iocs as THExtractedIOC[]).length})` : ''}`,
           },
-          { key: 'analysis', label: 'Analysis' },
           {
             key: 'execution',
             label: 'Execution',
@@ -423,50 +408,10 @@ export default function HuntDetail({
         ]}
       />
 
-      {/* Evidence tab */}
-      {activeTab === 'evidence' && (
-        <div className="space-y-2">
-          {evidence.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">No evidence items yet.</p>
-          ) : (
-            (evidence as THEvidenceItem[]).map((item) => (
-              <div key={item.id} className="card flex items-start gap-3">
-                 <div className="mt-0.5 shrink-0">
-                   {item.parse_status === 'pending'
-                     ? <Clock className="w-3.5 h-3.5 text-blue-500" />
-                     : (PARSE_STATUS_ICON[item.parse_status as keyof typeof PARSE_STATUS_ICON] ?? PARSE_STATUS_ICON.ok)}
-                 </div>
-                 <div className="flex-1 min-w-0 space-y-0.5">
-                   <p className="text-sm text-gray-200 font-medium truncate">{item.label || item.source_ref}</p>
-                   <div className="flex items-center gap-2 flex-wrap">
-                     <span className="text-[11px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{item.item_type}</span>
-                     {item.parse_status === 'pending' ? (
-                       <span className="text-[11px] text-blue-400 font-mono">⟳ pending — fetched during analysis</span>
-                     ) : (
-                       <span className="text-[11px] text-gray-500">{item.parser_used}</span>
-                     )}
-                     {item.parse_warnings.length > 0 && item.parse_status !== 'pending' && (
-                       <span className="text-[11px] text-amber-500">{item.parse_warnings.length} warning{item.parse_warnings.length > 1 ? 's' : ''}</span>
-                     )}
-                   </div>
-                   {item.source_ref && item.item_type === 'url' && (
-                     <p className="text-[11px] text-gray-600 font-mono truncate">{item.final_url || item.source_ref}</p>
-                   )}
-                 </div>
-                 {isResearcher && (
-                   <button
-                     className="btn-ghost p-1 text-gray-600 hover:text-red-400 shrink-0"
-                     onClick={() => setConfirmEvidenceId(item.id)}
-                     title="Remove"
-                   >
-                     <Trash2 className="w-3.5 h-3.5" />
-                   </button>
-                 )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
+      {/* Evidence tab — issue-local-023: two-pane sidebar list + content
+          viewer (PDF/plaintext rendered, binary files not processed), fully
+          self-contained (owns its own delete flow/confirmation now). */}
+      {activeTab === 'evidence' && <EvidenceTab pkgId={pkgId} isResearcher={isResearcher} />}
 
       {/* IOCs tab — issue-local-022 (item 6): once the run's Deep Retrohunt
           Lead exists, show the richer enriched All/Sanitized/Removed table
@@ -686,19 +631,6 @@ export default function HuntDetail({
         />
       )}
 
-      {/* Part 4: Evidence delete confirmation dialog */}
-      {confirmEvidenceId && (
-        <ConfirmDialog
-          title="Delete Evidence Item?"
-          message="This permanently removes this evidence item. If analysis has been run, the results will not be affected."
-          confirmLabel="Delete"
-          onConfirm={() => {
-            deleteEvidenceMut.mutate(confirmEvidenceId)
-            setConfirmEvidenceId(null)
-          }}
-          onCancel={() => setConfirmEvidenceId(null)}
-        />
-      )}
 
       {/* issue-local-019: cancel-run confirmation dialog */}
       {showCancelConfirm && (

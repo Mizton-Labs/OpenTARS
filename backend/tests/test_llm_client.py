@@ -11,6 +11,7 @@ from backend.llm import client as client_mod
 from backend.llm import config as cfg_mod
 from backend.llm.client import (
     AnthropicClient,
+    AzureAIFoundryClient,
     OllamaClient,
     OpenAIClient,
     OpenAICompatibleClient,
@@ -63,6 +64,54 @@ def test_get_client_raises_when_disabled(tmp_path, monkeypatch):
         get_client("anything")
 
 
+def test_get_client_passes_api_style_through_for_azure_foundry(tmp_path, monkeypatch):
+    """issue-local-022 follow-up: api_style must survive the config -> registry
+    -> client construction path, not just direct construction (tested
+    elsewhere for the client class itself)."""
+    monkeypatch.setattr(cfg_mod, "_LLM_CONFIG_PATH", tmp_path / "x.yaml")
+    cfg_mod.save_llm_config(
+        {
+            "enabled": True,
+            "default_provider": "foundry-anthropic",
+            "providers": [
+                {
+                    "name": "foundry-anthropic",
+                    "kind": "azure_ai_foundry",
+                    "base_url": "https://my-resource.services.ai.azure.com",
+                    "api_key": "az-key",
+                    "model": "claude-sonnet-5",
+                    "api_style": "anthropic",
+                }
+            ],
+        }
+    )
+    c = get_client("foundry-anthropic")
+    assert isinstance(c, AzureAIFoundryClient)
+    assert c.api_style == "anthropic"
+
+
+def test_get_client_defaults_api_style_to_unified_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(cfg_mod, "_LLM_CONFIG_PATH", tmp_path / "x.yaml")
+    cfg_mod.save_llm_config(
+        {
+            "enabled": True,
+            "default_provider": "foundry",
+            "providers": [
+                {
+                    "name": "foundry",
+                    "kind": "azure_ai_foundry",
+                    "base_url": "https://my-resource.services.ai.azure.com",
+                    "api_key": "az-key",
+                    "model": "gpt-4o",
+                }
+            ],
+        }
+    )
+    c = get_client("foundry")
+    assert isinstance(c, AzureAIFoundryClient)
+    assert c.api_style == "unified"
+
+
 def test_openai_client_request_shape():
     body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
     tx = _FakeTransport([(200, {}, body)])
@@ -101,6 +150,74 @@ def test_anthropic_client_headers_and_url():
     assert call["url"] == "https://api.anthropic.com/v1/messages"
     assert call["headers"]["x-api-key"] == "sk-ant"
     assert call["headers"]["anthropic-version"] == "2023-06-01"
+
+
+def test_anthropic_client_retries_without_temperature_when_deprecated():
+    """issue-local-022 follow-up: newer Claude models (confirmed:
+    claude-sonnet-5 via Azure AI Foundry's Anthropic passthrough) reject
+    the `temperature` field outright with HTTP 400. The client must retry
+    once without it rather than surfacing a hard failure, since older
+    models still expect `temperature` for deterministic output."""
+    from backend.llm.errors import LLMProviderError
+
+    deprecated_err = LLMProviderError(
+        "provider 'claude' returned HTTP 400",
+        status=400,
+        body=json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "`temperature` is deprecated for this model.",
+                },
+            }
+        ),
+    )
+    ok_body = json.dumps({"content": [{"type": "text", "text": "ok"}]}).encode()
+    tx = _FakeTransport([deprecated_err, (200, {}, ok_body)])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="claude-sonnet-5",
+        transport=tx,
+    )
+    out = c.complete("hi")
+    assert out == "ok"
+    assert len(tx.calls) == 2
+    first_payload = json.loads(tx.calls[0]["body"])
+    assert "temperature" in first_payload
+    retry_payload = json.loads(tx.calls[1]["body"])
+    assert "temperature" not in retry_payload
+    # Every other field is preserved verbatim on the retry.
+    assert retry_payload["model"] == "claude-sonnet-5"
+    assert retry_payload["messages"] == first_payload["messages"]
+
+
+def test_anthropic_client_does_not_retry_on_unrelated_400():
+    """A 400 for any other reason (bad model, malformed request, ...) must
+    propagate immediately — only the specific temperature-deprecation
+    shape triggers the retry-without-temperature path."""
+    from backend.llm.errors import LLMProviderError
+
+    other_err = LLMProviderError(
+        "provider 'claude' returned HTTP 400",
+        status=400,
+        body=json.dumps(
+            {"type": "error", "error": {"type": "invalid_request_error", "message": "bad model"}}
+        ),
+    )
+    tx = _FakeTransport([other_err])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="nonexistent-model",
+        transport=tx,
+    )
+    with pytest.raises(client_mod.LLMProviderError, match="HTTP 400"):
+        c.complete("hi")
+    assert len(tx.calls) == 1
 
 
 def test_ollama_client_no_auth_header():
@@ -177,6 +294,154 @@ def test_openai_compatible_extra_body_cannot_override_core_keys():
     assert payload["stream"] is False
     assert payload["model"] == "gpt-oss:120b"
     assert payload["temperature"] == 0.0
+
+
+def test_azure_ai_foundry_client_request_shape():
+    """issue-local-022: Azure AI Foundry's unified Model Inference API needs
+    the /models/chat/completions path (not plain /chat/completions), an
+    api-key header (not Authorization: Bearer or x-api-key), and a required
+    api-version query param — the exact contract that neither the existing
+    ``anthropic`` nor ``openai_compatible`` kinds satisfied, which was the
+    root cause of "connection fails" reports for Foundry-hosted models."""
+    body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry-claude",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="claude-3-5-sonnet",
+        transport=tx,
+    )
+    out = c.complete("hello", system="be brief", max_tokens=10)
+    assert out == "hi"
+    call = tx.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"] == (
+        "https://my-resource.services.ai.azure.com/models/chat/completions"
+        "?api-version=2024-05-01-preview"
+    )
+    assert call["headers"]["api-key"] == "az-key"
+    assert "Authorization" not in call["headers"]
+    assert "x-api-key" not in call["headers"]
+    payload = json.loads(call["body"])
+    assert payload["model"] == "claude-3-5-sonnet"
+    assert payload["messages"][0] == {"role": "system", "content": "be brief"}
+    assert payload["messages"][1] == {"role": "user", "content": "hello"}
+    assert payload["stream"] is False
+
+
+def test_azure_ai_foundry_list_models_request_shape():
+    body = json.dumps({"data": [{"id": "gpt-4o"}, {"id": "claude-3-5-sonnet"}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="",
+        transport=tx,
+    )
+    assert c.list_models() == ["gpt-4o", "claude-3-5-sonnet"]
+    call = tx.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"] == (
+        "https://my-resource.services.ai.azure.com/models?api-version=2024-05-01-preview"
+    )
+    assert call["headers"]["api-key"] == "az-key"
+
+
+def test_azure_ai_foundry_extra_body_merged_when_configured():
+    body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="gpt-4o",
+        extra_body={"reasoning_effort": "low"},
+        transport=tx,
+    )
+    c.complete("hi")
+    payload = json.loads(tx.calls[0]["body"])
+    assert payload["reasoning_effort"] == "low"
+    assert payload["model"] == "gpt-4o"
+
+
+def test_azure_ai_foundry_anthropic_style_uses_anthropic_protocol():
+    """issue-local-022 follow-up: api_style='anthropic' is Azure AI
+    Foundry's OTHER deployment mode — Claude models exposed via a native
+    Anthropic passthrough rather than the unified Model Inference API.
+    Confirmed against a real resource: this mode wants
+    {base_url}/anthropic/v1/messages with x-api-key/anthropic-version
+    headers, byte-identical to AnthropicClient — NOT the api-key header
+    or /models/chat/completions path used by the default unified mode."""
+    body = json.dumps({"content": [{"type": "text", "text": "ok"}]}).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry-anthropic",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="claude-sonnet-5",
+        api_style="anthropic",
+        transport=tx,
+    )
+    out = c.complete("hi")
+    assert out == "ok"
+    call = tx.calls[0]
+    assert call["url"] == "https://my-resource.services.ai.azure.com/anthropic/v1/messages"
+    assert call["headers"]["x-api-key"] == "az-key"
+    assert call["headers"]["anthropic-version"] == "2023-06-01"
+    assert "api-key" not in call["headers"]
+    assert c.list_models() is None
+
+
+def test_azure_ai_foundry_anthropic_style_also_retries_without_temperature():
+    """The temperature-deprecation retry (see AnthropicClient's version of
+    this test) is shared via _AnthropicProtocolMixin — must also apply
+    when Azure AI Foundry is configured for the anthropic deployment mode,
+    since it's the exact same wire protocol against a different base_url."""
+    from backend.llm.errors import LLMProviderError
+
+    deprecated_err = LLMProviderError(
+        "provider 'foundry-anthropic' returned HTTP 400",
+        status=400,
+        body=json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "`temperature` is deprecated for this model.",
+                },
+            }
+        ),
+    )
+    ok_body = json.dumps({"content": [{"type": "text", "text": "ok"}]}).encode()
+    tx = _FakeTransport([deprecated_err, (200, {}, ok_body)])
+    c = AzureAIFoundryClient(
+        name="foundry-anthropic",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="claude-sonnet-5",
+        api_style="anthropic",
+        transport=tx,
+    )
+    out = c.complete("hi")
+    assert out == "ok"
+    assert len(tx.calls) == 2
+    assert "temperature" not in json.loads(tx.calls[1]["body"])
+
+
+def test_azure_ai_foundry_unknown_api_style_falls_back_to_unified():
+    """A malformed/unknown api_style value must not silently pick the
+    anthropic protocol — default to the documented 'unified' behavior."""
+    c = AzureAIFoundryClient(
+        name="foundry",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="az-key",
+        model="gpt-4o",
+        api_style="not-a-real-mode",
+        transport=_FakeTransport([]),
+    )
+    assert c.api_style == "unified"
 
 
 def test_openai_compatible_no_extra_body_keeps_payload_minimal():

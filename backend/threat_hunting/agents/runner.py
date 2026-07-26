@@ -356,12 +356,19 @@ async def _run_pipeline(
         elif final_status == "awaiting_approval":
             await th_db.update_hunt_package(pkg_id, status="planning")
 
-        # issue-local-021: preliminary-phase Threat Intel analysis — runs here
-        # (pipeline-completed, pre-execution) rather than only after SIEM
-        # execution (executor.py's existing "final" phase call). Gated on the
-        # run's include_threat_intel config flag (default on). Soft-fail,
-        # same convention as the auto-report block below.
-        if final_status == "completed" and (final_state.get("run_config") or {}).get(
+        # issue-local-021/023: preliminary-phase Threat Intel analysis — runs
+        # here, at the point the pipeline first reaches the approval gate
+        # (status='awaiting_approval'), BEFORE a human approves it — not
+        # after approval. issue-local-023 fix: this used to gate on
+        # final_status == "completed", but that status only occurs on the
+        # RESUMED run once approve_generation() re-fires the pipeline past
+        # the gate — i.e. it was firing after approval, not before it,
+        # contradicting both this analyst's "preliminary" naming and the
+        # pipeline diagrams (WorkflowVisualizer.tsx etc.), which already
+        # depict threat_intel_preliminary positioned before approval_gate.
+        # Gated on the run's include_threat_intel config flag (default on).
+        # Soft-fail, same convention as the auto-report block below.
+        if final_status == "awaiting_approval" and (final_state.get("run_config") or {}).get(
             "include_threat_intel", True
         ):
             try:

@@ -1110,6 +1110,12 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
         { method: 'DELETE' },
       ),
+    // issue-local-023: URL-string methods (not fetch calls) — same pattern
+    // as downloadReportPdf, for direct use in an <iframe src> / <a href>.
+    getEvidencePdfUrl: (pkgId: string, itemId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}/pdf`,
+    getEvidenceDownloadUrl: (pkgId: string, itemId: string) =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}/download`,
     listIocs: (pkgId: string, runId?: string) =>
       request<THExtractedIOC[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/iocs${runId ? `?run_id=${encodeURIComponent(runId)}` : ''}`,
@@ -1472,7 +1478,7 @@ export interface SmartRejectRequest {
 
 // ── LLM provider types (prompts-021D-2, expanded in 022 step 5) ────────────
 
-export type LLMProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai_compatible'
+export type LLMProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai_compatible' | 'azure_ai_foundry'
 
 /** Single entry from GET /api/app/agent-tools/catalog (issue-007). */
 export interface ToolCatalogEntry {
@@ -1501,6 +1507,13 @@ export interface LLMProvider {
   timeout_seconds?: number
   max_retries?: number
   skip_tls_verify?: boolean
+  /**
+   * issue-local-022 follow-up: only meaningful when kind === 'azure_ai_foundry'.
+   * 'unified' (default) is Azure's OpenAI-compatible Model Inference API;
+   * 'anthropic' is the Anthropic-native passthrough mode for Claude models.
+   * See AzureAIFoundryClient's docstring in backend/llm/client.py.
+   */
+  api_style?: 'unified' | 'anthropic'
   /**
    * prompts-027: persisted list of models last returned by the
    * "Discover Models" button on the persisted ProviderCard. Lets the

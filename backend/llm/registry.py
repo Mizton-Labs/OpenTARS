@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.llm.client import (
     AnthropicClient,
+    AzureAIFoundryClient,
     LLMClient,
     OllamaClient,
     OpenAIClient,
@@ -23,12 +24,16 @@ _CLIENT_KINDS: dict[str, type[LLMClient]] = {
     "anthropic": AnthropicClient,
     "ollama": OllamaClient,
     "openai_compatible": OpenAICompatibleClient,
+    "azure_ai_foundry": AzureAIFoundryClient,
 }
 
 _DEFAULT_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "ollama": "http://localhost:11434",
+    # No sensible default for azure_ai_foundry — the resource name is
+    # operator-specific (https://<resource-name>.services.ai.azure.com),
+    # same reasoning as openai_compatible having none.
 }
 
 
@@ -70,7 +75,7 @@ def get_client(provider_name: str | None = None) -> LLMClient:
     if not model:
         raise LLMConfigError(f"provider {p.get('name')!r}: model is required")
 
-    return cls(
+    kwargs: dict[str, Any] = dict(
         name=p["name"],
         base_url=base_url,
         api_key=p.get("api_key", "") or "",
@@ -80,6 +85,9 @@ def get_client(provider_name: str | None = None) -> LLMClient:
         skip_tls_verify=bool(p.get("skip_tls_verify", False)),
         extra_body=p.get("extra_body") if isinstance(p.get("extra_body"), dict) else None,
     )
+    if kind == "azure_ai_foundry":
+        kwargs["api_style"] = p.get("api_style") or "unified"
+    return cls(**kwargs)
 
 
 def list_provider_names() -> list[dict[str, Any]]:
@@ -151,7 +159,7 @@ def build_client_from_payload(payload: dict[str, Any]) -> LLMClient:
     # receiving HTTP 400 when the model is empty.
     model = payload.get("model") or ""
 
-    return cls(
+    kwargs: dict[str, Any] = dict(
         name=name,
         base_url=base_url,
         api_key=payload.get("api_key", "") or "",
@@ -163,3 +171,6 @@ def build_client_from_payload(payload: dict[str, Any]) -> LLMClient:
             payload.get("extra_body") if isinstance(payload.get("extra_body"), dict) else None
         ),
     )
+    if kind == "azure_ai_foundry":
+        kwargs["api_style"] = payload.get("api_style") or "unified"
+    return cls(**kwargs)

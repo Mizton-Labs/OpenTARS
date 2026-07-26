@@ -343,6 +343,26 @@ describe('ProviderCard (027 step 5: Discover-then-Probe per-card surface)', () =
     expect(input.value).toBe('claude-3-5-sonnet-20241022')
   })
 
+  it('shows a Deployment mode select for azure_ai_foundry and keeps the free-text model input when set to anthropic passthrough', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({
+        name: 'p1',
+        kind: 'azure_ai_foundry',
+        base_url: 'https://my-resource.services.ai.azure.com',
+        model: 'claude-sonnet-5',
+        api_style: 'anthropic',
+        available_models: undefined,
+      }),
+    )
+    renderTab()
+    await expandP1()
+    const modeSelect = await screen.findByLabelText(/Deployment mode/i) as HTMLSelectElement
+    expect(modeSelect.value).toBe('anthropic')
+    const input = (await screen.findByLabelText(/Default model to use/i)) as HTMLInputElement
+    expect(input.tagName).toBe('INPUT')
+    expect(input.value).toBe('claude-sonnet-5')
+  })
+
   it('shows the "No models discovered" hint when available_models is empty for a non-Anthropic kind', async () => {
     vi.mocked(api.llm.getConfig).mockResolvedValue(makeConfig({ available_models: undefined }))
     renderTab()

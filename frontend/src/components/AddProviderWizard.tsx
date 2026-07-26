@@ -62,6 +62,7 @@ const KINDS: { id: LLMProviderKind; label: string }[] = [
   { id: 'anthropic', label: 'Anthropic' },
   { id: 'ollama', label: 'Ollama (local)' },
   { id: 'openai_compatible', label: 'OpenAI-compatible' },
+  { id: 'azure_ai_foundry', label: 'Azure AI Foundry' },
 ]
 
 const DEFAULT_BASE_URL: Record<LLMProviderKind, string> = {
@@ -69,6 +70,9 @@ const DEFAULT_BASE_URL: Record<LLMProviderKind, string> = {
   anthropic: 'https://api.anthropic.com',
   ollama: 'http://localhost:11434',
   openai_compatible: '',
+  // No sensible default — the resource name is operator-specific
+  // (https://<resource-name>.services.ai.azure.com), same as openai_compatible.
+  azure_ai_foundry: '',
 }
 
 /** Mirrors backend.llm.config.PROVIDER_NAME_RE exactly. */
@@ -99,6 +103,7 @@ function draftHash(p: {
   timeoutSeconds: number
   maxRetries: number
   skipTlsVerify: boolean
+  apiStyle: 'unified' | 'anthropic'
 }): string {
   return JSON.stringify([
     p.name.trim(),
@@ -109,6 +114,7 @@ function draftHash(p: {
     p.timeoutSeconds,
     p.maxRetries,
     p.skipTlsVerify,
+    p.kind === 'azure_ai_foundry' ? p.apiStyle : null,
   ])
 }
 
@@ -121,6 +127,9 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
   const [timeoutSeconds, setTimeoutSeconds] = useState(30)
   const [maxRetries, setMaxRetries] = useState(2)
   const [skipTlsVerify, setSkipTlsVerify] = useState(false)
+  // Only meaningful when kind === 'azure_ai_foundry' — see AzureAIFoundryClient's
+  // docstring (backend/llm/client.py) for what each mode means on the wire.
+  const [apiStyle, setApiStyle] = useState<'unified' | 'anthropic'>('unified')
 
   // ── Stage 2/3 picked model + verdicts ───────────────────────────────────
   const [model, setModel] = useState('')
@@ -145,6 +154,7 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
   // Reset everything when kind changes (different defaults / branches).
   useEffect(() => {
     setBaseUrl(prev => (prev === '' ? DEFAULT_BASE_URL[kind] : prev))
+    setApiStyle('unified')
     setDiscoverResult(null)
     setDiscoverError(null)
     setProbeResult(null)
@@ -206,14 +216,19 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
     [discoverResult],
   )
 
+  // True for any provider whose kind speaks the Anthropic Messages API
+  // protocol (no /models list endpoint) — native anthropic, or Azure AI
+  // Foundry configured for its anthropic passthrough deployment mode.
+  const isAnthropicProtocol = kind === 'anthropic' || (kind === 'azure_ai_foundry' && apiStyle === 'anthropic')
+
   // Empty-catalog: the server *responded successfully* (a list_models
   // step with a 2xx status_code) but published 0 models. This is
   // distinct from a transport/HTTP failure (401/5xx/network), which
-  // leaves no successful step and must surface as a red error. Anthropic
-  // is excluded (it never lists; its free-text path is handled
-  // separately by useFreeTextModel). prompts-028.
+  // leaves no successful step and must surface as a red error. Anthropic-
+  // protocol providers are excluded (they never list; their free-text
+  // path is handled separately by useFreeTextModel). prompts-028.
   const emptyCatalog = useMemo(() => {
-    if (kind === 'anthropic') return false
+    if (isAnthropicProtocol) return false
     if (!discoverResult) return false
     if (discoveredModels.length > 0) return false
     const details = discoverResult.details ?? []
@@ -224,19 +239,19 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
         d.status_code >= 200 &&
         d.status_code < 300,
     )
-  }, [kind, discoverResult, discoveredModels])
+  }, [isAnthropicProtocol, discoverResult, discoveredModels])
 
   // Use a free-text model input instead of the dropdown when there is no
-  // discoverable catalog: anthropic (no /models endpoint) OR an empty
-  // 200 catalog.
-  const useFreeTextModel = kind === 'anthropic' || emptyCatalog
+  // discoverable catalog: an anthropic-protocol provider (no /models
+  // endpoint) OR an empty 200 catalog.
+  const useFreeTextModel = isAnthropicProtocol || emptyCatalog
 
   // Stage 2 visible once the discover call returned a *usable* outcome:
   //   - a non-empty model list (any aggregate status — prompts-028
   //     decoupling: a 200 with models but backend status==='error' still
   //     yields a selectable list), OR
   //   - an empty catalog from a server that responded 2xx (free-text), OR
-  //   - anthropic (no /models endpoint; always free-text).
+  //   - an anthropic-protocol provider (no /models endpoint; always free-text).
   // A thrown discover error (network/4xx/5xx held in `discoverError`) or
   // a transport/HTTP failure (non-2xx, no models, not empty-catalog)
   // keeps stage 2 hidden.
@@ -244,10 +259,10 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
     if (discoverError) return false
     if (!discoverResult) return false
     if (!canConnect) return false
-    if (kind === 'anthropic') return true
+    if (isAnthropicProtocol) return true
     if (discoveredModels.length > 0) return true
     return emptyCatalog
-  }, [discoverError, discoverResult, canConnect, kind, discoveredModels, emptyCatalog])
+  }, [discoverError, discoverResult, canConnect, isAnthropicProtocol, discoveredModels, emptyCatalog])
 
   // Stage 4 reveal: prompts-055 — Save is enabled as soon as the
   // discover step produced a usable model picker (stage 2 visible) and
@@ -256,8 +271,8 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
   // to drive the informational "Model OK" probe pill.
   const currentHash = useMemo(() => draftHash({
     name, kind, baseUrl, apiKey, model,
-    timeoutSeconds, maxRetries, skipTlsVerify,
-  }), [name, kind, baseUrl, apiKey, model, timeoutSeconds, maxRetries, skipTlsVerify])
+    timeoutSeconds, maxRetries, skipTlsVerify, apiStyle,
+  }), [name, kind, baseUrl, apiKey, model, timeoutSeconds, maxRetries, skipTlsVerify, apiStyle])
 
   const stage4Visible = useMemo(() => {
     if (!stage2Visible) return false
@@ -276,7 +291,8 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
     timeout_seconds: timeoutSeconds,
     max_retries: maxRetries,
     skip_tls_verify: skipTlsVerify,
-  }), [name, kind, baseUrl, apiKey, model, timeoutSeconds, maxRetries, skipTlsVerify])
+    api_style: kind === 'azure_ai_foundry' ? apiStyle : undefined,
+  }), [name, kind, baseUrl, apiKey, model, timeoutSeconds, maxRetries, skipTlsVerify, apiStyle])
 
   // ── Actions ─────────────────────────────────────────────────────────────
 
@@ -484,6 +500,41 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
               </select>
             </div>
 
+            {kind === 'azure_ai_foundry' && (
+              <div className="col-span-2">
+                <label className="label">Deployment mode</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className={`btn-ghost text-sm flex-1 ${apiStyle === 'unified' ? 'bg-brand-900/30 border-brand-500 text-brand-100' : ''}`}
+                    onClick={() => { setApiStyle('unified'); invalidateStage1() }}
+                  >
+                    Unified Model Inference API
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn-ghost text-sm flex-1 ${apiStyle === 'anthropic' ? 'bg-brand-900/30 border-brand-500 text-brand-100' : ''}`}
+                    onClick={() => { setApiStyle('anthropic'); invalidateStage1() }}
+                  >
+                    Anthropic passthrough (Claude)
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1 italic">
+                  {apiStyle === 'unified' ? (
+                    <>Azure's OpenAI-compatible unified inference API — works for OpenAI
+                      and other models set up that way. <strong>If your resource returns
+                      404 on this mode</strong>, it's likely a Claude deployment exposed
+                      as a native passthrough instead — switch to "Anthropic
+                      passthrough" above.</>
+                  ) : (
+                    <>For Claude models exposed via Foundry's Anthropic-native
+                      passthrough. Sends the exact same request shape as talking to
+                      Anthropic directly, just against your Foundry resource.</>
+                  )}
+                </p>
+              </div>
+            )}
+
             <div className="col-span-2">
               <label className="label" htmlFor="add-llm-baseurl">Base URL</label>
               <input
@@ -499,6 +550,24 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
                   llama.cpp) — <code>http://host:port/api</code> (OpenWebUI).
                   For OpenWebUI, the API key is a JWT issued in
                   Settings → Account → API Keys.
+                </p>
+              )}
+              {kind === 'azure_ai_foundry' && (
+                <p className="text-xs text-gray-500 mt-1 italic">
+                  Your Foundry resource's base endpoint, e.g.{' '}
+                  <code>https://&lt;resource-name&gt;.services.ai.azure.com</code>
+                  {' '}— no trailing path (the <code>/models/chat/completions</code> or{' '}
+                  <code>/anthropic/v1/messages</code> suffix is added automatically
+                  based on the deployment mode above). The API key is the resource's
+                  key, not a per-model key.
+                </p>
+              )}
+              {kind === 'anthropic' && (
+                <p className="text-xs text-gray-500 mt-1 italic">
+                  Native Anthropic API only (<code>api.anthropic.com</code>). For
+                  Claude models exposed via <strong>Azure AI Foundry</strong>, use the
+                  <strong> Azure AI Foundry</strong> kind with "Anthropic passthrough"
+                  deployment mode instead.
                 </p>
               )}
             </div>
@@ -641,14 +710,14 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
                       value={model}
                       onChange={e => { setModel(e.target.value); invalidateProbe() }}
                       placeholder={
-                        kind === 'anthropic'
-                          ? 'claude-3-5-sonnet-20241022'
+                        isAnthropicProtocol
+                          ? 'claude-sonnet-5'
                           : 'model-id'
                       }
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      {kind === 'anthropic'
-                        ? 'Anthropic does not expose a /models endpoint — enter the model id you want to use.'
+                      {isAnthropicProtocol
+                        ? 'Anthropic-protocol providers do not expose a /models endpoint — enter the model id you want to use.'
                         : 'Server reachable, 0 models published — enter the model id you want to use.'}
                     </p>
                   </>

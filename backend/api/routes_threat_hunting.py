@@ -394,6 +394,100 @@ async def delete_evidence(pkg_id: str, item_id: str) -> None:
     await th_db.delete_evidence_item(item_id)
 
 
+# ── Evidence: content viewer (issue-local-023) ──────────────────────────────────
+
+
+def _safe_disposition_filename(label: str, fallback: str) -> str:
+    """Sanitize a user-supplied filename for a Content-Disposition header.
+
+    issue-local-023: ``item.label``/``source_ref`` is the raw, unsanitized
+    original upload filename (``file.filename`` from the browser — fully
+    attacker-controlled). The existing report-PDF download routes only
+    ``.replace(" ", "_")`` before interpolating a name into this header,
+    which does NOT strip quotes or CR/LF — not safe to copy for a value an
+    end user directly controls. Strips quotes and control characters
+    (including CR/LF, which could otherwise inject additional headers);
+    falls back to *fallback* if nothing usable remains.
+    """
+    cleaned = "".join(ch for ch in label if ch not in '"\\' and ch.isprintable())
+    cleaned = cleaned.strip()
+    return cleaned or fallback
+
+
+async def _evidence_item_or_404(pkg_id: str, item_id: str) -> dict:
+    item = _item_or_404(await th_db.get_evidence_item(item_id))
+    if item["hunt_package_id"] != pkg_id:
+        raise HTTPException(status_code=404, detail="Evidence item not found")
+    return item
+
+
+@router.get("/packages/{pkg_id}/evidence/{item_id}/pdf")
+async def get_evidence_pdf(pkg_id: str, item_id: str) -> Response:
+    """Serve an evidence file's raw bytes for in-browser PDF preview.
+
+    Security (issue-local-023): the stored ``mime_type`` is client-supplied
+    at upload time and never validated (see ``add_evidence_file``) — it must
+    NEVER be trusted as the response's Content-Type, or a mislabeled file
+    could be rendered inline as something other than a PDF (a stored-XSS
+    vector on our own origin). Instead: (1) ``media_type`` is ALWAYS the
+    hardcoded string ``application/pdf``, never ``item["mime_type"]``, and
+    (2) the blob's own magic bytes are verified server-side (``%PDF-``)
+    before it is served at all — 415 otherwise, even if the stored
+    mime_type claims to be a PDF. ``X-Content-Type-Options: nosniff``
+    additionally blocks the browser from content-sniffing past this.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    item = await _evidence_item_or_404(pkg_id, item_id)
+    blob = await th_db.get_evidence_blob(item_id)
+    if blob is None:
+        raise HTTPException(status_code=404, detail="No file content stored for this item")
+    if not blob.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="Stored content is not a PDF file")
+
+    safe_name = _safe_disposition_filename(item.get("label", ""), "evidence")
+    if not safe_name.lower().endswith(".pdf"):
+        safe_name = f"{safe_name}.pdf"
+
+    return Response(
+        content=blob,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/packages/{pkg_id}/evidence/{item_id}/download")
+async def download_evidence_file(pkg_id: str, item_id: str) -> Response:
+    """Download an evidence item's original file, any type (issue-local-023).
+
+    Always served as ``application/octet-stream`` with
+    ``Content-Disposition: attachment`` regardless of the stored (client-
+    supplied, unvalidated) ``mime_type`` — this forces the browser to save
+    the file rather than attempt to render/sniff it, so a mislabeled or
+    hostile file type can't execute in the browser. See
+    ``_safe_disposition_filename`` for why the filename is sanitized rather
+    than reusing the existing report-download routes' weaker pattern.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    item = await _evidence_item_or_404(pkg_id, item_id)
+    blob = await th_db.get_evidence_blob(item_id)
+    if blob is None:
+        raise HTTPException(status_code=404, detail="No file content stored for this item")
+
+    safe_name = _safe_disposition_filename(item.get("label", ""), "evidence.bin")
+
+    return Response(
+        content=blob,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 # ── IOCs ──────────────────────────────────────────────────────────────────────
 
 

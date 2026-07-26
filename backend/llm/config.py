@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _LLM_CONFIG_PATH = _PROJECT_ROOT / "config" / "llm-providers.yaml"
 
-_VALID_KINDS = {"openai", "anthropic", "ollama", "openai_compatible"}
+_VALID_KINDS = {"openai", "anthropic", "ollama", "openai_compatible", "azure_ai_foundry"}
 _REDACTED = "***"
 
 # prompts-022: provider names are operator-facing identifiers used in
@@ -175,6 +175,17 @@ def validate_config(cfg: dict[str, Any]) -> None:
                 raise LLMConfigError(
                     f"provider {name!r}: 'tested_models' must be a list of non-empty strings"
                 )
+
+        # issue-local-022 follow-up: azure_ai_foundry has two, mutually
+        # exclusive deployment modes (see AzureAIFoundryClient's docstring)
+        # selected by this explicit field rather than auto-detected, since
+        # a fragile try-both-and-see-what-404s approach would double
+        # request volume and latency on every call.
+        api_style = p.get("api_style")
+        if api_style is not None and api_style not in ("unified", "anthropic"):
+            raise LLMConfigError(
+                f"provider {name!r}: 'api_style' must be 'unified' or 'anthropic', got {api_style!r}"
+            )
 
         # prompts-035 (#2b): optional config-driven request-body additions
         # merged into the OpenAI-compatible /chat/completions payload (e.g.

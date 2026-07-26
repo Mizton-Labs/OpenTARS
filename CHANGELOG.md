@@ -9,6 +9,97 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Anthropic `temperature` rejection, Azure AI Foundry provider consistency
+
+Newer Claude models (confirmed: `claude-sonnet-5` via Azure AI Foundry's Anthropic passthrough)
+reject the `temperature` request field outright with HTTP 400 (`` `temperature` is deprecated for
+this model``), which broke every Test/complete call against such a provider. Both `AnthropicClient`
+and `AzureAIFoundryClient` now retry once without `temperature` specifically when the provider
+reports that exact deprecation — any other 400 still fails immediately, and models that still expect
+`temperature` for deterministic output are unaffected.
+
+While fixing this, folded in the Azure AI Foundry Anthropic-passthrough mode documented in
+issue-local-023 as a proper `api_style: anthropic` option on the `azure_ai_foundry` provider kind
+itself, rather than the previous guidance of configuring an `anthropic` kind provider with an Azure
+base_url — same protocol, but a different kind was confusing for operators to reason about. The
+`anthropic` kind is now pinned to the native `api.anthropic.com` API only; both the Add Provider
+wizard and the persisted-provider edit form expose the deployment-mode choice directly under
+`azure_ai_foundry`.
+
+### Added — Evidence content viewer (issue-local-023)
+
+The Evidence tab is now a two-pane view — a sidebar list of evidence items on the left, and a
+content card on the right rendering the selected one: PDFs preview inline via the browser's native
+viewer, plaintext/extracted content renders in full, and a "Download original" link is always
+available. Binary files with no extracted text show a clear "not processed" placeholder instead of
+silently having no content at all, which was the previous behavior for every evidence type.
+
+New backend routes serve this safely: the PDF-preview route always responds with a hardcoded
+`application/pdf` content type and independently verifies the file's magic bytes server-side before
+serving it (regardless of what the uploader's browser claimed the file was), and the download route
+always forces `application/octet-stream` + an attachment disposition — neither ever trusts the
+stored, client-supplied `mime_type` for the response, closing a stored-content-type risk that a
+naive "just serve the file" implementation would have had.
+
+### Fixed — preliminary Threat Intel timing, Azure AI Foundry deployment modes (issue-local-023)
+
+The preliminary-phase Threat Intel analysis was gated on the pipeline reaching `"completed"`, which
+only happens on the *resumed* run once a human approves it — i.e. it ran after approval, not before,
+contradicting its own "preliminary" naming and the pipeline diagrams. Fixed to run at the point the
+pipeline first reaches the approval gate, so analysts reviewing a draft for approval already have
+threat intel context. The Hypothesis/Lead/IOC relationship chart also moved below the Analysis tab's
+main summary, collapsed by default behind an emphasized toggle.
+
+Confirmed against a real Azure AI Foundry resource that not every deployment uses the unified Model
+Inference API the `azure_ai_foundry` provider kind implements — some models (Anthropic Claude,
+confirmed 2026-07-26) are instead exposed as a native passthrough answering the model vendor's own
+API shape, for which the existing `anthropic` kind already works unmodified. Documented both modes
+in the provider wizard and config example so this doesn't need rediscovering.
+
+### Added — Azure AI Foundry LLM provider, Analysis relationship chart, run-config consistency (issue-local-022)
+
+**New `azure_ai_foundry` LLM provider kind** covers OpenAI, Anthropic Claude, and other model
+families deployed through Azure AI Foundry — they all answer Foundry's unified Model Inference API.
+Previously there was no way to connect a Foundry-hosted endpoint at all: the closest existing kinds
+(`anthropic`, `openai_compatible`) each sent the wrong path/auth-header/query-parameter shape,
+which is why Foundry connections consistently failed.
+
+**A new relationship chart on the Analysis tab** shows Hypotheses, Hunting Leads, and IOCs as a
+three-tier graph, so an analyst can see at a glance whether a hypothesis has one or multiple hunting
+leads, and which IOCs aren't cited by any hypothesis ("coverage"). It sits above the existing flat
+detail lists as a navigational overview, not a replacement. A "Deep view" toggle overlays this run's
+Threat Intel analysis (threat actors, malware families, campaigns, MITRE techniques) as an aggregate
+cluster, plus precise per-IOC edges for any IOC also seen in another hunt package.
+
+**Threat Intel workflow visibility and consistency.** Both Threat Intel Analyst phases (preliminary
+and post-execution) now log under distinct step ids so both appear in the workflow chart/list
+instead of the final phase silently overwriting the preliminary one. New Run and Re-run now share
+one `RunConfigForm` (previously two independently-drifting copies of the same form) with Threat
+Intel included by default on both. A new `threat_intel_status` field gates Re-run and report
+generation while an analysis is in flight, so they can no longer race it. Track Workflow now
+defaults on.
+
+**Run/tab UI polish.** The Execution/Threat-Intel/Report tabs now gate on the *active run's* own
+status rather than the package's (a stale `pkg.status` from a prior run no longer leaves them wrongly
+enabled while a new run is mid-pipeline). Tabs render as connected arrow/chevron segments. The
+Comparison Assessment trigger is a distinct purple button-card. The enriched Sanitized-IOC table
+(All/Sanitized/Removed filter, verdict toggles) now lives in the IOCs tab, replacing the old flat
+list, with better Keep/Remove contrast and deduplicated removal-reason text. The Threat Intel
+Tracking dashboard's Exclude/Delete actions are now gated on the researcher/admin role, matching
+every other mutating action in that feature.
+
+### Fixed — PDF generation, IOC step ordering (issue-local-022)
+
+PDF report downloads crashed inconsistently on runs whose LLM output had explicit-`null`
+hypothesis/lead/TTP fields (rather than merely absent ones), plus a Findings-section double-escape
+bug that corrupted `&`/`<`/`>` in generated text — both fixed at the source (`_esc()` made
+defensive; the double-escape removed).
+
+Both the header progress rail and the tab bar showed the IOC phase before Analysis, ahead of when
+IOCs are actually reviewed. Reordered to Evidence → Analysis → IOC → Execution.
+
+---
+
 ### Added — Threat Intel Tracking dashboard, two-phase Threat Intel Analyst, run picker, agent consistency (issue-local-021)
 
 **A new "Threat Intel Tracking" sidebar subsection aggregates data across every hunt package** —

@@ -2,7 +2,7 @@
  * PipelineStepper — issue-local-015
  *
  * Horizontal, arrow-connected progress blocks for the hunt package's
- * coarse, user-facing phases — Evidence → IOC → Analysis → Execution →
+ * coarse, user-facing phases — Evidence → Analysis → IOC → Execution →
  * Report — matching HuntDetail's own tabs. This intentionally does NOT
  * show the ~16 granular LangGraph node names (see WorkflowVisualizer.tsx
  * for that view, inside the Analysis tab) — an earlier version of this
@@ -43,17 +43,6 @@ function derivePhases(
       state: hasEvidence ? 'done' : 'active',
     },
     {
-      id: 'ioc',
-      label: 'IOC',
-      state: completed.includes('intake_classifier')
-        ? 'done'
-        : currentStep === 'intake_classifier'
-          ? 'active'
-          : failed && !completed.length
-            ? 'error'
-            : 'pending',
-    },
-    {
       id: 'analysis',
       label: 'Analysis',
       state: analysisDone
@@ -62,6 +51,17 @@ function derivePhases(
           ? 'error'
           : status === 'running' && ANALYSIS_STEPS.has(currentStep)
             ? 'active'
+            : 'pending',
+    },
+    {
+      id: 'ioc',
+      label: 'IOC',
+      state: completed.includes('intake_classifier')
+        ? 'done'
+        : currentStep === 'intake_classifier'
+          ? 'active'
+          : failed && !completed.length
+            ? 'error'
             : 'pending',
     },
     {

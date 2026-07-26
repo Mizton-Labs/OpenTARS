@@ -18,10 +18,33 @@
 #
 # Supported `kind` values:
 #   openai             — OpenAI public API
-#   anthropic          — Anthropic public API
+#   anthropic          — Anthropic public API ONLY (api.anthropic.com).
+#                        For Claude models exposed via Azure AI Foundry, use
+#                        `azure_ai_foundry` with api_style: anthropic instead
+#                        (see below) — this kind is intentionally pinned to
+#                        the native API so "which kind talks to which
+#                        endpoint" stays unambiguous.
 #   ollama             — local Ollama server (no API key required)
 #   openai_compatible  — any server speaking the OpenAI chat-completions
 #                        wire shape (Together, Groq, vLLM, LM Studio, …)
+#   azure_ai_foundry   — Azure AI Foundry, in EITHER of its two deployment
+#                        modes, selected by the `api_style` field (also
+#                        only meaningful for this kind):
+#                          api_style: unified   (default) — Azure's
+#                            OpenAI-compatible unified Model Inference API
+#                            (path /models/chat/completions, header api-key,
+#                            required api-version query param).
+#                          api_style: anthropic — Anthropic-native
+#                            passthrough for Claude models (confirmed
+#                            2026-07-26 against a real resource that 404'd
+#                            on the unified API's /models route). Wire shape
+#                            is byte-identical to talking to Anthropic
+#                            directly, just at {base_url}/anthropic/v1/messages
+#                            instead of api.anthropic.com — base_url stays the
+#                            bare resource endpoint, no /anthropic suffix
+#                            needed, the client appends it.
+#                        Getting the mode wrong surfaces as an immediate 404;
+#                        switch api_style and retry rather than switching kind.
 
 enabled: false
 default_provider: null
@@ -75,3 +98,25 @@ providers: []
 #     base_url: http://openwebui:3000/api
 #     model: llama3.1           # whatever your OpenWebUI exposes
 #     api_key: ""               # JWT from OpenWebUI Settings → Account → API Keys
+#
+#   # Azure AI Foundry, UNIFIED Model Inference API mode (default api_style)
+#   # — base_url is the resource's base endpoint, no trailing path (the
+#   # client appends /models/chat/completions itself). api_key is the
+#   # resource key from Foundry's "Keys and Endpoint" pane.
+#   - name: foundry-openai
+#     kind: azure_ai_foundry
+#     base_url: https://my-resource.services.ai.azure.com
+#     model: gpt-4o
+#     api_key: ""
+#     # api_style: unified   # default; can be omitted
+#
+#   # Azure AI Foundry, Anthropic NATIVE PASSTHROUGH mode (confirmed
+#   # 2026-07-26 against a real Foundry resource that 404'd on the unified
+#   # API's /models route) — same base_url as the unified example above
+#   # (bare resource endpoint, no /anthropic suffix — the client adds it).
+#   - name: foundry-claude
+#     kind: azure_ai_foundry
+#     api_style: anthropic
+#     base_url: https://my-resource.services.ai.azure.com
+#     model: claude-sonnet-5
+#     api_key: ""
