@@ -1,6 +1,6 @@
-# Mizton-ThreatBox — local container.
+# OpenTARS — local container.
 #
-# Uses the locally-built image `mizton-threatbox/local` (build it first with
+# Uses the locally-built image `opentars/local` (build it first with
 # docker/build/build.sh). The image is a minimal system that ships the cloned
 # app; the app's own startup script installs dependencies and builds the
 # frontend on the FIRST start, then runs uvicorn in the foreground.
@@ -10,9 +10,9 @@
 #   docker compose down
 #
 services:
-  mizton-threatbox:
-    image: mizton-threatbox/local
-    container_name: mizton-threatbox
+  opentars:
+    image: opentars/local
+    container_name: opentars
     restart: unless-stopped
     # Reap child processes (npm/node) so PID 1 stays clean.
     init: true
@@ -21,13 +21,13 @@ services:
     # `--bind 0.0.0.0:8000` listens on all interfaces. On the first start the
     # script installs dependencies and builds the frontend (needs internet), then
     # bootstraps an "admin" account whose generated password is printed to
-    # `docker compose logs mizton-threatbox` and written to
+    # `docker compose logs opentars` and written to
     # data/first-run-admin-credentials.txt (mode 0600). See README.
-    command: ["./mizton-threatbox", "start", "--dev", "--enable-auth", "--bind", "0.0.0.0:8000"]
+    command: ["./opentars", "start", "--dev", "--enable-auth", "--bind", "0.0.0.0:8000"]
     ports:
       - "8000:8000"
     volumes:
       # SQLite databases + first-run admin credential file -> host directory.
-      - ./threatbox-data:/home/threatbox/data
+      - ./opentars-data:/home/threatbox/data
       # Application logs (app.log / audit.log) -> host directory.
-      - ./threatbox-logs:/home/threatbox/logs
+      - ./opentars-logs:/home/threatbox/logs

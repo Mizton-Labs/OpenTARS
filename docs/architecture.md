@@ -18,7 +18,7 @@ structured reports. All data is stored locally in SQLite; no external database i
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     mizton-threatbox                        │
+│                          opentars                           │
 │                  (bash runner — start/stop)                 │
 └────────────┬──────────────────────┬─────────────────────────┘
              │                      │
@@ -198,7 +198,7 @@ data/threat_hunting.db  (hunt_reports)
 | `config/feed-fields.yaml` | Core fields (31) + custom fields; enabled/disabled per field |
 | `config/sources.yaml` | Listener status (`enabled`), API pull sources, RSS pull sources |
 | `config/default-sources.yaml` | Curated catalogue of 30 no-auth threat-intel / vulnerability feeds (`threat_intel_sources`); read by `load_default_sources()`. Source of truth for the Remote Feed tab catalogue card (ADR-0014) |
-| `config/application.yaml` | App-wide settings: `app_base_prefix`, `pagination_max` (prompts-043 — viewer row cap; default 1000, bounds 50–100000; read live, no restart), and the auth layer (prompts-045): `auth_enabled` (default false; env `MIZTON_THREATBOX_ENABLE_AUTH` overrides; restart required) and `logo_path` (branding logo under `data/branding/`, managed via the Application tab) |
+| `config/application.yaml` | App-wide settings: `app_base_prefix`, `pagination_max` (prompts-043 — viewer row cap; default 1000, bounds 50–100000; read live, no restart), and the auth layer (prompts-045): `auth_enabled` (default false; env `OPENTARS_ENABLE_AUTH` overrides; restart required) and `logo_path` (branding logo under `data/branding/`, managed via the Application tab) |
 
 ---
 
@@ -229,7 +229,7 @@ data/threat_hunting.db  (hunt_reports)
 
 ## Key Decisions
 
-- See `docs/plans/mizton-threatbox-v0.1.md` for the full confirmed decision table.
+- See `docs/plans/opentars-v0.1.md` for the full confirmed decision table.
 - ADRs in `docs/decisions/` as significant decisions arise.
 
 ---
@@ -773,9 +773,9 @@ readability in prompts-044. See
 On-by-default identity layer. With `auth_enabled` true (the default) the app
 requires login and enforces roles. To disable for local / trusted-network use,
 set `auth_enabled: false` in `config/application.yaml` or pass `--disable-auth`
-per-run. The toggle resolves `MIZTON_THREATBOX_ENABLE_AUTH` env → `auth_enabled`
-yaml → true, and the CLI flag `./mizton-threatbox start --disable-auth` sets
-`MIZTON_THREATBOX_ENABLE_AUTH=0` for one run. See
+per-run. The toggle resolves `OPENTARS_ENABLE_AUTH` env → `auth_enabled`
+yaml → true, and the CLI flag `./opentars start --disable-auth` sets
+`OPENTARS_ENABLE_AUTH=0` for one run. See
 `docs/decisions/0017-authentication-module-roles-sessions-branding-logo.md`.
 
 ### Backend
@@ -823,7 +823,7 @@ yaml → true, and the CLI flag `./mizton-threatbox start --disable-auth` sets
   admin passwords — first-run `bootstrap_admin_if_empty` and
   `reset_admin_password`; `set_password` clears it by default, so ordinary
   self-change and admin resets of other users do not force a change.
-  `./mizton-threatbox --reset-admin-password` (`cmd_reset_admin_password`,
+  `./opentars --reset-admin-password` (`cmd_reset_admin_password`,
   no uvicorn) regenerates the `admin` credential offline — creating the row if
   missing, else resetting and evicting its sessions — reuses the 0600 credentials
   file, and prints the new password + file path to **stdout** (operator-initiated;

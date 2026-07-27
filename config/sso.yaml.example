@@ -1,16 +1,16 @@
-# SSO / OIDC configuration for Mizton-ThreatBox (issue-local-010)
+# SSO / OIDC configuration for OpenTARS (issue-local-010)
 #
 # Copy this file to config/sso.yaml and fill in your IdP details.
 # config/sso.yaml is gitignored — never commit it (it contains your client secret).
 #
 # Alternatively, supply values via environment variables (take precedence over yaml):
-#   MIZTON_THREATBOX_SSO_ENABLED        — "true" / "false"
-#   MIZTON_THREATBOX_SSO_CLIENT_ID      — IdP application/client ID
-#   MIZTON_THREATBOX_SSO_CLIENT_SECRET  — IdP client secret (SPN secret)
-#   MIZTON_THREATBOX_SSO_ISSUER         — full issuer URL (or use TENANT_ID below)
-#   MIZTON_THREATBOX_SSO_TENANT_ID      — replaces <tenant_id> in the issuer URL
-#   MIZTON_THREATBOX_SSO_BUTTON_LABEL   — button text on the login page
-#   MIZTON_THREATBOX_SSO_DEFAULT_ROLE   — default app role for unmapped users
+#   OPENTARS_SSO_ENABLED        — "true" / "false"
+#   OPENTARS_SSO_CLIENT_ID      — IdP application/client ID
+#   OPENTARS_SSO_CLIENT_SECRET  — IdP client secret (SPN secret)
+#   OPENTARS_SSO_ISSUER         — full issuer URL (or use TENANT_ID below)
+#   OPENTARS_SSO_TENANT_ID      — replaces <tenant_id> in the issuer URL
+#   OPENTARS_SSO_BUTTON_LABEL   — button text on the login page
+#   OPENTARS_SSO_DEFAULT_ROLE   — default app role for unmapped users
 #
 # Callback URL (register this as a Redirect URI / Web platform in your IdP):
 #   https://<your-host>/api/auth/oidc/callback
@@ -44,7 +44,7 @@ button_label: "Sign in with Microsoft"
 username_claim: preferred_username
 role_claim: roles
 
-# Map IdP claim values → Mizton-ThreatBox roles.
+# Map IdP claim values → OpenTARS roles.
 # For Entra App Roles the key is the role's "Value" (not display name).
 # For group claims the key is the group Object ID GUID.
 role_mapping:
@@ -55,7 +55,7 @@ role_mapping:
 # Role given to SSO users whose claims don't match any entry above.
 default_role: threat-viewer
 
-# Automatically create a Mizton-ThreatBox account on first SSO login.
+# Automatically create a OpenTARS account on first SSO login.
 # Set to false if you prefer to pre-create accounts manually.
 auto_provision: true
 

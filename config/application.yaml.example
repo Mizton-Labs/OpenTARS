@@ -1,4 +1,4 @@
-# Mizton-ThreatBox — Application Configuration
+# OpenTARS — Application Configuration
 #
 # Application-wide settings unrelated to ingestion sources or fields.
 #
@@ -21,7 +21,7 @@
 #                    app_base_prefix: "/intel/v1"  # served at https://host/intel/v1/
 #
 #                  Changing this value requires a backend restart
-#                  (./mizton-threatbox restart) to take effect.
+#                  (./opentars restart) to take effect.
 #
 #                  Contract (prompts-019): when EMPTY, the application emits
 #                  only document-relative URLs (assets, API fetches, and
@@ -29,9 +29,9 @@
 #                  a *forcing* override for environments where document-
 #                  relative URLs cannot be used.
 #
-#                  The CLI flag `./mizton-threatbox start --base-prefix`
+#                  The CLI flag `./opentars start --base-prefix`
 #                  overrides this value for one run via the
-#                  MIZTON_THREATBOX_BASE_PREFIX env var (see prompts-018).
+#                  OPENTARS_BASE_PREFIX env var (see prompts-018).
 #
 #                  Auto-detect (prompts-020): when EMPTY, the frontend
 #                  ALSO infers a prefix at runtime from window.location
@@ -62,7 +62,7 @@
 #                  (prompts-045). Default true — authentication is ON out of
 #                  the box. To run without authentication (local / trusted-
 #                  network, single-user use) pass `--disable-auth` or set
-#                  MIZTON_THREATBOX_ENABLE_AUTH=0.
+#                  OPENTARS_ENABLE_AUTH=0.
 #
 #                  When true:
 #                    - the SPA shows a login screen and gates all routes,
@@ -75,10 +75,10 @@
 #                    - the app is fully open (no login screen, every API
 #                      route public).
 #
-#                  Precedence: the MIZTON_THREATBOX_ENABLE_AUTH environment
+#                  Precedence: the OPENTARS_ENABLE_AUTH environment
 #                  variable overrides this yaml value (truthy = on, falsy = off).
-#                  The CLI flag `./mizton-threatbox start --disable-auth` sets
-#                  MIZTON_THREATBOX_ENABLE_AUTH=0 for one run. Changing the yaml
+#                  The CLI flag `./opentars start --disable-auth` sets
+#                  OPENTARS_ENABLE_AUTH=0 for one run. Changing the yaml
 #                  value requires a backend restart to take effect.
 #
 #                  On first start with auth enabled and no users present, a
@@ -93,7 +93,7 @@
 #                  is HTTPS or X-Forwarded-Proto=https. Behind a TLS-terminating
 #                  proxy that header is the only (spoofable) signal, so set this
 #                  to true in production to always mark the cookie Secure, or
-#                  false to never. The MIZTON_THREATBOX_COOKIE_SECURE env var
+#                  false to never. The OPENTARS_COOKIE_SECURE env var
 #                  (true/false/auto) overrides this yaml value.
 #
 # logo_path:       project-relative path of the operator-uploaded branding
@@ -126,8 +126,8 @@
 
 # app_title:       operator-configurable display name shown in the sidebar header
 #                  and browser tab title. Leave empty ("") to fall back to the
-#                  default "Mizton-ThreatBox". Maximum 80 characters. No newlines.
-#                  The About page always shows the static "Mizton-ThreatBox"
+#                  default "OpenTARS". Maximum 80 characters. No newlines.
+#                  The About page always shows the static "OpenTARS"
 #                  product name regardless of this value — it is branding-only.
 # theme:           the default UI theme served to users who have not chosen a
 #                  personal override in their Account page (issue-local-016).

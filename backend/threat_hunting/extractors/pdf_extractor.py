@@ -7,7 +7,7 @@ Parser: ``docling`` — high-quality Markdown output via the Docling ML pipeline
   Preserves document structure: headings, tables, reading order, code blocks,
   and equations.  Requires ``docling>=2.104.0`` (pulled automatically via
   requirements.txt; PyTorch + IBM DocLayNet models, ~2-3 GB first install).
-  ML models are prefetched at startup by the ``mizton-threatbox`` launcher
+  ML models are prefetched at startup by the ``opentars`` launcher
   (idempotent; models cached under ``~/.cache/docling/``).
 
   Docling is chosen over marker-pdf because:
@@ -111,7 +111,7 @@ def extract_pdf_docling(data: bytes) -> tuple[str, str, list[str]]:
 
     Notes:
         - Docling uses the DocLayNet layout model + TableFormer table-structure
-          model.  Models are prefetched at startup by ``mizton-threatbox`` and
+          model.  Models are prefetched at startup by ``opentars`` and
           cached under ``~/.cache/docling/``.
         - Output is structured Markdown: headings, tables, lists, code blocks,
           and reading order are preserved by the ML pipeline.

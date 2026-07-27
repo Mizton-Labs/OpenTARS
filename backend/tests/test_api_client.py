@@ -608,14 +608,12 @@ def test_normalize_url_strips_surrounding_whitespace():
 
 def test_normalize_url_keeps_path_prefix_alias():
     # A reverse-proxy alias / path prefix must be preserved verbatim.
-    assert client.normalize_url("https://host/mizton-threatbox") == (
-        "https://host/mizton-threatbox"
-    )
+    assert client.normalize_url("https://host/opentars") == ("https://host/opentars")
 
 
 def test_normalize_url_rejects_embedded_whitespace_and_inline_comment():
     # The reported foot-gun: an inline comment left in the .env value.
-    bad = "https://host/mizton-threatbox/   # reverse-proxy alias"
+    bad = "https://host/opentars/   # reverse-proxy alias"
     with pytest.raises(ValueError) as exc:
         client.normalize_url(bad)
     assert "inline comment" in str(exc.value)

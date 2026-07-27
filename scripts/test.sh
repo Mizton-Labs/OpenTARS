@@ -18,7 +18,7 @@ elif [ -x "${VENV}/bin/pytest" ]; then
     PYTHONPATH="${PROJECT_ROOT}" "${VENV}/bin/pytest" backend/tests -v --tb=short || FAILED=1
 else
     echo "WARNING: no Python environment found — skipping backend tests."
-    echo "         Run: ./mizton-threatbox start to set up the environment."
+    echo "         Run: ./opentars start to set up the environment."
 fi
 
 echo ""

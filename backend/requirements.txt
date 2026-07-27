@@ -23,7 +23,7 @@ trafilatura>=1.12.0      # URL article/content extraction
 # Threat Hunting — Docling PDF parser (issue-007 Part 2C)
 # Docling converts PDFs to high-quality Markdown using ML layout + table models.
 # WARNING: docling[standard] pulls PyTorch (~2-3 GB) on first install.
-# ML models are prefetched at startup (see mizton-threatbox startup script) so
+# ML models are prefetched at startup (see opentars startup script) so
 # the first PDF parse does not stall. Models are cached under ~/.cache/docling/.
 # pillow<13.0.0,>=10.0.0 (docling-core requirement) is COMPATIBLE with our
 # pillow>=12.2.0 security pin — no CVE regression. This is why Docling was

@@ -168,7 +168,7 @@ def auth_env_sso_user(tmp_path, monkeypatch):
     from backend.auth import service
 
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():
@@ -299,7 +299,7 @@ def auth_env_with_sso_account(tmp_path, monkeypatch):
     from backend.auth import service
 
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():

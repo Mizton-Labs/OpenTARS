@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Mizton-ThreatBox — local container image (mizton-threatbox/local)
+# OpenTARS — local container image (opentars/local)
 #
 # Design (deliberately minimal and repo-independent):
 #   * A MINIMAL SYSTEM with only the toolchain the app's own startup script
@@ -9,19 +9,19 @@
 #   * The application is fetched with `git clone` from GitHub at BUILD time and
 #     SHIPPED as-is under the user's home (/home/threatbox).
 #   * NOTHING is installed or built manually here — no `pip install`, no
-#     `npm ci/build`. The app's startup script (./mizton-threatbox) performs ALL
+#     `npm ci/build`. The app's startup script (./opentars) performs ALL
 #     dependency installation and the frontend build at runtime (first start).
 #   * The image never copies or references the repository's app config; the repo
 #     is used only to download the app, which is then run via its own script.
 #
 # Build (standalone — no app build context is consumed):
-#   docker build -f docker/build/Dockerfile -t mizton-threatbox/local docker/build
+#   docker build -f docker/build/Dockerfile -t opentars/local docker/build
 #   # or use the helper:  docker/build/build.sh
 #
 # Pin a branch/tag for a reproducible source snapshot:
-#   docker build --build-arg MTB_REF=v1.2.3 -f docker/build/Dockerfile -t mizton-threatbox/local docker/build
+#   docker build --build-arg MTB_REF=v1.2.3 -f docker/build/Dockerfile -t opentars/local docker/build
 
-ARG MTB_REPO=https://github.com/Mizton-Labs/Mizton-ThreatBox.git
+ARG MTB_REPO=https://github.com/Mizton-Labs/OpenTARS.git
 ARG MTB_REF=main
 
 # Node base provides Node.js 20 + npm (needed by the startup script's frontend
@@ -77,12 +77,12 @@ WORKDIR ${APP_HOME}
 # OCI image labels (standard annotations for container registries and tooling).
 # Version label uses the MTB_REF build arg as a proxy; override with
 # --build-arg MTB_REF=<tag> to produce a versioned label at release time.
-LABEL org.opencontainers.image.title="Mizton-ThreatBox" \
-      org.opencontainers.image.description="Lightweight, standalone Threat Intelligence feed aggregator with an LLM-powered normalization engine." \
+LABEL org.opencontainers.image.title="OpenTARS" \
+      org.opencontainers.image.description="Standalone Threat Intelligence and Agentic Threat Hunting platform with an LLM-powered normalization engine and a LangGraph agent pipeline." \
       org.opencontainers.image.version="${MTB_REF}" \
-      org.opencontainers.image.vendor="HoneyMex Lab" \
-      org.opencontainers.image.url="https://github.com/Mizton-Labs/Mizton-ThreatBox" \
-      org.opencontainers.image.source="https://github.com/Mizton-Labs/Mizton-ThreatBox.git" \
+      org.opencontainers.image.vendor="Mizton Labs" \
+      org.opencontainers.image.url="https://github.com/Mizton-Labs/OpenTARS" \
+      org.opencontainers.image.source="https://github.com/Mizton-Labs/OpenTARS.git" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # Entrypoint fixes ownership of the bind-mounted data/logs dirs as root, then
@@ -104,4 +104,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=240s --retries=5 \
 # (first run bootstraps an "admin" account, printing the password to this log and
 # writing data/first-run-admin-credentials.txt, mode 0600).
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["./mizton-threatbox", "start", "--dev", "--enable-auth", "--bind", "0.0.0.0:8000"]
+CMD ["./opentars", "start", "--dev", "--enable-auth", "--bind", "0.0.0.0:8000"]

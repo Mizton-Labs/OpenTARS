@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mizton-ThreatBox — container entrypoint.
+# OpenTARS — container entrypoint.
 #
 # The app runs as the unprivileged "threatbox" user (uid/gid 10001), but the
 # Compose file bind-mounts host directories (./threatbox-data, ./threatbox-logs)

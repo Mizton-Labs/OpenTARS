@@ -13,7 +13,7 @@ elif [ -x "${VENV}/bin/python" ]; then
     RUN_PYTHON="${VENV}/bin/python"
 else
     echo "WARNING: no Python environment found — skipping backend checks."
-    echo "         Run: ./mizton-threatbox start (or stop/start) to set it up."
+    echo "         Run: ./opentars start (or stop/start) to set it up."
     RUN_PYTHON=""
 fi
 

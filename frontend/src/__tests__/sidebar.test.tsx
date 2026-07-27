@@ -19,7 +19,7 @@ vi.mock('../api/client', async () => {
     api: {
       ...actual.api,
       getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
-      getAppTitle: vi.fn().mockResolvedValue({ app_title: 'Mizton-ThreatBox' }),
+      getAppTitle: vi.fn().mockResolvedValue({ app_title: 'OpenTARS' }),
     },
   }
 })

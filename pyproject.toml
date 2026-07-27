@@ -2,7 +2,7 @@
 #
 # This file is the single authoritative source for project identity and
 # Python packaging metadata. The application is NOT published to PyPI; it
-# is run directly via the `./mizton-threatbox` launcher. This descriptor
+# is run directly via the `./opentars` launcher. This descriptor
 # exists to provide a canonical project manifest and to support tooling
 # (uv, ruff, pytest, type-checkers) that reads pyproject.toml.
 #
@@ -17,7 +17,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mizton-threatbox"
+name = "opentars"
 version = "0.1.0"
 description = "Standalone Threat Intel and Threat Hunting Operations Framework with LLM-powered normalization, LangGraph agent pipeline, Splunk execution, and structured reporting."
 readme = "README.md"

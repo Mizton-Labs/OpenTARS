@@ -11,9 +11,9 @@ their fixture wins.
 issue-local-001: authentication is now ON by default in ``config/application.yaml``
 (``auth_enabled: true``). Route-level integration tests that do not explicitly
 test the auth layer must run in open mode so they don't receive unexpected 401s.
-This autouse fixture sets ``MIZTON_THREATBOX_ENABLE_AUTH=0`` for every test.
+This autouse fixture sets ``OPENTARS_ENABLE_AUTH=0`` for every test.
 Tests in ``test_routes_auth.py`` and other auth-specific files override this with
-``monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")`` in their own
+``monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")`` in their own
 fixtures — that runs within the same monkeypatch scope and takes precedence.
 Tests in ``test_loader.py`` use their own ``_clear_auth_env`` autouse to
 unset the variable entirely so they can read the yaml value directly.
@@ -37,12 +37,12 @@ def _default_auth_off(monkeypatch):
     """Keep tests isolated from the yaml auth_enabled=true default.
 
     Authentication is on by default in config/application.yaml. Route tests
-    that do not exercise the auth layer set MIZTON_THREATBOX_ENABLE_AUTH=0 via
+    that do not exercise the auth layer set OPENTARS_ENABLE_AUTH=0 via
     this fixture so they receive 200s instead of 401s.  Auth-specific tests
-    override with their own monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH",
+    override with their own monkeypatch.setenv("OPENTARS_ENABLE_AUTH",
     "1") call, which takes precedence within the same monkeypatch scope.
     test_loader.py's _clear_auth_env autouse deletes the variable entirely so
     loader tests read the yaml directly.
     """
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "0")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "0")
     yield

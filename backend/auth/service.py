@@ -197,7 +197,7 @@ async def reset_admin_password(username: str = "admin") -> str:
     """Reset (or provision) the admin account's password to a random default.
 
     Operator-facing maintenance entry point behind
-    ``./mizton-threatbox --reset-admin-password``. Ensures the users schema
+    ``./opentars --reset-admin-password``. Ensures the users schema
     exists, then:
 
     * if ``username`` does not exist, creates it as an admin (mirrors first-run

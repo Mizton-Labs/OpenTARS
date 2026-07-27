@@ -492,12 +492,12 @@ else:
             status_code=503,
             content={
                 "error": "Frontend not built.",
-                "hint": "Run: ./mizton-threatbox start",
+                "hint": "Run: ./opentars start",
             },
         )
 
     logger.warning(
         "Frontend dist not found at %s. "
-        "Serving fallback error on GET /. Run './mizton-threatbox start' to build.",
+        "Serving fallback error on GET /. Run './opentars start' to build.",
         _FRONTEND_DIST,
     )

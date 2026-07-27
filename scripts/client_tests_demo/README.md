@@ -2,7 +2,7 @@
 
 This folder contains an automated demo of the standalone API client
 (`scripts/api_client.py`), driven by `run_tests.sh`. It runs the full T1–T11
-test plan against a running Mizton-ThreatBox server and saves the results to
+test plan against a running OpenTARS server and saves the results to
 disk.
 
 Contents:

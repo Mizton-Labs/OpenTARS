@@ -27,7 +27,7 @@ git clone https://github.com/Mizton-Labs/OpenTARS.git
 cd OpenTARS
 
 # 2. Start the application (installs all deps automatically on first run)
-./mizton-threatbox start --dev
+./opentars start --dev
 ```
 
 The `--dev` flag runs uvicorn in the foreground with live logs and also starts
@@ -37,7 +37,7 @@ the Vite dev server for hot-reload frontend development.
 > is provisioned and its password is printed to the terminal. For local
 > development without authentication, use `--disable-auth`:
 > ```bash
-> ./mizton-threatbox start --dev --disable-auth
+> ./opentars start --dev --disable-auth
 > ```
 
 **Commit hooks (one-time, recommended):**
@@ -58,7 +58,7 @@ contributor only.
 | Backend API | http://localhost:8000/api |
 | Swagger UI | http://localhost:8000/docs |
 
-Use `./mizton-threatbox stop` to stop all background processes.
+Use `./opentars stop` to stop all background processes.
 
 ---
 

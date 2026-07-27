@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run_tests.sh — automated test runner for the Mizton-ThreatBox API client.
+# run_tests.sh — automated test runner for the OpenTARS API client.
 #
 # Executes the T1-T9 API-client test plan against a running server, driving
 # scripts/api_client.py. Every run creates a fresh results directory

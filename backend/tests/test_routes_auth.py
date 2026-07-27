@@ -16,7 +16,7 @@ from backend.main import app
 def auth_env(tmp_path, monkeypatch):
     """Enable auth, isolate users.db, and seed one admin (admin/Adminpass1)."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():
@@ -57,7 +57,7 @@ def test_status_reports_enabled(auth_env):
 def test_disabled_mode_is_open(tmp_path, monkeypatch):
     """With auth disabled, protected API is reachable and status is false."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.delenv("MIZTON_THREATBOX_ENABLE_AUTH", raising=False)
+    monkeypatch.delenv("OPENTARS_ENABLE_AUTH", raising=False)
     monkeypatch.setattr("backend.config.loader.load_app_config", lambda: {"auth_enabled": False})
     c = _client()
     assert c.get("/api/auth/status").json()["auth_enabled"] is False
@@ -327,7 +327,7 @@ def test_set_own_theme_reachable_by_non_admin_role(auth_env):
 def auth_env_must_change(tmp_path, monkeypatch):
     """Enable auth and seed one admin whose password must be changed."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():

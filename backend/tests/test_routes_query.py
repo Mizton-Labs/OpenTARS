@@ -30,7 +30,7 @@ class _FakeClient:
 def query_env(tmp_path, monkeypatch):
     """Auth enabled, isolated users.db, an admin + a threat-viewer + a feed-sender account."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():

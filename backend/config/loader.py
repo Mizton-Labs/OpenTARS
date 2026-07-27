@@ -15,6 +15,29 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def env_with_legacy_fallback(name: str, legacy_name: str) -> str | None:
+    """Read an env var by its current name, falling back to a deprecated
+    legacy name with a warning (issue-local-024 rebrand: every
+    ``MIZTON_THREATBOX_*`` env var was renamed to ``OPENTARS_*``). Keeps an
+    already-configured deployment's override working instead of it silently
+    reverting to the default the moment the env var name changed underneath
+    it — see docs/rebranding-risk-analysis.md's Tier 2 discussion.
+    """
+    val = os.environ.get(name)
+    if val is not None:
+        return val
+    val = os.environ.get(legacy_name)
+    if val is not None:
+        logger.warning(
+            "%s is deprecated and will stop being read in a future release; rename it to %s",
+            legacy_name,
+            name,
+        )
+        return val
+    return None
+
+
 # Resolve config directory relative to project root (two levels up from this file)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIELDS_PATH = _PROJECT_ROOT / "config" / "feed-fields.yaml"
@@ -203,13 +226,14 @@ _APP_PREFIX_MAX_LEN = 200
 # Anchored full-match.
 _APP_PREFIX_RE = re.compile(r"^$|^/[A-Za-z0-9._\-/]*[A-Za-z0-9._\-]$")
 
-# Env-var override (prompts-018). Set by mizton-threatbox --base-prefix
+# Env-var override (prompts-018). Set by opentars --base-prefix
 # at uvicorn invocation time. Takes precedence over application.yaml on read.
 # - absent     → read application.yaml (existing behaviour)
 # - ""         → explicit root mount (yaml ignored)
 # - valid val  → use as-is, log info, yaml ignored
 # - invalid    → log warning, fall back to yaml
-_APP_PREFIX_ENV = "MIZTON_THREATBOX_BASE_PREFIX"
+_APP_PREFIX_ENV = "OPENTARS_BASE_PREFIX"
+_APP_PREFIX_ENV_LEGACY = "MIZTON_THREATBOX_BASE_PREFIX"
 
 
 def _is_valid_app_prefix(value: str) -> bool:
@@ -230,16 +254,17 @@ def load_app_base_prefix() -> str:
     """Return the active base-URL prefix (default empty string).
 
     Precedence:
-      1. MIZTON_THREATBOX_BASE_PREFIX environment variable (if set)
+      1. OPENTARS_BASE_PREFIX environment variable (if set; the deprecated
+         MIZTON_THREATBOX_BASE_PREFIX name still works as a fallback)
       2. app_base_prefix in config/application.yaml
       3. "" (mount at root)
 
-    The env-var path is set by the mizton-threatbox runner script via
+    The env-var path is set by the opentars runner script via
     ``--base-prefix``. When set to an empty string it explicitly means
     "mount at root" and yaml is bypassed. When set to an invalid value it
     is ignored with a warning and yaml is consulted instead.
     """
-    env_raw = os.environ.get(_APP_PREFIX_ENV)
+    env_raw = env_with_legacy_fallback(_APP_PREFIX_ENV, _APP_PREFIX_ENV_LEGACY)
     if env_raw is not None:
         if env_raw == "":
             logger.info(
@@ -810,13 +835,14 @@ def save_agent_tools(value: dict[str, bool]) -> None:
 
 
 # ── Authentication toggle (prompts-045) ──────────────────────────────────────
-# Env-var override set by mizton-threatbox --enable-auth at uvicorn
+# Env-var override set by opentars --enable-auth at uvicorn
 # invocation time. Takes precedence over application.yaml on read.
 #   - absent              → read application.yaml (default false)
 #   - "1"/"true"/"yes"/"on" (case-insensitive) → auth ON
 #   - anything else       → auth OFF
 # When auth is OFF the app is fully open, exactly as before prompts-045.
-_AUTH_ENABLED_ENV = "MIZTON_THREATBOX_ENABLE_AUTH"
+_AUTH_ENABLED_ENV = "OPENTARS_ENABLE_AUTH"
+_AUTH_ENABLED_ENV_LEGACY = "MIZTON_THREATBOX_ENABLE_AUTH"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -824,11 +850,12 @@ def load_auth_enabled() -> bool:
     """Return whether authentication enforcement is enabled (default False).
 
     Precedence:
-      1. MIZTON_THREATBOX_ENABLE_AUTH environment variable (if set)
+      1. OPENTARS_ENABLE_AUTH environment variable (if set; the deprecated
+         MIZTON_THREATBOX_ENABLE_AUTH name still works as a fallback)
       2. auth_enabled in config/application.yaml
       3. False (app fully open)
     """
-    env_raw = os.environ.get(_AUTH_ENABLED_ENV)
+    env_raw = env_with_legacy_fallback(_AUTH_ENABLED_ENV, _AUTH_ENABLED_ENV_LEGACY)
     if env_raw is not None:
         enabled = env_raw.strip().lower() in _TRUTHY
         logger.info(
@@ -850,7 +877,8 @@ def save_auth_enabled(value: bool) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
-_COOKIE_SECURE_ENV = "MIZTON_THREATBOX_COOKIE_SECURE"
+_COOKIE_SECURE_ENV = "OPENTARS_COOKIE_SECURE"
+_COOKIE_SECURE_ENV_LEGACY = "MIZTON_THREATBOX_COOKIE_SECURE"
 _FALSEY = frozenset({"0", "false", "no", "off"})
 
 
@@ -863,11 +891,12 @@ def load_cookie_secure() -> bool | None:
     that header.
 
     Precedence:
-      1. MIZTON_THREATBOX_COOKIE_SECURE env (true/false, or "auto")
+      1. OPENTARS_COOKIE_SECURE env (true/false, or "auto"; the deprecated
+         MIZTON_THREATBOX_COOKIE_SECURE name still works as a fallback)
       2. cookie_secure in application.yaml (bool, or "auto")
       3. None → auto-detect from the request scheme / X-Forwarded-Proto
     """
-    env_raw = os.environ.get(_COOKIE_SECURE_ENV)
+    env_raw = env_with_legacy_fallback(_COOKIE_SECURE_ENV, _COOKIE_SECURE_ENV_LEGACY)
     if env_raw is not None:
         val = env_raw.strip().lower()
         if val in _TRUTHY:

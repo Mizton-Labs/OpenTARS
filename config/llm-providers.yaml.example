@@ -1,4 +1,4 @@
-# Mizton-ThreatBox — LLM Provider Configuration (template)
+# OpenTARS — LLM Provider Configuration (template)
 #
 # This file is a template. The real config lives at
 # config/llm-providers.yaml, which is GITIGNORED because it can hold

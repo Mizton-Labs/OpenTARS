@@ -7,7 +7,8 @@ Mirrors the write-only-secret hygiene pattern from ``backend/llm/config.py``:
   - ``client_secret`` is write-only: always redacted to ``"***"`` on reads.
   - ``merge_write_only_key`` preserves the stored secret when the API sends
     back ``"***"`` (i.e. the admin saved without changing the secret field).
-  - Env vars override yaml values (``MIZTON_THREATBOX_SSO_*`` prefix).
+  - Env vars override yaml values (``OPENTARS_SSO_*`` prefix; the deprecated
+    ``MIZTON_THREATBOX_SSO_*`` prefix still works as a fallback).
 
 Provider presets
 ----------------
@@ -37,9 +38,9 @@ Example ``config/sso.yaml``::
     username_claim: preferred_username
     role_claim: roles
     role_mapping:
-      ThreatBox-Admin: admin
-      ThreatBox-Researcher: threat-researcher
-      ThreatBox-Viewer: threat-viewer
+      OpenTARS-Admin: admin
+      OpenTARS-Researcher: threat-researcher
+      OpenTARS-Viewer: threat-viewer
     default_role: threat-viewer
     auto_provision: true
 """
@@ -47,16 +48,56 @@ Example ``config/sso.yaml``::
 from __future__ import annotations
 
 import logging
-import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from backend.config.loader import env_with_legacy_fallback
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SSO_CONFIG_PATH = _PROJECT_ROOT / "config" / "sso.yaml"
+
+# Env-var overrides (issue-local-024: renamed from MIZTON_THREATBOX_SSO_* to
+# OPENTARS_SSO_*; each deprecated old name still works via
+# env_with_legacy_fallback's warn-and-fall-back behaviour). Shared by
+# load_sso_config() and load_sso_config_for_use() via _apply_sso_env_overrides.
+_SSO_ENV_MAP: dict[str, tuple[str, str, Callable[[str], Any]]] = {
+    "OPENTARS_SSO_ENABLED": (
+        "MIZTON_THREATBOX_SSO_ENABLED",
+        "enabled",
+        lambda v: v.lower() in {"1", "true", "yes", "on"},
+    ),
+    "OPENTARS_SSO_CLIENT_ID": ("MIZTON_THREATBOX_SSO_CLIENT_ID", "client_id", str),
+    "OPENTARS_SSO_CLIENT_SECRET": ("MIZTON_THREATBOX_SSO_CLIENT_SECRET", "client_secret", str),
+    "OPENTARS_SSO_ISSUER": ("MIZTON_THREATBOX_SSO_ISSUER", "issuer", str),
+    "OPENTARS_SSO_BUTTON_LABEL": ("MIZTON_THREATBOX_SSO_BUTTON_LABEL", "button_label", str),
+    "OPENTARS_SSO_DEFAULT_ROLE": ("MIZTON_THREATBOX_SSO_DEFAULT_ROLE", "default_role", str),
+}
+_SSO_TENANT_ID_ENV = "OPENTARS_SSO_TENANT_ID"
+_SSO_TENANT_ID_ENV_LEGACY = "MIZTON_THREATBOX_SSO_TENANT_ID"
+
+
+def _apply_sso_env_overrides(cfg: dict[str, Any]) -> None:
+    """Mutate *cfg* in place with env-var overrides.
+
+    Shared by :func:`load_sso_config` and :func:`load_sso_config_for_use` so
+    the override list only needs to exist once.
+    """
+    for new_key, (legacy_key, cfg_key, cast) in _SSO_ENV_MAP.items():
+        val = env_with_legacy_fallback(new_key, legacy_key)
+        if val is not None:
+            cfg[cfg_key] = cast(val)
+
+    tenant_id = env_with_legacy_fallback(_SSO_TENANT_ID_ENV, _SSO_TENANT_ID_ENV_LEGACY)
+    if tenant_id and cfg.get("issuer"):
+        cfg["issuer"] = (
+            cfg["issuer"].replace("<tenant_id>", tenant_id).replace("<tenant-id>", tenant_id)
+        )
+
 
 # Supported presets
 PROVIDER_PRESETS = frozenset({"entra", "okta", "google", "keycloak", "generic"})
@@ -119,36 +160,14 @@ def _write_raw(data: dict[str, Any]) -> None:
 def load_sso_config() -> dict[str, Any]:
     """Return the current SSO config, redacting the client_secret.
 
-    Env-var overrides (``MIZTON_THREATBOX_SSO_*``) take precedence over yaml.
-    The returned dict always has all default keys present.
+    Env-var overrides (``OPENTARS_SSO_*``, or the deprecated
+    ``MIZTON_THREATBOX_SSO_*`` names) take precedence over yaml. The returned
+    dict always has all default keys present.
     """
     raw = _load_raw()
     cfg: dict[str, Any] = {**_DEFAULTS, **raw}
 
-    # Env overrides
-    env_map = {
-        "MIZTON_THREATBOX_SSO_ENABLED": (
-            "enabled",
-            lambda v: v.lower() in {"1", "true", "yes", "on"},
-        ),
-        "MIZTON_THREATBOX_SSO_CLIENT_ID": ("client_id", str),
-        "MIZTON_THREATBOX_SSO_CLIENT_SECRET": ("client_secret", str),
-        "MIZTON_THREATBOX_SSO_ISSUER": ("issuer", str),
-        "MIZTON_THREATBOX_SSO_TENANT_ID": (None, None),  # handled specially below
-        "MIZTON_THREATBOX_SSO_BUTTON_LABEL": ("button_label", str),
-        "MIZTON_THREATBOX_SSO_DEFAULT_ROLE": ("default_role", str),
-    }
-    for env_key, (cfg_key, cast) in env_map.items():
-        val = os.environ.get(env_key)
-        if val is not None and cfg_key is not None and cast is not None:
-            cfg[cfg_key] = cast(val)
-
-    # TENANT_ID env: substitute into issuer if it contains a placeholder
-    tenant_id = os.environ.get("MIZTON_THREATBOX_SSO_TENANT_ID")
-    if tenant_id and cfg.get("issuer"):
-        cfg["issuer"] = (
-            cfg["issuer"].replace("<tenant_id>", tenant_id).replace("<tenant-id>", tenant_id)
-        )
+    _apply_sso_env_overrides(cfg)
 
     # Redact secret
     cfg["client_secret"] = _REDACTED if cfg.get("client_secret") else ""
@@ -182,28 +201,7 @@ def load_sso_config_for_use() -> dict[str, Any]:
     raw = _load_raw()
     cfg: dict[str, Any] = {**_DEFAULTS, **raw}
 
-    # Env overrides (same as load_sso_config but secret not redacted)
-    env_map = {
-        "MIZTON_THREATBOX_SSO_ENABLED": (
-            "enabled",
-            lambda v: v.lower() in {"1", "true", "yes", "on"},
-        ),
-        "MIZTON_THREATBOX_SSO_CLIENT_ID": ("client_id", str),
-        "MIZTON_THREATBOX_SSO_CLIENT_SECRET": ("client_secret", str),
-        "MIZTON_THREATBOX_SSO_ISSUER": ("issuer", str),
-        "MIZTON_THREATBOX_SSO_BUTTON_LABEL": ("button_label", str),
-        "MIZTON_THREATBOX_SSO_DEFAULT_ROLE": ("default_role", str),
-    }
-    for env_key, (cfg_key, cast) in env_map.items():
-        val = os.environ.get(env_key)
-        if val is not None:
-            cfg[cfg_key] = cast(val)
-
-    tenant_id = os.environ.get("MIZTON_THREATBOX_SSO_TENANT_ID")
-    if tenant_id and cfg.get("issuer"):
-        cfg["issuer"] = (
-            cfg["issuer"].replace("<tenant_id>", tenant_id).replace("<tenant-id>", tenant_id)
-        )
+    _apply_sso_env_overrides(cfg)
     return cfg
 
 

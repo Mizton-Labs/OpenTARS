@@ -1,4 +1,4 @@
-# Mizton-ThreatBox — Normalizer Configuration
+# OpenTARS — Normalizer Configuration
 #
 # mode: "auto" — engine maps raw fields → canonical schema using synonym groups
 #       "manual" — operator defines explicit source→canonical field mappings here

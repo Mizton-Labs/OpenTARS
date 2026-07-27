@@ -22,7 +22,7 @@ git clone https://github.com/Mizton-Labs/OpenTARS.git
 cd OpenTARS
 
 # 2. Start the application
-./mizton-threatbox start
+./opentars start
 ```
 
 The runner script automatically:
@@ -41,7 +41,7 @@ Open your browser at **http://localhost:8000**.
 > is provisioned and its password is displayed in the terminal and written to
 > `data/first-run-admin-credentials.txt` (mode `0600`). Change the password on first login. To run
 > without authentication (local / trusted-network, single-user use), start with
-> `./mizton-threatbox start --disable-auth` or set `auth_enabled: false` in
+> `./opentars start --disable-auth` or set `auth_enabled: false` in
 > `config/application.yaml`. See [Authentication](#authentication-optional) for roles and setup.
 
 ### Prerequisites
@@ -151,7 +151,7 @@ An agentic, LangGraph-driven pipeline that turns raw evidence into a structured,
 Runs the backend and the Vite dev server separately for hot-reload on frontend changes:
 
 ```bash
-./mizton-threatbox start --dev
+./opentars start --dev
 ```
 
 | Service | URL |
@@ -176,14 +176,14 @@ Runs the backend and the Vite dev server separately for hot-reload on frontend c
 ## Commands
 
 ```
-./mizton-threatbox start [options]        Start the application
-./mizton-threatbox stop                   Stop all running processes
-./mizton-threatbox restart [options]      Stop then start (options forwarded to start)
-./mizton-threatbox status                 Show running process status
-./mizton-threatbox --reset-db             Delete and recreate all source databases
-./mizton-threatbox --reset-source <NAME>  Reset a single source database
-./mizton-threatbox --reset-admin-password Reset the admin password (see Authentication)
-./mizton-threatbox help                   Show full usage
+./opentars start [options]        Start the application
+./opentars stop                   Stop all running processes
+./opentars restart [options]      Stop then start (options forwarded to start)
+./opentars status                 Show running process status
+./opentars --reset-db             Delete and recreate all source databases
+./opentars --reset-source <NAME>  Reset a single source database
+./opentars --reset-admin-password Reset the admin password (see Authentication)
+./opentars help                   Show full usage
 ```
 
 ### `start` / `restart` options
@@ -192,8 +192,8 @@ Runs the backend and the Vite dev server separately for hot-reload on frontend c
 |---|---|
 | `--dev` | Run uvicorn in the **foreground** with logs streamed to the terminal (Ctrl+C to stop). Without it, the server runs backgrounded. |
 | `--bind <ip[:port]>` | Address (and optional port) to bind. Accepts `ip`, `ip:port`, or `:port`. If no port is given, **8000** is used. Default: `127.0.0.1:8000`. See [Binding & ports](#binding--ports). |
-| `--base-prefix <value>` | Override `app_base_prefix` from `config/application.yaml` for this run only (via `MIZTON_THREATBOX_BASE_PREFIX`). Must start with `/`, must not end with `/`, must not contain `//`. Use `""` (empty string) to mount at root. |
-| `--disable-auth` | Force-disable authentication for this run (via `MIZTON_THREATBOX_ENABLE_AUTH=0`, overriding the yaml). Authentication is **on by default**. See [Authentication](#authentication-optional). |
+| `--base-prefix <value>` | Override `app_base_prefix` from `config/application.yaml` for this run only (via `OPENTARS_BASE_PREFIX`). Must start with `/`, must not end with `/`, must not contain `//`. Use `""` (empty string) to mount at root. |
+| `--disable-auth` | Force-disable authentication for this run (via `OPENTARS_ENABLE_AUTH=0`, overriding the yaml). Authentication is **on by default**. See [Authentication](#authentication-optional). |
 
 > Runtime PID and port state are written to `.pids/` (gitignored). `stop`/`status`
 > read the persisted port, so they work correctly even when the server was
@@ -207,10 +207,10 @@ By default the server binds to **`127.0.0.1:8000`** — reachable only from the
 local machine. Use `--bind` to change the address and/or port:
 
 ```bash
-./mizton-threatbox start --bind 0.0.0.0          # all interfaces, port 8000
-./mizton-threatbox start --bind 0.0.0.0:9000     # all interfaces, port 9000
-./mizton-threatbox start --bind :9000            # localhost (127.0.0.1), port 9000
-./mizton-threatbox start --bind 192.168.1.10:8000  # a specific interface
+./opentars start --bind 0.0.0.0          # all interfaces, port 8000
+./opentars start --bind 0.0.0.0:9000     # all interfaces, port 9000
+./opentars start --bind :9000            # localhost (127.0.0.1), port 9000
+./opentars start --bind 192.168.1.10:8000  # a specific interface
 ```
 
 - Syntax is `ip:port`. A bare `ip` keeps the default port (8000); a bare `:port`
@@ -226,11 +226,11 @@ local machine. Use `--bind` to change the address and/or port:
 Authentication is **enabled by default** — the app shows a login screen and
 requires valid credentials. To disable it for local / trusted-network,
 single-user use, pass `--disable-auth` per-run, set
-`MIZTON_THREATBOX_ENABLE_AUTH=0`, or set `auth_enabled: false` in
+`OPENTARS_ENABLE_AUTH=0`, or set `auth_enabled: false` in
 `config/application.yaml`. The CLI flag and env var take precedence over the yaml.
 
 ```bash
-./mizton-threatbox start --disable-auth
+./opentars start --disable-auth
 ```
 
 When enabled:
@@ -256,7 +256,7 @@ When enabled:
 - **Reset the admin password** without starting the server:
 
   ```bash
-  ./mizton-threatbox --reset-admin-password
+  ./opentars --reset-admin-password
   ```
 
   This generates a new random password, prints it, writes it to the same `0600`
@@ -752,7 +752,8 @@ Runs backend tests (`pytest`) and frontend tests (`vitest`).
 ## Project Layout
 
 ```
-mizton-threatbox        # Startup script — entry point
+opentars                 # Startup script — entry point
+mizton-threatbox          # Deprecated alias for ./opentars (forwards to it)
 config/
   feed-fields.yaml          # Core + custom field definitions (gitignored — see below)
   sources.yaml              # Configured ingestion sources (gitignored — see below)
@@ -788,7 +789,6 @@ notice offering to add it — see [Config-drift notice](#configuration) above.
 | [`docs/agent-architecture.md`](docs/agent-architecture.md) | Engineers | LangGraph/LangChain usage, tool-calling design, per-agent skill matrix, pipeline DAG, state management |
 | [`docs/threat-hunting-framework-design.md`](docs/threat-hunting-framework-design.md) | Engineers | Full TH domain model: Hunt Package schema, evidence model, IOC model, SSRF policy, DB schema, API route map |
 | [`docs/architecture.md`](docs/architecture.md) | Engineers | Whole-platform module map, data flows, config files, external dependencies |
-| [`docs/rebranding-risk-analysis.md`](docs/rebranding-risk-analysis.md) | Maintainers | Inventory and risk tiering for renaming the remaining internal `mizton-threatbox` code references (launcher script, env vars, package identifiers, Docker artifacts) |
 
 ---
 

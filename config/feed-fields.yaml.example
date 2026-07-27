@@ -1,4 +1,4 @@
-# Mizton-ThreatBox — Field Configuration
+# OpenTARS — Field Configuration
 #
 # ingest_all_fields: when true, ALL fields in the incoming record are stored
 #                    (normaliser bypass). When false, only enabled core+custom

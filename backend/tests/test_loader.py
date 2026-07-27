@@ -7,11 +7,13 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _clear_app_prefix_env(monkeypatch):
-    """Ensure MIZTON_THREATBOX_BASE_PREFIX never leaks in from the developer's shell.
+    """Ensure OPENTARS_BASE_PREFIX (or its deprecated MIZTON_THREATBOX_BASE_PREFIX
+    fallback name) never leaks in from the developer's shell.
 
     Individual tests that exercise the env-override path can re-set it via
     ``monkeypatch.setenv(...)``; the autouse fixture only clears the baseline.
     """
+    monkeypatch.delenv("OPENTARS_BASE_PREFIX", raising=False)
     monkeypatch.delenv("MIZTON_THREATBOX_BASE_PREFIX", raising=False)
 
 
@@ -277,7 +279,7 @@ def test_save_app_base_prefix_rejects_non_string(tmp_path, monkeypatch):
             loader.save_app_base_prefix(bad)  # type: ignore[arg-type]
 
 
-# ── prompts-018: MIZTON_THREATBOX_BASE_PREFIX env-var override ────────────────────
+# ── prompts-018: OPENTARS_BASE_PREFIX env-var override ────────────────────
 
 
 def _write_yaml_prefix(tmp_path, monkeypatch, value):
@@ -294,9 +296,9 @@ def test_load_app_base_prefix_env_override_valid_wins_over_yaml(
     tmp_path,
     monkeypatch,
 ):
-    """MIZTON_THREATBOX_BASE_PREFIX with a valid value beats the yaml file."""
+    """OPENTARS_BASE_PREFIX with a valid value beats the yaml file."""
     loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
-    monkeypatch.setenv("MIZTON_THREATBOX_BASE_PREFIX", "/feeds")
+    monkeypatch.setenv("OPENTARS_BASE_PREFIX", "/feeds")
     assert loader.load_app_base_prefix() == "/feeds"
 
 
@@ -306,7 +308,7 @@ def test_load_app_base_prefix_env_override_empty_string_means_root(
 ):
     """An explicit empty-string env override mounts at root, ignoring yaml."""
     loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
-    monkeypatch.setenv("MIZTON_THREATBOX_BASE_PREFIX", "")
+    monkeypatch.setenv("OPENTARS_BASE_PREFIX", "")
     assert loader.load_app_base_prefix() == ""
 
 
@@ -319,12 +321,12 @@ def test_load_app_base_prefix_env_invalid_falls_back_to_yaml(
     import logging
 
     loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
-    monkeypatch.setenv("MIZTON_THREATBOX_BASE_PREFIX", "not-valid")  # no leading slash
+    monkeypatch.setenv("OPENTARS_BASE_PREFIX", "not-valid")  # no leading slash
     with caplog.at_level(logging.WARNING, logger="backend.config.loader"):
         result = loader.load_app_base_prefix()
     assert result == "/yamlpath"
     assert any(
-        "MIZTON_THREATBOX_BASE_PREFIX" in rec.getMessage() and "invalid" in rec.getMessage()
+        "OPENTARS_BASE_PREFIX" in rec.getMessage() and "invalid" in rec.getMessage()
         for rec in caplog.records
     )
 
@@ -332,8 +334,36 @@ def test_load_app_base_prefix_env_invalid_falls_back_to_yaml(
 def test_load_app_base_prefix_env_absent_uses_yaml(tmp_path, monkeypatch):
     """When env is unset, yaml is used as before (regression guard)."""
     loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
-    monkeypatch.delenv("MIZTON_THREATBOX_BASE_PREFIX", raising=False)
+    monkeypatch.delenv("OPENTARS_BASE_PREFIX", raising=False)
     assert loader.load_app_base_prefix() == "/yamlpath"
+
+
+def test_load_app_base_prefix_legacy_env_name_still_works(tmp_path, monkeypatch, caplog):
+    """issue-local-024: the deprecated MIZTON_THREATBOX_BASE_PREFIX name still
+    applies (with a deprecation warning) when the new OPENTARS_BASE_PREFIX
+    name is absent — an already-configured deployment's override must not
+    silently stop applying just because the env var was renamed."""
+    import logging
+
+    loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
+    monkeypatch.delenv("OPENTARS_BASE_PREFIX", raising=False)
+    monkeypatch.setenv("MIZTON_THREATBOX_BASE_PREFIX", "/legacy")
+    with caplog.at_level(logging.WARNING, logger="backend.config.loader"):
+        result = loader.load_app_base_prefix()
+    assert result == "/legacy"
+    assert any(
+        "MIZTON_THREATBOX_BASE_PREFIX" in rec.getMessage() and "deprecated" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_load_app_base_prefix_new_env_name_wins_over_legacy(tmp_path, monkeypatch):
+    """When both the new and the deprecated legacy env var are set (e.g. a
+    deployment mid-migration), the new name takes precedence."""
+    loader = _write_yaml_prefix(tmp_path, monkeypatch, "/yamlpath")
+    monkeypatch.setenv("OPENTARS_BASE_PREFIX", "/new")
+    monkeypatch.setenv("MIZTON_THREATBOX_BASE_PREFIX", "/legacy")
+    assert loader.load_app_base_prefix() == "/new"
 
 
 # ── prompts-043: pagination_max ──────────────────────────────────────────────
@@ -394,6 +424,7 @@ def test_save_pagination_max_preserves_other_keys(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clear_auth_env(monkeypatch):
+    monkeypatch.delenv("OPENTARS_ENABLE_AUTH", raising=False)
     monkeypatch.delenv("MIZTON_THREATBOX_ENABLE_AUTH", raising=False)
 
 
@@ -440,7 +471,7 @@ def test_load_auth_enabled_env_override(tmp_path, monkeypatch, val, expected):
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", target)
     # yaml says True; env must win regardless.
     loader.save_auth_enabled(True)
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", val)
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", val)
     assert loader.load_auth_enabled() is expected
 
 
@@ -451,6 +482,26 @@ def test_save_auth_enabled_rejects_non_bool(tmp_path, monkeypatch):
     for bad in [None, "true", 1, 0]:
         with pytest.raises(ValueError):
             loader.save_auth_enabled(bad)  # type: ignore[arg-type]
+
+
+def test_load_auth_enabled_legacy_env_name_still_works(tmp_path, monkeypatch):
+    """issue-local-024: MIZTON_THREATBOX_ENABLE_AUTH still applies when
+    OPENTARS_ENABLE_AUTH is absent."""
+    import backend.config.loader as loader
+
+    monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
+    monkeypatch.delenv("OPENTARS_ENABLE_AUTH", raising=False)
+    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    assert loader.load_auth_enabled() is True
+
+
+def test_load_auth_enabled_new_env_name_wins_over_legacy(tmp_path, monkeypatch):
+    import backend.config.loader as loader
+
+    monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "0")
+    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    assert loader.load_auth_enabled() is False
 
 
 # ── logo_path (prompts-045) ───────────────────────────────────────────────────
@@ -494,6 +545,7 @@ def test_save_logo_path_rejects_traversal_and_absolute(tmp_path, monkeypatch):
 def test_load_cookie_secure_default_auto(tmp_path, monkeypatch):
     import backend.config.loader as loader
 
+    monkeypatch.delenv("OPENTARS_COOKIE_SECURE", raising=False)
     monkeypatch.delenv("MIZTON_THREATBOX_COOKIE_SECURE", raising=False)
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "missing.yaml")
     assert loader.load_cookie_secure() is None
@@ -504,6 +556,7 @@ def test_load_cookie_secure_from_yaml(tmp_path, monkeypatch):
 
     import backend.config.loader as loader
 
+    monkeypatch.delenv("OPENTARS_COOKIE_SECURE", raising=False)
     monkeypatch.delenv("MIZTON_THREATBOX_COOKIE_SECURE", raising=False)
     target = tmp_path / "application.yaml"
     target.write_text(yaml.safe_dump({"cookie_secure": True}), encoding="utf-8")
@@ -537,8 +590,19 @@ def test_load_cookie_secure_env_override(tmp_path, monkeypatch, val, expected):
     # yaml says True; env must win regardless.
     target.write_text(yaml.safe_dump({"cookie_secure": True}), encoding="utf-8")
     monkeypatch.setattr(loader, "APP_CONFIG_PATH", target)
-    monkeypatch.setenv("MIZTON_THREATBOX_COOKIE_SECURE", val)
+    monkeypatch.setenv("OPENTARS_COOKIE_SECURE", val)
     assert loader.load_cookie_secure() is expected
+
+
+def test_load_cookie_secure_legacy_env_name_still_works(tmp_path, monkeypatch):
+    """issue-local-024: MIZTON_THREATBOX_COOKIE_SECURE still applies when
+    OPENTARS_COOKIE_SECURE is absent."""
+    import backend.config.loader as loader
+
+    monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "missing.yaml")
+    monkeypatch.delenv("OPENTARS_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("MIZTON_THREATBOX_COOKIE_SECURE", "true")
+    assert loader.load_cookie_secure() is True
 
 
 # ── password policy (prompts-046) ────────────────────────────────────────────

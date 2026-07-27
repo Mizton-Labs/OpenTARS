@@ -21,7 +21,7 @@ from backend.main import app
 def sender_env(tmp_path, monkeypatch):
     """Enable auth, isolate users.db, seed an admin and a 'feed-sender' account."""
     monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     service._failures.clear()
 
     async def _seed():

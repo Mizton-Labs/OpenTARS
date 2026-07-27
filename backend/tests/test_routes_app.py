@@ -312,7 +312,7 @@ def test_get_theme_and_title_public_when_auth_enabled(client, monkeypatch):
     enforcement is on — the login screen needs the theme, and title's own
     docstring already claimed public access but had no middleware carve-out
     for it before this fix."""
-    monkeypatch.setenv("MIZTON_THREATBOX_ENABLE_AUTH", "1")
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
     anon = TestClient(app)
     assert anon.get("/api/app/theme").status_code == 200
     assert anon.get("/api/app/title").status_code == 200

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Build the local Mizton-ThreatBox image: mizton-threatbox/local
+# Build the local OpenTARS image: opentars/local
 #
 # The image is STANDALONE: the application source is fetched from GitHub at build
 # time, so no repository build context is required. By default it pulls the
-# latest import branch; override with MTB_REF (branch, tag, or commit-ish) for a
+# latest main branch; override with MTB_REF (branch, tag, or commit-ish) for a
 # reproducible build.
 #
 # Usage:
 #   docker/build/build.sh [extra docker build args...]
 #
 # Environment overrides:
-#   IMAGE_TAG   image tag to produce         (default: mizton-threatbox/local)
-#   MTB_REF     git ref to build from GitHub  (default: initial-mizton-threatbox)
+#   IMAGE_TAG   image tag to produce         (default: opentars/local)
+#   MTB_REF     git ref to build from GitHub  (default: main)
 #   MTB_REPO    source repository URL         (default: project GitHub repo)
 #
 # Examples:
@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-IMAGE_TAG="${IMAGE_TAG:-mizton-threatbox/local}"
+IMAGE_TAG="${IMAGE_TAG:-opentars/local}"
 MTB_REF="${MTB_REF:-main}"
 MTB_REPO="${MTB_REPO:-https://github.com/Mizton-Labs/OpenTARS.git}"
 

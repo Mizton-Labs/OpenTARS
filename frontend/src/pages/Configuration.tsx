@@ -497,7 +497,7 @@ function ApplicationTab() {
             <p className="font-medium">Saved — restart required.</p>
             <p>
               New prefix: <code className="font-mono">{savedValue === '' ? '(empty)' : savedValue}</code>.
-              Run <code className="font-mono">./mizton-threatbox restart</code> on the server for
+              Run <code className="font-mono">./opentars restart</code> on the server for
               the change to take effect.
             </p>
           </div>

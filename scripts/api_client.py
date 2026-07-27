@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Mizton-ThreatBox — standalone API client.
+OpenTARS — standalone API client.
 
-A dependency-free command-line client for the Mizton-ThreatBox HTTP API. It
+A dependency-free command-line client for the OpenTARS HTTP API. It
 uses only the Python standard library (urllib/json/argparse), so it runs under
 any Python 3 without the project virtualenv.
 
@@ -325,7 +325,7 @@ def cmd_list_feeds(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="api_client.py",
-        description="Standalone command-line client for the Mizton-ThreatBox API.",
+        description="Standalone command-line client for the OpenTARS API.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"

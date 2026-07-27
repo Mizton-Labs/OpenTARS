@@ -161,12 +161,12 @@ def test_save_sso_config_updates_secret_when_changed(tmp_path, monkeypatch) -> N
 
 
 def test_load_sso_config_env_override(tmp_path, monkeypatch) -> None:
-    """MIZTON_THREATBOX_SSO_CLIENT_ID env var overrides yaml."""
+    """OPENTARS_SSO_CLIENT_ID env var overrides yaml."""
     from backend.auth import oidc_config
 
     monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
-    monkeypatch.setenv("MIZTON_THREATBOX_SSO_CLIENT_ID", "env-client-id")
-    monkeypatch.setenv("MIZTON_THREATBOX_SSO_ENABLED", "true")
+    monkeypatch.setenv("OPENTARS_SSO_CLIENT_ID", "env-client-id")
+    monkeypatch.setenv("OPENTARS_SSO_ENABLED", "true")
 
     cfg = oidc_config.load_sso_config()
     assert cfg["client_id"] == "env-client-id"
@@ -174,7 +174,7 @@ def test_load_sso_config_env_override(tmp_path, monkeypatch) -> None:
 
 
 def test_load_sso_config_tenant_id_env_substitution(tmp_path, monkeypatch) -> None:
-    """MIZTON_THREATBOX_SSO_TENANT_ID replaces <tenant_id> in the issuer."""
+    """OPENTARS_SSO_TENANT_ID replaces <tenant_id> in the issuer."""
     from backend.auth import oidc_config
 
     monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
@@ -183,11 +183,38 @@ def test_load_sso_config_tenant_id_env_substitution(tmp_path, monkeypatch) -> No
         "default_role: threat-viewer\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("MIZTON_THREATBOX_SSO_TENANT_ID", "my-tenant-uuid")
+    monkeypatch.setenv("OPENTARS_SSO_TENANT_ID", "my-tenant-uuid")
 
     cfg = oidc_config.load_sso_config()
     assert "my-tenant-uuid" in cfg["issuer"]
     assert "<tenant_id>" not in cfg["issuer"]
+
+
+def test_load_sso_config_legacy_env_names_still_work(tmp_path, monkeypatch) -> None:
+    """issue-local-024: the deprecated MIZTON_THREATBOX_SSO_* env var names
+    still apply when the new OPENTARS_SSO_* names are absent."""
+    from backend.auth import oidc_config
+
+    monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
+    monkeypatch.delenv("OPENTARS_SSO_CLIENT_ID", raising=False)
+    monkeypatch.delenv("OPENTARS_SSO_ENABLED", raising=False)
+    monkeypatch.setenv("MIZTON_THREATBOX_SSO_CLIENT_ID", "legacy-client-id")
+    monkeypatch.setenv("MIZTON_THREATBOX_SSO_ENABLED", "true")
+
+    cfg = oidc_config.load_sso_config()
+    assert cfg["client_id"] == "legacy-client-id"
+    assert cfg["enabled"] is True
+
+
+def test_load_sso_config_new_env_name_wins_over_legacy(tmp_path, monkeypatch) -> None:
+    from backend.auth import oidc_config
+
+    monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
+    monkeypatch.setenv("OPENTARS_SSO_CLIENT_ID", "new-client-id")
+    monkeypatch.setenv("MIZTON_THREATBOX_SSO_CLIENT_ID", "legacy-client-id")
+
+    cfg = oidc_config.load_sso_config()
+    assert cfg["client_id"] == "new-client-id"
 
 
 # ── 2. map_claims_to_role ─────────────────────────────────────────────────────

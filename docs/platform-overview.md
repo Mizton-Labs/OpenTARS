@@ -233,14 +233,14 @@ OpenTARS is designed to run **entirely on your own infrastructure**:
 - All data stored locally in SQLite databases under `data/`.
 - LLM calls go to whichever provider you configure (OpenAI API, Anthropic API,
   a local Ollama instance, or any OpenAI-compatible endpoint).
-- The `./mizton-threatbox` launcher installs all dependencies automatically on
+- The `./opentars` launcher installs all dependencies automatically on
   first run — no separate setup step.
 - Docker support available via `docker/`.
 
 ```
 Your machine / server
 ┌────────────────────────────────────────────────┐
-│  ./mizton-threatbox start                      │
+│  ./opentars start                              │
 │                                                │
 │  ┌──────────────┐    ┌──────────────────────┐  │
 │  │  Backend     │    │  Frontend            │  │
