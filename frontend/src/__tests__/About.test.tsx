@@ -39,9 +39,9 @@ describe('About page (prompts-051)', () => {
     renderAbout()
     expect(screen.getByText('Code Dev Team')).toBeInTheDocument()
     // The link shows the repository slug as visible text and links to the repo.
-    const repo = screen.getByRole('link', { name: /Mizton-Labs\/Mizton-ThreatBox/ })
-    expect(repo).toHaveAttribute('href', 'https://github.com/Mizton-Labs/Mizton-ThreatBox')
-    expect(repo).toHaveTextContent('Mizton-Labs/Mizton-ThreatBox')
+    const repo = screen.getByRole('link', { name: /Mizton-Labs\/OpenTARS/ })
+    expect(repo).toHaveAttribute('href', 'https://github.com/Mizton-Labs/OpenTARS')
+    expect(repo).toHaveTextContent('Mizton-Labs/OpenTARS')
     // The primary author @jusafing is always listed first.
     const authorLink = screen.getByRole('link', { name: '@jusafing' })
     expect(authorLink).toHaveAttribute('href', 'https://github.com/jusafing')

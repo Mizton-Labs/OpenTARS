@@ -24,7 +24,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [
-    { name = "HoneyMex Lab", email = "dev@honeymex.lab" },
+    { name = "Mizton Labs", email = "contact@miztonlabs.org" },
 ]
 keywords = [
     "threat-intelligence",
@@ -52,9 +52,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage     = "https://github.com/Mizton-Labs/Mizton-ThreatBox"
-Repository   = "https://github.com/Mizton-Labs/Mizton-ThreatBox.git"
-"Bug Tracker" = "https://github.com/Mizton-Labs/Mizton-ThreatBox/issues"
+Homepage     = "https://github.com/Mizton-Labs/OpenTARS"
+Repository   = "https://github.com/Mizton-Labs/OpenTARS.git"
+"Bug Tracker" = "https://github.com/Mizton-Labs/OpenTARS/issues"
 
 # ---------------------------------------------------------------------------
 # Tool configuration

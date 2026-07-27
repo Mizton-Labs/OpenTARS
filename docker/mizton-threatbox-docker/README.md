@@ -57,10 +57,10 @@ reuse the work already done inside it.
 
 Two build args control the source:
 
-| Build arg  | Default                                            | Purpose                      |
-|------------|----------------------------------------------------|------------------------------|
-| `MTB_REF`  | `initial-mizton-threatbox`                         | Branch, tag, or ref to build |
-| `MTB_REPO` | `https://github.com/Mizton-Labs/Mizton-ThreatBox.git` | Source repository URL        |
+| Build arg  | Default                                | Purpose                      |
+|------------|-----------------------------------------|------------------------------|
+| `MTB_REF`  | `initial-mizton-threatbox`             | Branch, tag, or ref to build |
+| `MTB_REPO` | `https://github.com/Mizton-Labs/OpenTARS.git` | Source repository URL |
 
 > **Reproducibility:** the default build tracks the import branch HEAD at build
 > time. Pin `MTB_REF` to a tag or commit for a deterministic source snapshot.

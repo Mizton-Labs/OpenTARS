@@ -19,9 +19,12 @@ and expanded Features subsections covering everything shipped since the last ful
 (Threat Intel Tracking, Comparison Module, Evidence content viewer, Azure AI Foundry provider,
 config-drift notice). All other docs (`architecture.md`, `agent-architecture.md`,
 `platform-overview.md`, `threat-hunting-framework-design.md`, `CONTRIBUTING.md`,
-`THIRD-PARTY-NOTICES.md`) retitled to match, while historical CHANGELOG entries and the still-current
-GitHub repo URL (`Mizton-Labs/Mizton-ThreatBox`, to be renamed manually and separately) were left
-untouched for factual accuracy.
+`THIRD-PARTY-NOTICES.md`) retitled to match, while historical CHANGELOG entries were left untouched
+for factual accuracy. The GitHub repository has since been transferred and renamed to
+[`Mizton-Labs/OpenTARS`](https://github.com/Mizton-Labs/OpenTARS); every repo URL in this project
+(clone instructions, `pyproject.toml` project links, the About page's repo link, Docker build
+defaults) has been updated to match. The maintaining entity itself also renamed: `LICENSE`'s
+copyright holder and `pyproject.toml`'s author are now Mizton Labs (previously HoneyMex Lab).
 
 The remaining internal code references (the `./mizton-threatbox` launcher script name, three
 `MIZTON_THREATBOX_*` env vars, `pyproject.toml`/`package.json` package identifiers, and the Docker
@@ -916,5 +919,5 @@ triggered, and zero IOCs/info were extracted. Four fixes applied:
 - Backend: FastAPI + uvicorn + APScheduler + aiosqlite.
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS.
 
-[Unreleased]: https://github.com/Mizton-Labs/Mizton-ThreatBox/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Mizton-Labs/Mizton-ThreatBox/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Mizton-Labs/OpenTARS/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Mizton-Labs/OpenTARS/releases/tag/v0.1.0

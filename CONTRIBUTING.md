@@ -23,8 +23,8 @@ essentials for getting started, running tests, and submitting changes.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Mizton-Labs/Mizton-ThreatBox.git
-cd Mizton-ThreatBox
+git clone https://github.com/Mizton-Labs/OpenTARS.git
+cd OpenTARS
 
 # 2. Start the application (installs all deps automatically on first run)
 ./mizton-threatbox start --dev

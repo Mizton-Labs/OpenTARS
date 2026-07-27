@@ -92,14 +92,14 @@ export default function About() {
             <dd className="text-sm text-gray-200 space-y-1.5">
               {/* Repository link */}
               <a
-                href="https://github.com/Mizton-Labs/Mizton-ThreatBox"
+                href="https://github.com/Mizton-Labs/OpenTARS"
                 target="_blank"
                 rel="noopener noreferrer"
                 title="OpenTARS on GitHub"
                 className="inline-flex items-center gap-1.5 text-brand-400 hover:text-brand-300"
               >
                 <Github className="w-4 h-4 shrink-0" />
-                <span>Mizton-Labs/Mizton-ThreatBox</span>
+                <span>Mizton-Labs/OpenTARS</span>
               </a>
               {/* Authors — @jusafing always first; add future collaborators below */}
               <ul className="space-y-0.5 pl-0.5">

@@ -18,8 +18,8 @@
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Mizton-Labs/Mizton-ThreatBox.git
-cd Mizton-ThreatBox
+git clone https://github.com/Mizton-Labs/OpenTARS.git
+cd OpenTARS
 
 # 2. Start the application
 ./mizton-threatbox start
