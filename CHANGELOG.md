@@ -9,6 +9,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — Anthropic responses truncated by output-token budget went undetected (issue-local-025)
+
+Every Threat Hunting run against an Anthropic-protocol provider (native `anthropic` kind, and
+`azure_ai_foundry` with `api_style: anthropic`) that got cut off by the output-token budget
+(`stop_reason: max_tokens`) was silently treated as a successful completion — the truncated,
+unparseable JSON fragment was handed straight to each pipeline node's JSON parser, which then
+logged `unexpected LLM response type` and fell back to an empty result. Confirmed live against
+both `claude-sonnet-5` and `claude-opus-4-8`: replaying a real hunt's prompt at its actual token
+budget reproduced `stop_reason: max_tokens` on every call, and `claude-sonnet-5` additionally
+spent part of that budget on an implicit `thinking` content block before ever reaching a
+`text` block. The OpenAI protocol path already had this covered
+(`finish_reason: length` raises `LLMEmptyContentError`, which triggers the existing
+raise-max_tokens-and-retry loop in `llm_bridge._call_with_retry`); the Anthropic path had no
+equivalent check. `_anthropic_extract_text` / `_anthropic_extract_tool_calls` now raise the same
+`LLMEmptyContentError` whenever `stop_reason == "max_tokens"` or no `text`/`tool_use` content was
+produced at all, so the existing generic retry logic now applies uniformly across both protocols.
+
 ### Changed — Rebrand to OpenTARS (issue-local-024)
 
 Project renamed from Mizton-ThreatBox to **OpenTARS** ("Threat Agentic Research System"). New logo
