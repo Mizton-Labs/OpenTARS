@@ -59,7 +59,7 @@ You can point the runner at the server in one of two ways:
   is behind a reverse proxy / path prefix (an alias), e.g.:
 
   ```
-  url=https://proxy.example.com/threatbox   # reverse-proxy alias
+  url=https://proxy.example.com/opentars   # reverse-proxy alias
   ```
 
 A `url` **must** include `http://` or `https://` (otherwise the runner exits

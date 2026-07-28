@@ -7,7 +7,7 @@
 #     needs at runtime: bash, git, Node.js + npm (frontend build), Python 3 +
 #     venv + pip, and uv (fast dependency installs).
 #   * The application is fetched with `git clone` from GitHub at BUILD time and
-#     SHIPPED as-is under the user's home (/home/threatbox).
+#     SHIPPED as-is under the user's home (/home/opentars).
 #   * NOTHING is installed or built manually here — no `pip install`, no
 #     `npm ci/build`. The app's startup script (./opentars) performs ALL
 #     dependency installation and the frontend build at runtime (first start).
@@ -31,8 +31,8 @@ FROM node:20-bookworm-slim
 ARG MTB_REPO
 ARG MTB_REF
 
-ENV APP_HOME=/home/threatbox \
-    HOME=/home/threatbox \
+ENV APP_HOME=/home/opentars \
+    HOME=/home/opentars \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -41,6 +41,8 @@ ENV APP_HOME=/home/threatbox \
 #   python3/venv/pip — the startup script provisions the backend venv
 #   curl/ca-certs — fetch the uv installer + container HEALTHCHECK probe
 #   gosu          — drop from root to the app user in the entrypoint
+#   libgomp1      — OpenMP runtime required by PyTorch/onnxruntime (pulled in
+#                   by the `docling` PDF parser); not bundled in the pip wheels
 # uv is installed system-wide so the startup script prefers it over pip.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -51,9 +53,23 @@ RUN apt-get update \
         curl \
         ca-certificates \
         gosu \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
     && uv --version
+
+# Chromium's OS-level shared libraries (the `playwright` headless-Chromium
+# fallback for JS-heavy pages). The startup script installs the `playwright`
+# Python package and downloads the Chromium binary itself at runtime, as the
+# unprivileged "opentars" user — which has no apt/sudo access to install these.
+# Install just the OS packages here at build time via a throwaway playwright
+# invocation (run as root, during build), matching whatever set the installed
+# browser version actually needs; the Python package itself is not kept.
+RUN apt-get update \
+    && python3 -m pip install --no-cache-dir --break-system-packages playwright \
+    && python3 -m playwright install-deps chromium \
+    && python3 -m pip uninstall -y --break-system-packages playwright \
+    && rm -rf /var/lib/apt/lists/*
 
 # Ship the whole application: shallow-clone the requested ref and place its
 # contents at the app home (the home dir already exists because the uv installer
@@ -68,9 +84,9 @@ RUN git clone --depth 1 --branch "${MTB_REF}" "${MTB_REPO}" /tmp/app \
 
 # Unprivileged user/group with a fixed uid/gid whose home is the cloned app dir
 # (already present, so do NOT --create-home). Then hand it ownership of the tree.
-RUN groupadd --gid 10001 threatbox \
-    && useradd --uid 10001 --gid 10001 --home-dir ${APP_HOME} --shell /bin/bash threatbox \
-    && chown -R threatbox:threatbox "${APP_HOME}"
+RUN groupadd --gid 10001 opentars \
+    && useradd --uid 10001 --gid 10001 --home-dir ${APP_HOME} --shell /bin/bash opentars \
+    && chown -R opentars:opentars "${APP_HOME}"
 
 WORKDIR ${APP_HOME}
 
@@ -86,7 +102,7 @@ LABEL org.opencontainers.image.title="OpenTARS" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # Entrypoint fixes ownership of the bind-mounted data/logs dirs as root, then
-# drops to the unprivileged "threatbox" user before running the startup script.
+# drops to the unprivileged "opentars" user before running the startup script.
 # (It is the only file taken from the build context.)
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
