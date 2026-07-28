@@ -20,8 +20,8 @@ the repository's app config — the repo is used only to download the app.
 - **Dependency install + frontend build:** done by the startup script at the
   **first start** (the container needs outbound internet then)
 - **Authentication:** **enabled by default** (`--enable-auth`)
-- **Runs as:** unprivileged user `threatbox` (uid/gid `10001`), app under
-  `/home/threatbox`
+- **Runs as:** unprivileged user `opentars` (uid/gid `10001`), app under
+  `/home/opentars`
 - **Listens on:** `0.0.0.0:8000`
 
 ## Layout
@@ -40,7 +40,7 @@ docker/
 
 The `Dockerfile` installs **only the toolchain** the startup script needs
 (Node.js + npm, Python 3 + venv + pip, `uv`, `git`, `curl`) and then
-`git clone`s the application into the user's home (`/home/threatbox`). It does
+`git clone`s the application into the user's home (`/home/opentars`). It does
 **not** run `pip install`, `npm ci`, or build the frontend, and it never copies
 the repository's config.
 
@@ -96,9 +96,9 @@ This starts a container named **`opentars`**, publishes **port 8000**,
 and persists state in two **host directories** created next to
 `docker-compose.yml`:
 
-- `./opentars-data` → `/home/threatbox/data` (SQLite databases + the
+- `./opentars-data` → `/home/opentars/data` (SQLite databases + the
   first-run admin credential file)
-- `./opentars-logs` → `/home/threatbox/logs` (`app.log` / `audit.log`)
+- `./opentars-logs` → `/home/opentars/logs` (`app.log` / `audit.log`)
 
 > These host folders are created root-owned by Docker; the container's
 > entrypoint briefly runs as root to `chown` them to the app user (uid `10001`),
@@ -160,8 +160,8 @@ This sets a fresh random password, prints it, rewrites
 
 ```bash
 docker run -d --name opentars -p 8000:8000 \
-  -v "$PWD/opentars-data:/home/threatbox/data" \
-  -v "$PWD/opentars-logs:/home/threatbox/logs" \
+  -v "$PWD/opentars-data:/home/opentars/data" \
+  -v "$PWD/opentars-logs:/home/opentars/logs" \
   opentars/local
 ```
 
@@ -178,7 +178,7 @@ up.
 
 ## Notes
 
-- **Runs as the unprivileged `threatbox` user (uid/gid `10001`).** The
+- **Runs as the unprivileged `opentars` user (uid/gid `10001`).** The
   entrypoint starts as root only to fix ownership of the bind-mounted
   `./opentars-data` / `./opentars-logs` directories, then drops privileges
   via `gosu` — the application process always runs unprivileged.

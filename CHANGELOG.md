@@ -39,6 +39,17 @@ identifiers are now `opentars` / `opentars-frontend`. The Docker build artifacts
 (`docker/mizton-threatbox-docker/` → `docker/opentars-docker/`, image tag, container/service name,
 OCI labels) were renamed to match.
 
+**Follow-up 2:** the remaining bare `threatbox` references (not just `mizton-threatbox`) have been
+swept from the Docker image, Compose file, and config examples: the container's Linux user/group/home
+is now `opentars` (was `threatbox`), `config/sso.yaml.example`'s sample role-mapping claim values are
+now `OpenTARS-Admin/Researcher/Viewer`, and stray example URLs (README, `scripts/client_tests_demo/`)
+now use `/opentars` instead of `/threatbox`. The Docker image's minimal system-package list also
+gained two entries it was silently missing: `libgomp1` (the OpenMP runtime PyTorch/onnxruntime need,
+pulled in by the `docling` PDF parser) and, at build time, Chromium's OS-level shared libraries for
+Playwright's headless-Chromium JS-page fallback — both previously worked only on hosts whose base
+image happened to already carry them, since the app installs its Python dependencies at runtime as an
+unprivileged user with no `apt`/`sudo` access to fix a missing system library itself.
+
 ### Added — Config-drift notice for admins
 
 Every setting in the gitignored instance-config files (`application.yaml`, `sources.yaml`,
@@ -738,7 +749,7 @@ frontend SSO bypass, frontend local-user still blocked).
 - **SSO coexists with local login**: the login page shows a configurable "Sign in with SSO" button above a divider and the existing username/password form. Local admin always works as a break-glass path.
 - **Write-only-secret config** at `config/sso.yaml` (gitignored). Mirrors `llm-providers.yaml` hygiene: `client_secret` is always redacted to `"***"` on reads; sentinel round-trips preserve the stored value. `config/sso.yaml.example` committed with annotated Entra, Google, and generic OIDC templates. Env overrides: `OPENTARS_SSO_ENABLED`, `..._SSO_CLIENT_ID`, `..._SSO_CLIENT_SECRET`, `..._SSO_ISSUER`, `..._SSO_TENANT_ID`, `..._SSO_BUTTON_LABEL`, `..._SSO_DEFAULT_ROLE`.
 - **Role mapping**: configurable `role_claim` (e.g. `roles` for Entra App Roles, `groups` for group GUIDs) with a `role_mapping` dict (claim value → app role). Most-privileged match wins when a user has multiple matching claims. Unmapped users get `default_role` (default `threat-viewer`).
-- **Auto-provisioning**: on first SSO login, a OpenTARS account is automatically created with an unusable local password. `auto_provision: false` requires manual account creation. Returning SSO users are matched by `(idp, sub)` first (stable across email renames), then by username.
+- **Auto-provisioning**: on first SSO login, an OpenTARS account is automatically created with an unusable local password. `auto_provision: false` requires manual account creation. Returning SSO users are matched by `(idp, sub)` first (stable across email renames), then by username.
 - **DB schema v4 migration**: two nullable columns added to `users` (`idp`, `external_id`) for SSO account tracking; new `oidc_flows` table stores short-lived OIDC state/nonce/PKCE (10-min TTL, consumed atomically on callback to prevent replay). Migration is idempotent; existing local accounts are unaffected (both columns NULL).
 - **New backend modules**: `backend/auth/oidc_config.py` (config load/save/validate/redact/map_claims), `backend/auth/oidc.py` (discovery cache, PKCE, authorization URL builder, callback handler, ID-token verification via joserfc/JWKS, user upsert).
 - **New routes** (all under `/api/auth`):

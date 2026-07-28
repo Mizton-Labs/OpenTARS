@@ -26,7 +26,7 @@
 #      - Redirect URI: Web → https://<your-host>/api/auth/oidc/callback
 #   2. Certificates & secrets → New client secret  (this is your SPN secret)
 #   3. Expose an API → App roles (optional, for role mapping)
-#      - Create roles: ThreatBox-Admin, ThreatBox-Researcher, ThreatBox-Viewer
+#      - Create roles: OpenTARS-Admin, OpenTARS-Researcher, OpenTARS-Viewer
 #      - Assign users/groups to roles
 #   4. Token configuration → Add groups claim (alternative to App Roles)
 #   5. API permissions → openid, profile, email  (delegated, admin consent)
@@ -48,14 +48,14 @@ role_claim: roles
 # For Entra App Roles the key is the role's "Value" (not display name).
 # For group claims the key is the group Object ID GUID.
 role_mapping:
-  ThreatBox-Admin: admin
-  ThreatBox-Researcher: threat-researcher
-  ThreatBox-Viewer: threat-viewer
+  OpenTARS-Admin: admin
+  OpenTARS-Researcher: threat-researcher
+  OpenTARS-Viewer: threat-viewer
 
 # Role given to SSO users whose claims don't match any entry above.
 default_role: threat-viewer
 
-# Automatically create a OpenTARS account on first SSO login.
+# Automatically create an OpenTARS account on first SSO login.
 # Set to false if you prefer to pre-create accounts manually.
 auto_provision: true
 

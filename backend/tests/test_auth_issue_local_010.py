@@ -224,9 +224,9 @@ def test_map_claims_direct_match() -> None:
     from backend.auth.oidc_config import map_claims_to_role
 
     role = map_claims_to_role(
-        {"roles": ["ThreatBox-Admin"]},
+        {"roles": ["OpenTARS-Admin"]},
         role_claim="roles",
-        role_mapping={"ThreatBox-Admin": "admin", "ThreatBox-Viewer": "threat-viewer"},
+        role_mapping={"OpenTARS-Admin": "admin", "OpenTARS-Viewer": "threat-viewer"},
         default_role="threat-viewer",
     )
     assert role == "admin"
@@ -237,11 +237,11 @@ def test_map_claims_most_privileged_wins() -> None:
     from backend.auth.oidc_config import map_claims_to_role
 
     role = map_claims_to_role(
-        {"roles": ["ThreatBox-Viewer", "ThreatBox-Researcher"]},
+        {"roles": ["OpenTARS-Viewer", "OpenTARS-Researcher"]},
         role_claim="roles",
         role_mapping={
-            "ThreatBox-Researcher": "threat-researcher",
-            "ThreatBox-Viewer": "threat-viewer",
+            "OpenTARS-Researcher": "threat-researcher",
+            "OpenTARS-Viewer": "threat-viewer",
         },
         default_role="threat-viewer",
     )
@@ -254,7 +254,7 @@ def test_map_claims_no_match_returns_default() -> None:
     role = map_claims_to_role(
         {"roles": ["SomeOtherGroup"]},
         role_claim="roles",
-        role_mapping={"ThreatBox-Admin": "admin"},
+        role_mapping={"OpenTARS-Admin": "admin"},
         default_role="threat-viewer",
     )
     assert role == "threat-viewer"
@@ -277,9 +277,9 @@ def test_map_claims_single_string_value() -> None:
     from backend.auth.oidc_config import map_claims_to_role
 
     role = map_claims_to_role(
-        {"roles": "ThreatBox-Admin"},
+        {"roles": "OpenTARS-Admin"},
         role_claim="roles",
-        role_mapping={"ThreatBox-Admin": "admin"},
+        role_mapping={"OpenTARS-Admin": "admin"},
         default_role="threat-viewer",
     )
     assert role == "admin"
@@ -464,9 +464,9 @@ def test_build_callback_url_with_prefix() -> None:
     """When the app is mounted under a sub-path, the prefix is included in the callback URL."""
     from backend.auth.oidc import _build_callback_url
 
-    url = _build_callback_url("https://example.com/threatbox/")
+    url = _build_callback_url("https://example.com/opentars/")
     # The prefix IS included — this is the URL that must be registered in the IdP
-    assert url == "https://example.com/threatbox/api/auth/oidc/callback"
+    assert url == "https://example.com/opentars/api/auth/oidc/callback"
 
 
 def test_get_callback_url_for_display() -> None:

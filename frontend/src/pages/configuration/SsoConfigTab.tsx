@@ -349,7 +349,7 @@ export default function SsoConfigTab() {
                 <input
                   className="input flex-1 text-xs font-mono"
                   type="text"
-                  placeholder="Claim value (e.g. ThreatBox-Admin)"
+                  placeholder="Claim value (e.g. OpenTARS-Admin)"
                   value={row.claim}
                   onChange={(e) => {
                     const next = [...roleRows]

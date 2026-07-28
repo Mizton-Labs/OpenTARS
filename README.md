@@ -633,7 +633,7 @@ scripts/api_client.py --url http://192.168.0.10:8001 -u bot -p "$SFI_PW" \
   send --file events.json
 
 # HTTPS behind a reverse-proxy alias, accepting a self-signed cert (insecure)
-scripts/api_client.py --url https://proxy.example.com/threatbox -k \
+scripts/api_client.py --url https://proxy.example.com/opentars -k \
   --username analyst get-raw
 ```
 

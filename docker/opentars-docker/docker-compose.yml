@@ -28,6 +28,6 @@ services:
       - "8000:8000"
     volumes:
       # SQLite databases + first-run admin credential file -> host directory.
-      - ./opentars-data:/home/threatbox/data
+      - ./opentars-data:/home/opentars/data
       # Application logs (app.log / audit.log) -> host directory.
-      - ./opentars-logs:/home/threatbox/logs
+      - ./opentars-logs:/home/opentars/logs
