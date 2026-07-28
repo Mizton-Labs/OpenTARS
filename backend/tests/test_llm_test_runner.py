@@ -6,6 +6,7 @@ import json
 
 from backend.llm.client import (
     AnthropicClient,
+    AzureAIFoundryClient,
     OllamaClient,
     OpenAIClient,
     OpenAICompatibleClient,
@@ -595,6 +596,49 @@ def test_discover_only_anthropic_returns_ok_with_synthetic_record():
     assert result["details"][0]["step"] == "list_models"
     assert "anthropic" in (result["details"][0]["error"] or "")
     assert len(tx.calls) == 0
+
+
+def test_discover_only_azure_foundry_anthropic_style_returns_ok_with_synthetic_record():
+    """issue-local-027: AzureAIFoundryClient with api_style="anthropic" (Claude
+    via Azure's Anthropic passthrough) has the exact same "no public list
+    endpoint" limitation as native Anthropic — it must get the same graceful
+    synthetic record, not the generic "client.list_models() returned None"
+    hard-failure treatment."""
+    tx = _Tx([])  # no wire calls expected
+    c = AzureAIFoundryClient(
+        name="azure-claude",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="key",
+        model="",
+        api_style="anthropic",
+        transport=tx,
+    )
+    result = run_discover_only(c)
+    assert result["status"] == "ok"
+    assert result["models"] is None
+    assert len(result["details"]) == 1
+    assert result["details"][0]["step"] == "list_models"
+    assert "anthropic" in (result["details"][0]["error"] or "")
+    assert len(tx.calls) == 0
+
+
+def test_discover_only_azure_foundry_unified_style_still_uses_real_endpoint():
+    """Sanity check: only api_style="anthropic" gets the synthetic
+    treatment — the default "unified" mode still calls the real /models
+    endpoint, unaffected by the issue-local-027 fix."""
+    tx = _Tx([(200, {}, _models_body("gpt-4o"))])
+    c = AzureAIFoundryClient(
+        name="azure-openai",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="key",
+        model="",
+        api_style="unified",
+        transport=tx,
+    )
+    result = run_discover_only(c)
+    assert result["status"] == "ok"
+    assert result["models"] == ["gpt-4o"]
+    assert len(tx.calls) == 1
 
 
 def test_discover_only_empty_list_is_023_failure():

@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed / Added — Azure AI Foundry Claude provider, manual model entry (issue-local-027)
+
+- **Fixed: "Discover Models" showed a scary, crash-looking error for Azure AI Foundry's Anthropic
+  passthrough** (`api_style: anthropic`, used for Claude models via Azure). Root cause: the test
+  runner's Anthropic-protocol detection only recognized the native `anthropic` provider kind, not
+  `azure_ai_foundry` configured for the passthrough — even though both have exactly the same "no
+  public model-list endpoint" limitation. It fell through to the generic path and got treated as a
+  hard failure (`"client.list_models() returned None"`) instead of the same graceful, expected
+  "no discovery endpoint" outcome native Anthropic already gets.
+- **Fixed: a base URL change on this provider type could never be saved.** The provider card's Save
+  button ran model discovery whenever the base URL changed and refused to persist if it came back
+  empty — but an Anthropic-protocol provider's discovery *always* comes back empty by design, so
+  this made it permanently impossible to save a base URL edit for one. Save now persists directly
+  for this provider type, skipping the discovery gate that could never succeed.
+- **New: manually add models to a provider's card.** Providers with no model-discovery endpoint
+  (or where discovery simply hasn't found a model yet) can now have model ids typed in directly —
+  they show as removable chips and feed the same `available_models` list "Discover Models" would
+  have populated, including the Threat Hunting per-run model-selector dropdown. "Discover Models"
+  on an Anthropic-protocol provider now shows an informational note pointing at this instead of a
+  red error.
+
 ### Fixed — PDF report generation failing on ~half of real hunts
 
 Root-caused via a live check of the last 25 generated reports on the test server: 12 (48%)

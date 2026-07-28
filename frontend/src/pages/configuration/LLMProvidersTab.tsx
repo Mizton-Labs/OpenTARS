@@ -54,6 +54,7 @@ import {
   Save,
   Search,
   Trash2,
+  X,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -302,8 +303,12 @@ function ProviderCard({
 
   const [discoverError, setDiscoverError] = useState<string | null>(null)
   const [discovering, setDiscovering] = useState(false)
-  /** Set to a short success/error string after Discover Models writes. */
+  /** Set to a short success string after Discover Models writes. */
   const [discoverNote, setDiscoverNote] = useState<string | null>(null)
+  /** issue-local-027: neutral (non-error, non-success) note — e.g. "this
+   *  provider has no discovery endpoint" — kept distinct from discoverNote
+   *  so it never renders in the same green "it worked" styling. */
+  const [discoverInfo, setDiscoverInfo] = useState<string | null>(null)
 
   const [savedAt, setSavedAt] = useState<number | null>(null)
 
@@ -352,8 +357,15 @@ function ProviderCard({
       let working = draft
       const urlChanged = (draft.base_url ?? '') !== (initial.base_url ?? '')
 
-      // 1. Discovery — only when the base URL changed.
-      if (urlChanged) {
+      // 1. Discovery — only when the base URL changed, and only for
+      //    providers that actually support it. Anthropic-protocol
+      //    providers (native anthropic, or azure_ai_foundry with
+      //    api_style="anthropic") have no /models endpoint at all —
+      //    gating Save on a discovery result that can never succeed made
+      //    it impossible to ever save a base_url change for them
+      //    (issue-local-027). Their available_models are populated
+      //    manually instead (see the "Add model" control below).
+      if (urlChanged && !isAnthropicProtocolDraft(draft)) {
         const d = await api.llm.discoverDraft({ ...toProbePayload(draft), name: initial.name })
         if (d.status !== 'ok' || !d.models || d.models.length === 0) {
           const detailErr = (d.details ?? []).map(x => x.error).filter(Boolean).pop()
@@ -389,7 +401,19 @@ function ProviderCard({
     setDiscovering(true)
     setDiscoverError(null)
     setDiscoverNote(null)
+    setDiscoverInfo(null)
     try {
+      // issue-local-027: anthropic-protocol providers (native anthropic,
+      // or azure_ai_foundry with api_style="anthropic") have no /models
+      // endpoint — this is an expected protocol limitation, not a failure.
+      // Guide the operator to the manual "Add model" control instead of
+      // showing a red error for a call that can never succeed.
+      if (isAnthropicProtocolDraft(draft)) {
+        setDiscoverInfo(
+          'This provider has no model-discovery endpoint. Add models manually below.',
+        )
+        return
+      }
       const r = await api.llm.discoverProvider(initial.name)
       if (r.status !== 'ok' || !r.models || r.models.length === 0) {
         // Surface the canonical 023 verdict or transport message.
@@ -593,6 +617,9 @@ function ProviderCard({
           {discoverNote && (
             <span className="text-xs text-green-400">{discoverNote}</span>
           )}
+          {discoverInfo && (
+            <span className="text-xs text-gray-400">{discoverInfo}</span>
+          )}
           {discoverError && (
             <span className="text-xs text-red-400 break-all" role="alert">
               {discoverError}
@@ -679,6 +706,53 @@ function ProviderCard({
 }
 
 // ── Form fields (shared edit) ────────────────────────────────────────────
+
+/** issue-local-027: text input + Add button for manually appending a model
+ *  id to a provider's available_models. Kept as its own tiny component so
+ *  the typed-but-not-yet-added text is local state, not staged into the
+ *  provider draft itself. */
+function AddModelInput({
+  onAdd,
+  existing,
+}: {
+  onAdd: (model: string) => void
+  existing: string[]
+}) {
+  const [value, setValue] = useState('')
+
+  const submit = () => {
+    const trimmed = value.trim()
+    if (!trimmed || existing.includes(trimmed)) return
+    onAdd(trimmed)
+    setValue('')
+  }
+
+  return (
+    <div className="flex gap-1.5">
+      <input
+        className="input flex-1"
+        placeholder="e.g. claude-opus-4-8"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            submit()
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="btn-secondary text-xs px-2.5 flex items-center gap-1 shrink-0"
+        onClick={submit}
+        disabled={!value.trim()}
+      >
+        <Plus className="w-3.5 h-3.5" />
+        Add
+      </button>
+    </div>
+  )
+}
 
 function ProviderFields({
   draft,
@@ -797,6 +871,42 @@ function ProviderFields({
             No models discovered. Click "Discover Models" to populate this list.
           </div>
         )}
+      </div>
+
+      {/* issue-local-027: manual model management — the only way to
+          populate available_models for a provider with no discovery
+          endpoint (anthropic-protocol kinds), and a useful supplement for
+          any other kind too (a model Discover Models doesn't surface yet). */}
+      <div className="col-span-2">
+        <label className="label">Available models (for the Threat Hunting model picker)</label>
+        {availableModels.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-1.5" data-testid="available-models-chips">
+            {availableModels.map(m => (
+              <span
+                key={m}
+                className="inline-flex items-center gap-1 text-xs bg-gray-800 border border-gray-700 rounded-full pl-2.5 pr-1.5 py-0.5"
+              >
+                {m}
+                <button
+                  type="button"
+                  className="text-gray-500 hover:text-red-400"
+                  aria-label={`Remove ${m}`}
+                  onClick={() =>
+                    onChange({ available_models: availableModels.filter(x => x !== m) })
+                  }
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <AddModelInput
+          onAdd={model =>
+            onChange({ available_models: [...availableModels, model] })
+          }
+          existing={availableModels}
+        />
       </div>
 
       <div>
