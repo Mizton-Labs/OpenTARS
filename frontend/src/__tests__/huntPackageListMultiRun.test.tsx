@@ -318,4 +318,22 @@ describe('ThreatHunting list — Table density mode (issue-local-017)', () => {
     // HuntDetail renders a back arrow / evidence tab once a package is selected.
     expect(await screen.findByText('Evidence (0)')).toBeInTheDocument()
   })
+
+  it('shows the package owner in Table mode (issue-local-026)', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        name: 'Test Package',
+        created_by: 'alice',
+        runs: [{ id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' }],
+        run_count: 1,
+      }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+    await screen.findByText('Model')
+
+    expect(screen.getByText('alice')).toBeInTheDocument()
+  })
 })

@@ -35,9 +35,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Hunt runs now record who started them.** New `hunting_packages.created_by` column (schema
   v10) — the Runs table gained a "Created by" column, and the hunt-package list's Table density
   view now shows the owner (Card/Compact views already did).
-- **Fixed: a run made with "Configured default" showed no model at all.** The Runs table now
-  resolves the actual default provider/model from the current LLM config instead of showing a bare
-  "—" when no explicit provider/model was chosen for the run.
+- **Fixed: a run made with "Configured default" showed no model at all.** `hunting_packages.llm_provider`/
+  `llm_model` stayed `NULL` forever for a "Default" run — nothing was ever persisted to show. The
+  pipeline now resolves the actual default provider/model once, at run-start time, and persists
+  those resolved values on the run itself, so it reflects what was genuinely used for that specific
+  run rather than being reconstructed later from whatever the default happens to be *today* (which
+  would silently drift if an admin changes the default afterward). The Runs table still falls back
+  to resolving today's default for runs created before this fix, whose columns are still `NULL`.
+- **Table view styling**: each hunt's title bar now has its own background and slightly larger
+  text so it reads clearly as a header, and the run owner is shown as a highlighted pill instead of
+  small muted text.
 - **Fixed: the same IOC could appear as multiple duplicate rows**, most visibly as repeated
   entries in the Threat Intelligence tab's cross-package "Correlated IOCs" table. Root cause:
   `extracted_iocs` had no uniqueness constraint at all — the table's only key was a fresh UUID per

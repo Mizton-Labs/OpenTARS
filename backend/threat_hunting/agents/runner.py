@@ -494,6 +494,28 @@ async def start_generation(
     """
     from backend.threat_hunting.agents.pipeline import build_initial_state
 
+    # issue-local-026 follow-up: when the analyst picks "Configured default"
+    # (provider_name/model_name both None), resolve the ACTUAL provider and
+    # model that will be used right now, once, and persist those resolved
+    # values on this run's row instead of leaving them NULL. Previously a
+    # "Default" run's llm_provider/llm_model columns stayed NULL forever, so
+    # the Runs table had nothing to show — and the only workaround (re-derive
+    # "whatever the current default is" at display time) would silently
+    # drift out of sync with what a given historical run actually used if an
+    # admin changed the default afterward. Soft-fail: if resolution fails
+    # here (e.g. LLM disabled, no default configured), fall through with
+    # provider_name/model_name still None — the pipeline's own LLM calls
+    # will raise the real, actionable error at the point they need a client.
+    if provider_name is None:
+        try:
+            from backend.llm.registry import get_client
+
+            default_client = get_client(None)
+            provider_name = default_client.name
+            model_name = model_name or default_client.model
+        except Exception:  # noqa: BLE001
+            pass
+
     run_id = str(uuid.uuid4())
     initial_state = build_initial_state(
         pkg_id,

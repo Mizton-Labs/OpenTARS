@@ -138,12 +138,16 @@ function IocCounts({ run }: { run: THuntPackageRun }) {
   )
 }
 
-// issue-local-026: when a run was started with "Configured default" (no
-// explicit provider/model chosen), llm_provider/llm_model are persisted as
-// NULL — resolve what the default actually was via the current LLM config
-// so the Model column doesn't just show an ambiguous "—". Shared queryKey
-// across every RunsStatusTable instance on a page, so react-query dedupes
-// this to a single fetch regardless of how many run tables are rendered.
+// issue-local-026: runner.py now resolves "Configured default" to the
+// actual provider/model at run-start time and persists that on the run row,
+// so llm_model is populated for every NEW run going forward. This fallback
+// only matters for runs created before that backend fix, whose
+// llm_provider/llm_model are still NULL — resolve what the CURRENT default
+// is via the LLM config so those legacy rows don't show a bare "—" either
+// (best-effort only: for a legacy row this reflects today's default, which
+// may differ from what was actually used back when that run ran). Shared
+// queryKey across every RunsStatusTable instance on a page, so react-query
+// dedupes this to a single fetch regardless of how many run tables render.
 function useDefaultModelLabel(): string | null {
   const { data } = useQuery({
     queryKey: ['llm-config-default-model'],
