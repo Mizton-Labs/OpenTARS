@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 10
+_TH_SCHEMA_VERSION = 11
 
 
 def _utc_now_iso() -> str:
@@ -426,6 +426,38 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         except Exception:
             pass
         logger.info("Migrated threat_hunting.db to schema v10 (added hunting_packages.created_by)")
+    if current_version < 11:
+        # v11 (issue-local-026 follow-up): extracted_iocs had NO uniqueness
+        # constraint on (hunt_package_id, run_id, ioc, ioc_type) — the only
+        # real key was `id`, a fresh UUID per row — so add_extracted_iocs's
+        # "INSERT OR IGNORE" never actually ignored anything. Every evidence
+        # item that mentioned the same IOC inserted its own duplicate row,
+        # and every reader of this table (the flat IOC tab, the cross-package
+        # Threat Intel correlation query) surfaced the same IOC multiple
+        # times. Clean up duplicates already on disk (keep the lowest id per
+        # group — SQLite GROUP BY treats NULL run_id as one group too, so
+        # this also collapses pre-run_id legacy duplicates), then add the
+        # unique index so future inserts actually dedupe as the code already
+        # assumed they did.
+        try:
+            await db.execute(
+                """
+                DELETE FROM extracted_iocs
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM extracted_iocs
+                    GROUP BY hunt_package_id, run_id, ioc, ioc_type
+                )
+                """
+            )
+            await db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_extracted_iocs_unique "
+                "ON extracted_iocs(hunt_package_id, run_id, ioc, ioc_type)"
+            )
+        except Exception as exc:
+            logger.warning("Schema v11 IOC dedup skipped (non-fatal): %s", exc)
+        logger.info(
+            "Migrated threat_hunting.db to schema v11 (deduped extracted_iocs, added unique index)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -1256,7 +1288,23 @@ async def list_extracted_iocs(
             )
         rows = await cur.fetchall()
         await cur.close()
-    return [dict(r) for r in rows]
+    # issue-local-026 follow-up: defense-in-depth dedup on top of the
+    # extracted_iocs unique index (schema v11) — belt-and-suspenders so a
+    # pre-migration DB, or any future insert path that bypasses
+    # add_extracted_iocs, still can't surface the same IOC twice in a single
+    # run's list. Keyed by (ioc_type, ioc, run_id) so the run_id=None
+    # "every run for this package" path still shows one row per run, not
+    # one row total collapsed across the package's whole history.
+    seen: set[tuple[str, str, str | None]] = set()
+    deduped: list[dict[str, Any]] = []
+    for r in rows:
+        row = dict(r)
+        key = (row.get("ioc_type", ""), row.get("ioc", ""), row.get("run_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 # ── SIEM Connector CRUD ───────────────────────────────────────────────────────
@@ -1992,7 +2040,16 @@ async def find_cross_package_ioc_matches(
 ) -> list[dict[str, Any]]:
     """Find *iocs* (this package's kept IOC values) appearing in OTHER hunt
     packages' extracted_iocs rows. All packages share one DB file, so this
-    is a plain scoped SELECT — no cross-database complexity."""
+    is a plain scoped SELECT — no cross-database complexity.
+
+    issue-local-026 follow-up: GROUP BY collapses to one row per
+    (ioc, ioc_type, other package) — an IOC legitimately extracted across
+    several runs of that OTHER package (each run is an independent
+    extraction, so each can genuinely contain it) previously surfaced as
+    one correlation row per run. The Threat Intelligence tab only ever
+    displays ioc/ioc_type/hunt_name (never run_id), so those extra rows
+    were pure visual duplicates, not distinct information.
+    """
     unique_iocs = sorted({i for i in iocs if i})
     if not unique_iocs:
         return []
@@ -2000,11 +2057,14 @@ async def find_cross_package_ioc_matches(
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            f"""SELECT ei.ioc, ei.ioc_type, ei.hunt_package_id, ei.run_id, hp.name AS hunt_name
+            f"""SELECT ei.ioc, ei.ioc_type, ei.hunt_package_id, MIN(ei.run_id) AS run_id,
+                       hp.name AS hunt_name
                 FROM extracted_iocs ei
                 JOIN hunt_packages hp ON hp.id = ei.hunt_package_id
                 WHERE ei.hunt_package_id != ? AND ei.action != 'remove'
-                  AND ei.ioc IN ({placeholders})""",  # noqa: S608
+                  AND ei.ioc IN ({placeholders})
+                GROUP BY ei.ioc, ei.ioc_type, ei.hunt_package_id, hp.name
+                ORDER BY ei.ioc_type, ei.ioc""",  # noqa: S608
             (hunt_package_id, *unique_iocs),
         )
         rows = await cur.fetchall()

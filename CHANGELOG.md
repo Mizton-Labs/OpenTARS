@@ -38,6 +38,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Fixed: a run made with "Configured default" showed no model at all.** The Runs table now
   resolves the actual default provider/model from the current LLM config instead of showing a bare
   "—" when no explicit provider/model was chosen for the run.
+- **Fixed: the same IOC could appear as multiple duplicate rows**, most visibly as repeated
+  entries in the Threat Intelligence tab's cross-package "Correlated IOCs" table. Root cause:
+  `extracted_iocs` had no uniqueness constraint at all — the table's only key was a fresh UUID per
+  row, so the existing `INSERT OR IGNORE` never actually ignored anything, and every evidence item
+  mentioning the same IOC inserted its own duplicate row. New schema migration cleans up any
+  duplicates already on disk and adds a real unique index (scoped per run, so the same IOC found
+  again in a later, independent run is correctly kept separate) so future inserts dedupe as the
+  code already assumed they did. The cross-package correlation query also now collapses an IOC
+  found across several runs of the *same* other hunt package into one row, since the Threat
+  Intelligence tab only ever displays which hunt an IOC came from, not which run.
 
 ### Fixed — Anthropic responses truncated by output-token budget went undetected (issue-local-025)
 
