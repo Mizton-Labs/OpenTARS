@@ -543,7 +543,7 @@ class IocVerdictUpdateBody(BaseModel):
 
 
 @router.post("/packages/{pkg_id}/generate", status_code=202)
-async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
+async def start_generation(pkg_id: str, body: GenerateBody, request: Request) -> dict:
     """Start the LLM agent pipeline for a hunt package.
 
     Returns immediately with status=running. Poll /generate/status for progress.
@@ -573,12 +573,17 @@ async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
             detail="run_config.ioc_mode must be 'tagging_only' or 'active_cleaning'",
         )
 
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
     record = await _start(
         pkg_id,
         provider_name=body.provider_name,
         model_name=body.model_name,
         research_effort=effort,
         run_config=run_config,
+        created_by=created_by,
     )
     return record
 

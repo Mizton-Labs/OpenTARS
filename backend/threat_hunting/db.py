@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 9
+_TH_SCHEMA_VERSION = 10
 
 
 def _utc_now_iso() -> str:
@@ -135,7 +135,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     research_effort     TEXT,
     run_config          TEXT DEFAULT '{}',
     run_seq             INTEGER,
-    threat_intel_status TEXT
+    threat_intel_status TEXT,
+    created_by          TEXT
 );
 """
 
@@ -414,6 +415,17 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v9 (added hunting_packages.threat_intel_status)"
         )
+    if current_version < 10:
+        # v10 (issue-local-026): created_by on hunting_packages (the per-run
+        # table) — the username that triggered this specific run, so the
+        # Runs table can show who started it (distinct from
+        # hunt_packages.created_by, which is only the package's original
+        # creator and doesn't change on re-run by a different user).
+        try:
+            await db.execute("ALTER TABLE hunting_packages ADD COLUMN created_by TEXT")
+        except Exception:
+            pass
+        logger.info("Migrated threat_hunting.db to schema v10 (added hunting_packages.created_by)")
 
 
 async def init_threat_hunting_db() -> None:
@@ -760,7 +772,8 @@ async def list_hunt_packages(
             placeholders = ",".join("?" for _ in pkg_ids)
             cur3 = await db.execute(
                 "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
-                "       research_effort, created_at, step_logs, deep_retrohunt, run_seq "
+                "       research_effort, created_at, step_logs, deep_retrohunt, run_seq, "
+                "       created_by "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY hunt_package_id, created_at DESC",
                 pkg_ids,
@@ -819,6 +832,7 @@ async def list_hunt_packages(
                 "run_id_display": format_run_id(
                     hunt_id_by_pkg.get(r["hunt_package_id"], ""), r["run_seq"]
                 ),
+                "created_by": r["created_by"],
             }
         )
 
@@ -1667,7 +1681,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs, deep_retrohunt, run_seq, threat_intel_status
+                      step_logs, deep_retrohunt, run_seq, threat_intel_status, created_by
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",

@@ -367,6 +367,13 @@ export default function RetrohuntPanel({
 
         {/* Stats chips */}
         <div className="flex flex-wrap gap-2">
+          {/* issue-local-026: explicit Total, always computed as
+              sanitized + removed right here (never a separately-stored
+              number) so it can never drift from the two counts shown
+              alongside it. */}
+          <span className="text-[12px] px-2 py-1 rounded bg-gray-800 text-gray-100 font-semibold">
+            Total IOCs: {retrohunt.total_ioc_count + removedIocs.length}
+          </span>
           <span className="text-[12px] px-2 py-1 rounded bg-gray-800 text-gray-300">
             Sanitized IOCs: <span className="font-semibold text-gray-100">{retrohunt.total_ioc_count}</span>
           </span>

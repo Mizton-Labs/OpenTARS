@@ -9,6 +9,36 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added / Fixed — Threat Hunting IOC totals, URL->domain IOCs, RBAC, run attribution (issue-local-026)
+
+- **IOC totals now shown explicitly and can no longer read inconsistent.** A run's "IOCs (N)"
+  tab label previously counted the raw `extracted_iocs` table (populated by intake) while the
+  tab body (once Deep Retrohunt has run) displayed a separately, independently-deduped
+  `sanitized_iocs` list — two different dedup passes over the same extraction, so the two numbers
+  could legitimately disagree. The tab label now counts the exact same list the tab body renders.
+  The per-run IOC summary (Retrohunt panel) and the Comparison tab's diff table both gained an
+  explicit "Total IOCs" figure, always computed as sanitized + removed in the same place they're
+  shown — never a separately-stored number that could drift. The Comparison Markdown/PDF reports
+  gained the same Total IOCs column.
+- **New "Overall IOCs" table in the Comparison tab**: every IOC found across the compared runs,
+  which run/model extracted it, a confidence figure (derived from the existing noise score, since
+  this schema has no separate per-IOC confidence field), its verdict (kept/removed), and which
+  hypotheses/hunting leads referenced it.
+- **URLs now also add their domain as a separate IOC** before verdict/noise analysis runs — the
+  original URL IOC is kept unchanged; the derived domain is what SIEM/EDR/DNS-log pivots
+  typically need and previously only existed embedded inside the URL string.
+- **Fixed: Threat Researcher role couldn't use the model selector.** `GET /api/llm/providers` and
+  `GET /api/llm/config` were missing from that role's allowed read paths, so the model-selector
+  dropdown (which a Threat Researcher is explicitly meant to use) silently came back empty for
+  anyone who wasn't an admin. Both routes already redact API keys server-side, so opening them to
+  Researcher carries no secret-exposure risk.
+- **Hunt runs now record who started them.** New `hunting_packages.created_by` column (schema
+  v10) — the Runs table gained a "Created by" column, and the hunt-package list's Table density
+  view now shows the owner (Card/Compact views already did).
+- **Fixed: a run made with "Configured default" showed no model at all.** The Runs table now
+  resolves the actual default provider/model from the current LLM config instead of showing a bare
+  "—" when no explicit provider/model was chosen for the run.
+
 ### Fixed — Anthropic responses truncated by output-token budget went undetected (issue-local-025)
 
 Every Threat Hunting run against an Anthropic-protocol provider (native `anthropic` kind, and

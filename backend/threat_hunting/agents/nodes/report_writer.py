@@ -1447,15 +1447,25 @@ def render_comparison_markdown(full_report: dict[str, Any]) -> str:
     if diff_table:
         _h(2, f"Run Diff Table ({len(diff_table)} run(s))")
         lines.append(
-            "| Run | Model | Effort | Status | Hypotheses | IOCs (kept/removed) | Techniques | Events |"
+            "| Run | Model | Effort | Status | Hypotheses | IOCs (kept/removed) | "
+            "Total IOCs | Techniques | Events |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
         for row in diff_table:
+            # issue-local-026: explicit total, always the sum of kept+removed
+            # shown in the same row (falls back to summing those two when an
+            # older persisted report predates this field).
+            total_iocs = row.get("total_ioc_count")
+            if total_iocs is None:
+                total_iocs = (row.get("sanitized_ioc_count") or 0) + (
+                    row.get("removed_ioc_count") or 0
+                )
             lines.append(
                 f"| {row.get('run_id_display', '')} | {row.get('model', '')} | "
                 f"{row.get('effort', '')} | {row.get('status', '')} | "
                 f"{row.get('hypothesis_count', 0)} | "
                 f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)} | "
+                f"{total_iocs} | "
                 f"{row.get('technique_count', 0)} | {row.get('event_count', 0)} |"
             )
         lines.append("")
@@ -1644,8 +1654,27 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
     if diff_table:
         _h2(f"Run Diff Table ({len(diff_table)} run(s))")
         try:
-            rows = [["Run", "Model", "Effort", "Status", "Hyps", "IOCs kept/rm", "TTPs", "Events"]]
+            rows = [
+                [
+                    "Run",
+                    "Model",
+                    "Effort",
+                    "Status",
+                    "Hyps",
+                    "IOCs kept/rm",
+                    "Total IOCs",
+                    "TTPs",
+                    "Events",
+                ]
+            ]
             for row in diff_table:
+                # issue-local-026: explicit total, falls back to summing
+                # kept+removed for reports persisted before this field existed.
+                total_iocs = row.get("total_ioc_count")
+                if total_iocs is None:
+                    total_iocs = (row.get("sanitized_ioc_count") or 0) + (
+                        row.get("removed_ioc_count") or 0
+                    )
                 rows.append(
                     [
                         row.get("run_id_display", ""),
@@ -1654,13 +1683,25 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
                         row.get("status", ""),
                         str(row.get("hypothesis_count", 0)),
                         f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)}",
+                        str(total_iocs),
                         str(row.get("technique_count", 0)),
                         str(row.get("event_count", 0)),
                     ]
                 )
             story.append(
                 _styled_table(
-                    rows, [2.2 * cm, 2.4 * cm, 1.8 * cm, 2 * cm, 1.6 * cm, 2.2 * cm, 1.6 * cm, None]
+                    rows,
+                    [
+                        2 * cm,
+                        2.2 * cm,
+                        1.6 * cm,
+                        1.8 * cm,
+                        1.4 * cm,
+                        2 * cm,
+                        1.6 * cm,
+                        1.4 * cm,
+                        None,
+                    ],
                 )
             )
         except Exception:  # noqa: BLE001

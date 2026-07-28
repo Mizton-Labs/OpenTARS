@@ -194,6 +194,10 @@ class HuntPipelineState(TypedDict, total=False):
     provider_name: str | None  # override LLM provider; None = use default
     model_name: str | None  # override model; None = provider default
     research_effort: str  # 'high' | 'medium' | 'low' (default 'medium')
+    # issue-local-026: username that triggered this run (None when auth is
+    # disabled) — persisted so the Runs table can show who started each run,
+    # distinct from hunt_packages.created_by (the package's original creator).
+    created_by: str | None
     # issue-local-015: per-run IOC handling config —
     # {"ioc_mode": "tagging_only"|"active_cleaning",
     #  "ioc_cleaning_options": {"remove_noisy": bool, "remove_legit_domains": bool,

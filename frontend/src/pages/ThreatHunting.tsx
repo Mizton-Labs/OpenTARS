@@ -746,6 +746,12 @@ export default function ThreatHunting() {
                   {pkg.status}
                 </span>
                 <span className="text-[10px] text-gray-600">{pkg.run_count ?? 0} run{pkg.run_count === 1 ? '' : 's'}</span>
+                {pkg.created_by && (
+                  <span className="flex items-center gap-0.5 text-[10px] text-gray-600">
+                    <UserCircle className="w-3 h-3" />
+                    {pkg.created_by}
+                  </span>
+                )}
               </button>
               {pkg.runs && pkg.runs.length > 0 ? (
                 <RunsStatusTable
