@@ -9,6 +9,93 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed / Added — Azure AI Foundry Claude provider, manual model entry (issue-local-027)
+
+- **Fixed: "Discover Models" showed a scary, crash-looking error for Azure AI Foundry's Anthropic
+  passthrough** (`api_style: anthropic`, used for Claude models via Azure). Root cause: the test
+  runner's Anthropic-protocol detection only recognized the native `anthropic` provider kind, not
+  `azure_ai_foundry` configured for the passthrough — even though both have exactly the same "no
+  public model-list endpoint" limitation. It fell through to the generic path and got treated as a
+  hard failure (`"client.list_models() returned None"`) instead of the same graceful, expected
+  "no discovery endpoint" outcome native Anthropic already gets.
+- **Fixed: a base URL change on this provider type could never be saved.** The provider card's Save
+  button ran model discovery whenever the base URL changed and refused to persist if it came back
+  empty — but an Anthropic-protocol provider's discovery *always* comes back empty by design, so
+  this made it permanently impossible to save a base URL edit for one. Save now persists directly
+  for this provider type, skipping the discovery gate that could never succeed.
+- **New: manually add models to a provider's card.** Providers with no model-discovery endpoint
+  (or where discovery simply hasn't found a model yet) can now have model ids typed in directly —
+  they show as removable chips and feed the same `available_models` list "Discover Models" would
+  have populated, including the Threat Hunting per-run model-selector dropdown. "Discover Models"
+  on an Anthropic-protocol provider now shows an informational note pointing at this instead of a
+  red error.
+
+### Fixed — PDF report generation failing on ~half of real hunts
+
+Root-caused via a live check of the last 25 generated reports on the test server: 12 (48%)
+failed with a fatal `reportlab.platypus.doctemplate.LayoutError`. Each evidence item's extracted
+text was wrapped in a single-row, single-column `Table` for its bordered-box look — but a 1-row
+table has no row boundary to paginate at, so any evidence item whose text ran past one page's
+usable height (long articles routinely did) crashed the *entire* PDF, not just that section. This
+is what "PDF generation randomly fails" actually was: deterministic per report, driven by evidence
+length, not random. The border/background now live on the paragraph's own style instead of a
+wrapping table, so it paginates like normal document text. Also: `download_run_report_pdf` (the
+per-run PDF route, the one actually used from the Runs table) never logged its exceptions, unlike
+its two sibling PDF routes — a failure there was invisible in `app.log`, which is why nothing
+showed up when first grepping the logs for this issue.
+
+### Changed — Table view title-bar contrast
+
+The per-hunt title bar's background (added for issue-local-026) reads more clearly against the
+card body across the dark themes (Classic, Energy, Ocean).
+
+### Added / Fixed — Threat Hunting IOC totals, URL->domain IOCs, RBAC, run attribution (issue-local-026)
+
+- **IOC totals now shown explicitly and can no longer read inconsistent.** A run's "IOCs (N)"
+  tab label previously counted the raw `extracted_iocs` table (populated by intake) while the
+  tab body (once Deep Retrohunt has run) displayed a separately, independently-deduped
+  `sanitized_iocs` list — two different dedup passes over the same extraction, so the two numbers
+  could legitimately disagree. The tab label now counts the exact same list the tab body renders.
+  The per-run IOC summary (Retrohunt panel) and the Comparison tab's diff table both gained an
+  explicit "Total IOCs" figure, always computed as sanitized + removed in the same place they're
+  shown — never a separately-stored number that could drift. The Comparison Markdown/PDF reports
+  gained the same Total IOCs column.
+- **New "Overall IOCs" table in the Comparison tab**: every IOC found across the compared runs,
+  which run/model extracted it, a confidence figure (derived from the existing noise score, since
+  this schema has no separate per-IOC confidence field), its verdict (kept/removed), and which
+  hypotheses/hunting leads referenced it.
+- **URLs now also add their domain as a separate IOC** before verdict/noise analysis runs — the
+  original URL IOC is kept unchanged; the derived domain is what SIEM/EDR/DNS-log pivots
+  typically need and previously only existed embedded inside the URL string.
+- **Fixed: Threat Researcher role couldn't use the model selector.** `GET /api/llm/providers` and
+  `GET /api/llm/config` were missing from that role's allowed read paths, so the model-selector
+  dropdown (which a Threat Researcher is explicitly meant to use) silently came back empty for
+  anyone who wasn't an admin. Both routes already redact API keys server-side, so opening them to
+  Researcher carries no secret-exposure risk.
+- **Hunt runs now record who started them.** New `hunting_packages.created_by` column (schema
+  v10) — the Runs table gained a "Created by" column, and the hunt-package list's Table density
+  view now shows the owner (Card/Compact views already did).
+- **Fixed: a run made with "Configured default" showed no model at all.** `hunting_packages.llm_provider`/
+  `llm_model` stayed `NULL` forever for a "Default" run — nothing was ever persisted to show. The
+  pipeline now resolves the actual default provider/model once, at run-start time, and persists
+  those resolved values on the run itself, so it reflects what was genuinely used for that specific
+  run rather than being reconstructed later from whatever the default happens to be *today* (which
+  would silently drift if an admin changes the default afterward). The Runs table still falls back
+  to resolving today's default for runs created before this fix, whose columns are still `NULL`.
+- **Table view styling**: each hunt's title bar now has its own background and slightly larger
+  text so it reads clearly as a header, and the run owner is shown as a highlighted pill instead of
+  small muted text.
+- **Fixed: the same IOC could appear as multiple duplicate rows**, most visibly as repeated
+  entries in the Threat Intelligence tab's cross-package "Correlated IOCs" table. Root cause:
+  `extracted_iocs` had no uniqueness constraint at all — the table's only key was a fresh UUID per
+  row, so the existing `INSERT OR IGNORE` never actually ignored anything, and every evidence item
+  mentioning the same IOC inserted its own duplicate row. New schema migration cleans up any
+  duplicates already on disk and adds a real unique index (scoped per run, so the same IOC found
+  again in a later, independent run is correctly kept separate) so future inserts dedupe as the
+  code already assumed they did. The cross-package correlation query also now collapses an IOC
+  found across several runs of the *same* other hunt package into one row, since the Threat
+  Intelligence tab only ever displays which hunt an IOC came from, not which run.
+
 ### Fixed — Anthropic responses truncated by output-token budget went undetected (issue-local-025)
 
 Every Threat Hunting run against an Anthropic-protocol provider (native `anthropic` kind, and

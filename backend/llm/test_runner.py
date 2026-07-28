@@ -95,7 +95,21 @@ def _install_tap(client: LLMClient, step: str, sink: list[dict[str, Any]]):
 def _is_anthropic(client: LLMClient) -> bool:
     # Avoid a hard import cycle; identify by class name. AnthropicClient
     # lives in client.py so a name comparison is sufficient and stable.
-    return type(client).__name__ == "AnthropicClient"
+    #
+    # issue-local-027: AzureAIFoundryClient configured with
+    # api_style="anthropic" (Claude models via Azure's Anthropic passthrough)
+    # has EXACTLY the same "no public list-models endpoint" limitation as
+    # native AnthropicClient — see client.py's AzureAIFoundryClient.list_models(),
+    # which returns None for this api_style for the identical reason. Without
+    # this check, discovery for that provider kind fell through to the generic
+    # path below and got treated as a hard failure ("client.list_models()
+    # returned None"), instead of the same graceful synthetic record native
+    # Anthropic gets — a confusing, crash-looking error for an expected,
+    # by-design limitation of the protocol, not a real fault.
+    name = type(client).__name__
+    if name == "AnthropicClient":
+        return True
+    return name == "AzureAIFoundryClient" and getattr(client, "api_style", None) == "anthropic"
 
 
 def run_discover_only(client: LLMClient) -> dict[str, Any]:

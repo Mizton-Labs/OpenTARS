@@ -146,8 +146,8 @@ async def _save_generation_state(
                     llm_provider, llm_model,
                     generation_status, generation_errors, created_at,
                     current_step, completed_steps, step_logs, research_effort,
-                    run_config, run_seq)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    run_config, run_seq, created_by)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id,
                     pkg_id,
@@ -168,6 +168,7 @@ async def _save_generation_state(
                     state.get("research_effort", "medium"),
                     _to_json(state.get("run_config") or {}),
                     next_run_seq,
+                    state.get("created_by"),
                 ),
             )
         await db.commit()
@@ -475,6 +476,7 @@ async def start_generation(
     model_name: str | None = None,
     research_effort: str = "medium",
     run_config: dict[str, Any] | None = None,
+    created_by: str | None = None,
 ) -> dict[str, Any]:
     """Start a new generation run for a hunt package.
 
@@ -486,8 +488,33 @@ async def start_generation(
 
     *run_config* (issue-local-015) carries this run's IOC-handling settings
     (ioc_mode + cleaning toggles) — see HuntPipelineState.run_config.
+
+    *created_by* (issue-local-026) is the username that triggered this run
+    (None when auth is disabled), persisted to hunting_packages.created_by.
     """
     from backend.threat_hunting.agents.pipeline import build_initial_state
+
+    # issue-local-026 follow-up: when the analyst picks "Configured default"
+    # (provider_name/model_name both None), resolve the ACTUAL provider and
+    # model that will be used right now, once, and persist those resolved
+    # values on this run's row instead of leaving them NULL. Previously a
+    # "Default" run's llm_provider/llm_model columns stayed NULL forever, so
+    # the Runs table had nothing to show — and the only workaround (re-derive
+    # "whatever the current default is" at display time) would silently
+    # drift out of sync with what a given historical run actually used if an
+    # admin changed the default afterward. Soft-fail: if resolution fails
+    # here (e.g. LLM disabled, no default configured), fall through with
+    # provider_name/model_name still None — the pipeline's own LLM calls
+    # will raise the real, actionable error at the point they need a client.
+    if provider_name is None:
+        try:
+            from backend.llm.registry import get_client
+
+            default_client = get_client(None)
+            provider_name = default_client.name
+            model_name = model_name or default_client.model
+        except Exception:  # noqa: BLE001
+            pass
 
     run_id = str(uuid.uuid4())
     initial_state = build_initial_state(
@@ -496,6 +523,7 @@ async def start_generation(
         model_name=model_name,
         research_effort=research_effort,
         run_config=run_config,
+        created_by=created_by,
     )
     # Pre-register so sequential guard works before the task begins
     _ACTIVE_RUN_PKG[run_id] = pkg_id
@@ -512,6 +540,7 @@ async def start_generation(
         "model_name": model_name,
         "research_effort": research_effort,
         "run_config": run_config or {},
+        "created_by": created_by,
     }
 
 

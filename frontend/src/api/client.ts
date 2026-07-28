@@ -1954,6 +1954,9 @@ export interface THRunSummary {
    *  phase (preliminary/final) is active for this run, else null/undefined —
    *  used to gate Re-run/report-generation so they don't race the analysis. */
   threat_intel_status?: string | null
+  /** issue-local-026: username that triggered this specific run (null when
+   *  auth is disabled, or for runs created before this field existed). */
+  created_by?: string | null
 }
 
 /**
@@ -2298,9 +2301,27 @@ export interface THComparisonDiffRow {
   hypothesis_count: number
   sanitized_ioc_count: number
   removed_ioc_count: number
+  /** issue-local-026: sanitized_ioc_count + removed_ioc_count, computed
+   *  server-side so it can't drift from the two counts it's derived from. */
+  total_ioc_count: number
   technique_count: number
   event_count: number
   created_at: string
+}
+
+/** issue-local-026: one row per IOC per run that extracted it — the
+ *  cross-run overview table in the Comparison tab. */
+export interface THComparisonIocRow {
+  ioc: string
+  ioc_type: string
+  run_id: string
+  run_id_display: string
+  model: string
+  /** Derived from (1 - noise_score); null when unavailable. Not a
+   *  model-reported confidence — see comparison_analyst.py docstring. */
+  confidence_pct: number | null
+  verdict: 'keep' | 'remove' | string
+  hypotheses: string[]
 }
 
 export interface THComparisonFullReport {
@@ -2310,6 +2331,7 @@ export interface THComparisonFullReport {
   compared_run_ids: string[]
   generated_at: string
   diff_table: THComparisonDiffRow[]
+  ioc_overview: THComparisonIocRow[]
   summary: string
   key_differences: string[]
   gaps: string[]

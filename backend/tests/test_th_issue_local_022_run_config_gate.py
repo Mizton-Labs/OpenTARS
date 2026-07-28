@@ -49,11 +49,15 @@ class TestSchemaV9Migration:
         assert "threat_intel_status" in cols
 
     @pytest.mark.asyncio
-    async def test_schema_version_is_9(self, db_path: Path) -> None:
+    async def test_schema_version_matches_current(self, db_path: Path) -> None:
+        # issue-local-026: was hardcoded to 9 (the version when this test was
+        # written); a fresh DB should always land on whatever the current
+        # schema version is, so assert against the live constant instead of
+        # a literal that goes stale on every future migration.
         async with aiosqlite.connect(db_path) as db:
             cur = await db.execute("SELECT version FROM th_schema_version LIMIT 1")
             row = await cur.fetchone()
-        assert row[0] == 9
+        assert row[0] == th_db._TH_SCHEMA_VERSION
 
     @pytest.mark.asyncio
     async def test_migration_from_v8_is_idempotent(self, tmp_path: Path) -> None:

@@ -292,6 +292,7 @@ export default function ComparisonAssessmentTab({
 
   const r = report.full_report
   const diffTable = r.diff_table ?? []
+  const iocOverview = r.ioc_overview ?? []
 
   return (
     <div className="space-y-5">
@@ -333,6 +334,7 @@ export default function ComparisonAssessmentTab({
                 <th className="text-left py-1.5 px-2">Status</th>
                 <th className="text-left py-1.5 px-2">Hypotheses</th>
                 <th className="text-left py-1.5 px-2">IOCs (kept/removed)</th>
+                <th className="text-left py-1.5 px-2">Total IOCs</th>
                 <th className="text-left py-1.5 px-2">Techniques</th>
                 <th className="text-left py-1.5 px-2">Events</th>
               </tr>
@@ -350,12 +352,73 @@ export default function ComparisonAssessmentTab({
                   <td className="py-1.5 px-2 text-[11px] text-gray-400">
                     {row.sanitized_ioc_count}/{row.removed_ioc_count}
                   </td>
+                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-semibold">{row.total_ioc_count}</td>
                   <td className="py-1.5 px-2 text-[11px] text-gray-400">{row.technique_count}</td>
                   <td className="py-1.5 px-2 text-[11px] text-gray-400">{row.event_count}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Overall IOCs — issue-local-026: every IOC found across the compared
+          runs, which run/model extracted it, its verdict, a confidence
+          figure, and which hypotheses referenced it. */}
+      {iocOverview.length > 0 && (
+        <div className="border border-gray-700 rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/40">
+            <span className="text-sm font-medium text-gray-200">
+              Overall IOCs ({iocOverview.length})
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px]">
+              <thead>
+                <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+                  <th className="text-left py-1.5 px-2">IOC</th>
+                  <th className="text-left py-1.5 px-2">Type</th>
+                  <th className="text-left py-1.5 px-2">Run</th>
+                  <th className="text-left py-1.5 px-2">Model</th>
+                  <th className="text-left py-1.5 px-2">Confidence</th>
+                  <th className="text-left py-1.5 px-2">Verdict</th>
+                  <th className="text-left py-1.5 px-2">Hypotheses / leads</th>
+                </tr>
+              </thead>
+              <tbody>
+                {iocOverview.map((row, i) => (
+                  <tr key={`${row.run_id}-${row.ioc_type}-${row.ioc}-${i}`} className="border-t border-gray-800/60">
+                    <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono break-all max-w-xs">
+                      {row.ioc}
+                    </td>
+                    <td className="py-1.5 px-2 text-[11px] text-gray-400 whitespace-nowrap">{row.ioc_type}</td>
+                    <td className="py-1.5 px-2 text-[11px] text-gray-400 font-mono whitespace-nowrap">
+                      {row.run_id_display || row.run_id.slice(0, 8)}
+                    </td>
+                    <td className="py-1.5 px-2 text-[11px] text-gray-400 whitespace-nowrap">{row.model || '—'}</td>
+                    <td className="py-1.5 px-2 text-[11px] text-gray-400 whitespace-nowrap">
+                      {row.confidence_pct != null ? `${row.confidence_pct}%` : '—'}
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className={clsx(
+                          'text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap',
+                          row.verdict === 'remove'
+                            ? 'bg-red-900/20 text-red-400'
+                            : 'bg-green-900/20 text-green-400',
+                        )}
+                      >
+                        {row.verdict === 'remove' ? 'removed' : 'kept'}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-2 text-[11px] text-gray-400">
+                      {row.hypotheses.length > 0 ? row.hypotheses.join(', ') : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

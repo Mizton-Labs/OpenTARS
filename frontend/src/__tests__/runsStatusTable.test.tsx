@@ -4,7 +4,9 @@
  * counts, report download links) shown below the run selector dropdown in
  * HuntDetail.tsx, and reused for the hunt-package list's Table density mode.
  */
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { render as rtlRender, screen, within, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('../api/client', async () => {
@@ -17,6 +19,14 @@ vi.mock('../api/client', async () => {
         ...actual.api.threatHunting,
         getRunReport: vi.fn(),
       },
+      llm: {
+        ...actual.api.llm,
+        // issue-local-026: RunsStatusTable now resolves "Configured default"
+        // via GET /llm/config — no default provider by default, so existing
+        // tests keep seeing the same '—'/plain fallback behavior unless a
+        // test opts in by mocking a specific resolved value.
+        getConfig: vi.fn().mockResolvedValue({ enabled: false, default_provider: null, providers: [] }),
+      },
     },
   }
 })
@@ -24,6 +34,15 @@ vi.mock('../api/client', async () => {
 import { api } from '../api/client'
 import RunsStatusTable from '../pages/threat-hunting/RunsStatusTable'
 import type { THuntPackageRun, THHuntReport } from '../api/client'
+
+// issue-local-026: RunsStatusTable now fetches LLM config via react-query
+// (to resolve "Configured default" to a real model name) — every render
+// needs a QueryClientProvider ancestor. Shadowing `render` here keeps every
+// existing call site in this file unchanged.
+function render(ui: ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+}
 
 function makeRun(overrides: Partial<THuntPackageRun> = {}): THuntPackageRun {
   return {
@@ -121,16 +140,52 @@ describe('RunsStatusTable', () => {
   describe('IOC sanitized/removed counts', () => {
     it('shows a dash when the run has no deep_retrohunt lead yet', () => {
       render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: null, removed_ioc_count: null })]} />)
-      // Run ID, Duration, IOCs, and Report all render a "—" placeholder for
-      // this bare fixture (no run_id_display/total_elapsed_s/deep_retrohunt
-      // lead/report) — assert all four are present.
-      expect(screen.getAllByText('—')).toHaveLength(4)
+      // Run ID, Duration, IOCs, Report, and Created by all render a "—"
+      // placeholder for this bare fixture (no run_id_display/total_elapsed_s/
+      // deep_retrohunt lead/report/created_by) — assert all five are present.
+      expect(screen.getAllByText('—')).toHaveLength(5)
     })
 
     it('shows sanitized and removed counts when available', () => {
       render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: 12, removed_ioc_count: 3 })]} />)
       expect(screen.getByText('12 sanitized')).toBeInTheDocument()
       expect(screen.getByText('3 removed')).toBeInTheDocument()
+    })
+
+    it('shows an explicit total alongside sanitized and removed (issue-local-026)', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: 12, removed_ioc_count: 3 })]} />)
+      expect(screen.getByText(/15 total/)).toBeInTheDocument()
+    })
+  })
+
+  describe('Created by column (issue-local-026)', () => {
+    it('shows the username that triggered the run', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ created_by: 'alice' })]} />)
+      expect(screen.getByText('alice')).toBeInTheDocument()
+    })
+
+    it('shows a dash when created_by is null', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ created_by: null })]} />)
+      expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('Default model resolution (issue-local-026)', () => {
+    it('resolves "Configured default" to the actual default provider/model', async () => {
+      vi.mocked(api.llm.getConfig).mockResolvedValueOnce({
+        enabled: true,
+        default_provider: 'test-default-provider',
+        providers: [{ name: 'test-default-provider', kind: 'anthropic', model: 'claude-sonnet-5' }],
+      })
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ llm_model: null, llm_provider: null })]} />)
+      await waitFor(() => {
+        expect(screen.getByText('Default (claude-sonnet-5)')).toBeInTheDocument()
+      })
+    })
+
+    it('falls back to a plain dash when there is no default provider configured', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ llm_model: null, llm_provider: null })]} />)
+      expect(screen.getAllByText('—').length).toBeGreaterThan(0)
     })
   })
 

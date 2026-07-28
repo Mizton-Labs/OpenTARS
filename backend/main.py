@@ -234,10 +234,17 @@ _VIEWER_GET_PREFIXES = (
 _VIEWER_POST_PATHS = ("/api/query/nl",)
 
 # GET prefixes a 'threat-researcher' may read (everything viewer can + more).
-# In Phase 1 this is a superset of _VIEWER_GET_PREFIXES. Researchers can also
-# mutate Threat Hunting resources; those mutations are gated per-route via
-# require_researcher_or_admin (added in Phase 1f routes).
-_RESEARCHER_GET_PREFIXES = _VIEWER_GET_PREFIXES  # superset in later phases
+# Researchers can also mutate Threat Hunting resources; those mutations are
+# gated per-route via require_researcher_or_admin (added in Phase 1f routes).
+#
+# issue-local-026: /api/llm/ was missing here, so GET /api/llm/providers and
+# GET /api/llm/config 403'd for threat-researcher — the model-selector dropdown
+# in the Threat Hunting UI (which every researcher can see and use) silently
+# came back empty for anyone who wasn't admin, since its provider-list fetch
+# never got past the middleware. Both GET routes under /api/llm/ already
+# redact api_key server-side (redact_config / list_provider_names), so this
+# is safe to open to researcher without leaking secrets.
+_RESEARCHER_GET_PREFIXES = _VIEWER_GET_PREFIXES + ("/api/llm/",)
 
 # POST / PUT / DELETE paths a 'threat-researcher' may reach (TH mutations).
 _RESEARCHER_WRITE_PREFIXES = (

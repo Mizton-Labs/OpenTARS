@@ -1025,12 +1025,21 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
         leftIndent=12,
         spaceAfter=4,
     )
+    # issue-local-026 follow-up: border/background live on the style itself
+    # (not a wrapping single-row Table — see the fix note at its former call
+    # site below) so long evidence text paginates like any other Paragraph.
     evidence_text_style = ParagraphStyle(
         "EvidenceText",
         parent=body_style,
         fontSize=8.5,
         fontName="Courier",
         leading=11,
+        backColor=_COL_EVIDENCE_BG,
+        borderColor=_COL_TABLE_BORDER,
+        borderWidth=0.5,
+        borderPadding=8,
+        spaceBefore=2,
+        spaceAfter=6,
     )
 
     story: list = []
@@ -1184,26 +1193,21 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
                 story.append(Paragraph(f"Source: {_esc(str(item['source_ref']))}", code_style))
             extracted = item.get("extracted_text") or ""
             if extracted:
-                try:
-                    box = Table(
-                        [[Paragraph(_esc(extracted), evidence_text_style)]],
-                        colWidths=[None],
-                    )
-                    box.setStyle(
-                        TableStyle(
-                            [
-                                ("BACKGROUND", (0, 0), (-1, -1), _COL_EVIDENCE_BG),
-                                ("BOX", (0, 0), (-1, -1), 0.5, _COL_TABLE_BORDER),
-                                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                            ]
-                        )
-                    )
-                    story.append(box)
-                except Exception:  # noqa: BLE001
-                    _p(extracted, evidence_text_style)
+                # issue-local-026 follow-up: this used to wrap the extracted
+                # text in a single-row, single-column Table for the bordered
+                # box look. A 1-row Table has no row boundary to split at, so
+                # reportlab has no way to paginate it — any evidence item
+                # whose extracted text ran past one page's usable height
+                # (~702pt; long articles routinely did, at 2000+pt) raised a
+                # fatal LayoutError from doc.build() at the very end, aborting
+                # the ENTIRE PDF for that report. A live check of the last 25
+                # generated reports on the test server found 12 failing this
+                # way (48%) — this was "PDF generation randomly fails",
+                # deterministic per-report on evidence length, not random.
+                # The border/background now live on the Paragraph's own style
+                # (see evidence_text_style above) so it paginates like any
+                # other Paragraph — normal reportlab flowable behavior.
+                _p(extracted, evidence_text_style)
             else:
                 _p("(no extracted text)", meta_style)
             _sp(6)
@@ -1447,15 +1451,25 @@ def render_comparison_markdown(full_report: dict[str, Any]) -> str:
     if diff_table:
         _h(2, f"Run Diff Table ({len(diff_table)} run(s))")
         lines.append(
-            "| Run | Model | Effort | Status | Hypotheses | IOCs (kept/removed) | Techniques | Events |"
+            "| Run | Model | Effort | Status | Hypotheses | IOCs (kept/removed) | "
+            "Total IOCs | Techniques | Events |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
         for row in diff_table:
+            # issue-local-026: explicit total, always the sum of kept+removed
+            # shown in the same row (falls back to summing those two when an
+            # older persisted report predates this field).
+            total_iocs = row.get("total_ioc_count")
+            if total_iocs is None:
+                total_iocs = (row.get("sanitized_ioc_count") or 0) + (
+                    row.get("removed_ioc_count") or 0
+                )
             lines.append(
                 f"| {row.get('run_id_display', '')} | {row.get('model', '')} | "
                 f"{row.get('effort', '')} | {row.get('status', '')} | "
                 f"{row.get('hypothesis_count', 0)} | "
                 f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)} | "
+                f"{total_iocs} | "
                 f"{row.get('technique_count', 0)} | {row.get('event_count', 0)} |"
             )
         lines.append("")
@@ -1644,8 +1658,27 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
     if diff_table:
         _h2(f"Run Diff Table ({len(diff_table)} run(s))")
         try:
-            rows = [["Run", "Model", "Effort", "Status", "Hyps", "IOCs kept/rm", "TTPs", "Events"]]
+            rows = [
+                [
+                    "Run",
+                    "Model",
+                    "Effort",
+                    "Status",
+                    "Hyps",
+                    "IOCs kept/rm",
+                    "Total IOCs",
+                    "TTPs",
+                    "Events",
+                ]
+            ]
             for row in diff_table:
+                # issue-local-026: explicit total, falls back to summing
+                # kept+removed for reports persisted before this field existed.
+                total_iocs = row.get("total_ioc_count")
+                if total_iocs is None:
+                    total_iocs = (row.get("sanitized_ioc_count") or 0) + (
+                        row.get("removed_ioc_count") or 0
+                    )
                 rows.append(
                     [
                         row.get("run_id_display", ""),
@@ -1654,13 +1687,25 @@ def render_comparison_pdf(full_report: dict[str, Any]) -> bytes:
                         row.get("status", ""),
                         str(row.get("hypothesis_count", 0)),
                         f"{row.get('sanitized_ioc_count', 0)}/{row.get('removed_ioc_count', 0)}",
+                        str(total_iocs),
                         str(row.get("technique_count", 0)),
                         str(row.get("event_count", 0)),
                     ]
                 )
             story.append(
                 _styled_table(
-                    rows, [2.2 * cm, 2.4 * cm, 1.8 * cm, 2 * cm, 1.6 * cm, 2.2 * cm, 1.6 * cm, None]
+                    rows,
+                    [
+                        2 * cm,
+                        2.2 * cm,
+                        1.6 * cm,
+                        1.8 * cm,
+                        1.4 * cm,
+                        2 * cm,
+                        1.6 * cm,
+                        1.4 * cm,
+                        None,
+                    ],
                 )
             )
         except Exception:  # noqa: BLE001

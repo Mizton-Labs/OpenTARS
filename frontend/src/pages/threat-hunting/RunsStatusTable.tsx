@@ -14,6 +14,7 @@
  */
 import { CheckCircle, XCircle, Loader2, ArrowRight, FileText, FileCode2, FileJson } from 'lucide-react'
 import { clsx } from 'clsx'
+import { useQuery } from '@tanstack/react-query'
 import { api, type THuntPackageRun } from '../../api/client'
 import { runStatusClass } from './runStatusUtils'
 
@@ -123,13 +124,40 @@ function IocCounts({ run }: { run: THuntPackageRun }) {
   if (run.sanitized_ioc_count == null && run.removed_ioc_count == null) {
     return <span className="text-[10px] text-gray-600">—</span>
   }
+  const sanitized = run.sanitized_ioc_count ?? 0
+  const removed = run.removed_ioc_count ?? 0
   return (
     <span className="text-[10px] whitespace-nowrap">
-      <span className="text-green-400">{run.sanitized_ioc_count ?? 0} sanitized</span>
+      <span className="text-green-400">{sanitized} sanitized</span>
       <span className="text-gray-600"> · </span>
-      <span className="text-red-400">{run.removed_ioc_count ?? 0} removed</span>
+      <span className="text-red-400">{removed} removed</span>
+      {/* issue-local-026: explicit total, always the sum shown alongside it —
+          never a separately-computed number that could drift from these two. */}
+      <span className="text-gray-500"> · {sanitized + removed} total</span>
     </span>
   )
+}
+
+// issue-local-026: runner.py now resolves "Configured default" to the
+// actual provider/model at run-start time and persists that on the run row,
+// so llm_model is populated for every NEW run going forward. This fallback
+// only matters for runs created before that backend fix, whose
+// llm_provider/llm_model are still NULL — resolve what the CURRENT default
+// is via the LLM config so those legacy rows don't show a bare "—" either
+// (best-effort only: for a legacy row this reflects today's default, which
+// may differ from what was actually used back when that run ran). Shared
+// queryKey across every RunsStatusTable instance on a page, so react-query
+// dedupes this to a single fetch regardless of how many run tables render.
+function useDefaultModelLabel(): string | null {
+  const { data } = useQuery({
+    queryKey: ['llm-config-default-model'],
+    queryFn: () => api.llm.getConfig(),
+    staleTime: 60_000,
+  })
+  if (!data?.default_provider) return null
+  const provider = data.providers.find((p) => p.name === data.default_provider)
+  if (!provider) return `Default (${data.default_provider})`
+  return provider.model ? `Default (${provider.model})` : `Default (${data.default_provider})`
 }
 
 // issue-local-017: MD/PDF download directly via <a href> (the backend
@@ -197,6 +225,7 @@ export default function RunsStatusTable({
    *  as the currently-open/selected run. */
   activeRunId?: string
 }) {
+  const defaultModelLabel = useDefaultModelLabel()
   if (runs.length === 0) return null
   const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
   return (
@@ -212,6 +241,7 @@ export default function RunsStatusTable({
             <th className="text-left py-1.5 px-2">IOCs</th>
             <th className="text-left py-1.5 px-2">Report</th>
             <th className="text-left py-1.5 px-2">Created</th>
+            <th className="text-left py-1.5 px-2">Created by</th>
           </tr>
         </thead>
         <tbody>
@@ -235,10 +265,10 @@ export default function RunsStatusTable({
               <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
                 {onSelectRun ? (
                   <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                    {run.llm_model ?? run.llm_provider ?? '—'}
+                    {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
                   </button>
                 ) : (
-                  run.llm_model ?? run.llm_provider ?? '—'
+                  run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
                 )}
                 {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
               </td>
@@ -261,6 +291,9 @@ export default function RunsStatusTable({
               </td>
               <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
                 {run.created_at.slice(0, 19).replace('T', ' ')}
+              </td>
+              <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                {run.created_by ?? '—'}
               </td>
             </tr>
           ))}

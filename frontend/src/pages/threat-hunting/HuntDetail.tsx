@@ -383,7 +383,19 @@ export default function HuntDetail({
           // issue-local-022: moved after Analysis, matching PipelineStepper's order.
           {
             key: 'iocs',
-            label: `IOCs${(iocs as THExtractedIOC[]).length > 0 ? ` (${(iocs as THExtractedIOC[]).length})` : ''}`,
+            // issue-local-026: once deep_retrohunt exists, the tab body below
+            // renders RetrohuntPanel over retrohunt.sanitized_iocs (kept+removed,
+            // its own independently-deduped list) — the label must count the
+            // SAME list, not the raw extracted_iocs table row count, or the two
+            // numbers can disagree (two separate dedup passes over the same
+            // underlying extraction). Falls back to the raw count only before
+            // deep_retrohunt exists, matching the tab body's own fallback.
+            label: (() => {
+              const count = headerGenRecord?.deep_retrohunt
+                ? headerGenRecord.deep_retrohunt.sanitized_iocs.length
+                : (iocs as THExtractedIOC[]).length
+              return `IOCs${count > 0 ? ` (${count})` : ''}`
+            })(),
           },
           {
             key: 'execution',

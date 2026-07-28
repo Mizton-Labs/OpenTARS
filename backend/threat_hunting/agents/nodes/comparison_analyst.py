@@ -58,6 +58,65 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _build_ioc_overview(
+    runs_summary: list[dict[str, Any]],
+    full_records: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deterministic cross-run IOC table (issue-local-026): every IOC found
+    by any compared run, which run/model extracted it, its verdict
+    (kept/removed), a confidence figure, and which hypotheses referenced it.
+
+    No LLM involved — everything here comes from already-computed, already-
+    persisted per-run data:
+      - verdict: the deep_retrohunt sanitization's own 'keep'/'remove' action.
+      - confidence: this schema has no per-IOC "confidence" field anywhere
+        (SanitizedIOC only carries noise_score, a noise/quality signal, not a
+        threat-confidence one). Rather than fabricate a number, confidence is
+        derived from noise_score by inversion (lower noise = higher
+        confidence) — a defensible proxy, not a fabricated value, and is
+        documented as such via the field name below.
+      - hypotheses: this schema's only IOC<->hypothesis link is
+        Hypothesis.ioc_basis (a list of IOC value strings the hypothesis
+        cites), so coverage is matched by exact IOC value against each run's
+        hypotheses. An IOC not cited by any hypothesis' ioc_basis legitimately
+        has an empty list here — that's not a gap in this function.
+    """
+    rows: list[dict[str, Any]] = []
+    for run in runs_summary:
+        record = full_records.get(run["id"]) or {}
+        deep_retrohunt = record.get("deep_retrohunt") or {}
+        sanitized_iocs = deep_retrohunt.get("sanitized_iocs") or []
+        hypotheses = record.get("hypotheses") or []
+        for item in sanitized_iocs:
+            if not isinstance(item, dict):
+                continue
+            ioc_value = item.get("ioc", "")
+            covering_hypotheses = [
+                h.get("title") or h.get("id", "")
+                for h in hypotheses
+                if isinstance(h, dict) and ioc_value in (h.get("ioc_basis") or [])
+            ]
+            noise_score = item.get("noise_score")
+            confidence_pct = (
+                round((1 - noise_score) * 100) if isinstance(noise_score, (int, float)) else None
+            )
+            rows.append(
+                {
+                    "ioc": ioc_value,
+                    "ioc_type": item.get("ioc_type", ""),
+                    "run_id": run["id"],
+                    "run_id_display": run.get("run_id_display", ""),
+                    "model": run.get("llm_model", ""),
+                    # Derived from (1 - noise_score); None when the item
+                    # predates noise scoring or noise_score is missing.
+                    "confidence_pct": confidence_pct,
+                    "verdict": item.get("action") or "keep",
+                    "hypotheses": covering_hypotheses,
+                }
+            )
+    return rows
+
+
 async def compare_runs(
     hunt_package_id: str,
     *,
@@ -102,6 +161,11 @@ async def compare_runs(
         ttp_analysis = record.get("ttp_analysis") or {}
         task_results = await th_db.list_task_results_by_run(run["id"])
         event_count = sum(len(r.get("raw_result") or []) for r in task_results)
+        # sanitized_ioc_count/removed_ioc_count can be present but None
+        # (no deep_retrohunt lead yet for this run) — coalesce, not just
+        # .get(..., 0), since the key itself is always present.
+        sanitized_ioc_count = run.get("sanitized_ioc_count") or 0
+        removed_ioc_count = run.get("removed_ioc_count") or 0
         diff_rows.append(
             {
                 "run_id": run["id"],
@@ -110,8 +174,11 @@ async def compare_runs(
                 "effort": run.get("research_effort", ""),
                 "status": run.get("generation_status", ""),
                 "hypothesis_count": len(hypotheses),
-                "sanitized_ioc_count": run.get("sanitized_ioc_count", 0),
-                "removed_ioc_count": run.get("removed_ioc_count", 0),
+                "sanitized_ioc_count": sanitized_ioc_count,
+                "removed_ioc_count": removed_ioc_count,
+                # issue-local-026: explicit total, always the sum of the two
+                # counts above (never a separately-computed number).
+                "total_ioc_count": sanitized_ioc_count + removed_ioc_count,
                 "technique_count": len(ttp_analysis.get("techniques") or []),
                 "event_count": event_count,
                 "created_at": run.get("created_at", ""),
@@ -204,6 +271,7 @@ async def compare_runs(
         "compared_run_ids": [r["id"] for r in runs_summary],
         "generated_at": _utc_now(),
         "diff_table": diff_rows,
+        "ioc_overview": _build_ioc_overview(runs_summary, full_records),
         "summary": summary,
         "key_differences": key_differences,
         "gaps": gaps,

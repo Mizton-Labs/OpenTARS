@@ -543,7 +543,7 @@ class IocVerdictUpdateBody(BaseModel):
 
 
 @router.post("/packages/{pkg_id}/generate", status_code=202)
-async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
+async def start_generation(pkg_id: str, body: GenerateBody, request: Request) -> dict:
     """Start the LLM agent pipeline for a hunt package.
 
     Returns immediately with status=running. Poll /generate/status for progress.
@@ -573,12 +573,17 @@ async def start_generation(pkg_id: str, body: GenerateBody) -> dict:
             detail="run_config.ioc_mode must be 'tagging_only' or 'active_cleaning'",
         )
 
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
     record = await _start(
         pkg_id,
         provider_name=body.provider_name,
         model_name=body.model_name,
         research_effort=effort,
         run_config=run_config,
+        created_by=created_by,
     )
     return record
 
@@ -1222,6 +1227,12 @@ async def download_run_report_pdf(pkg_id: str, run_id: str) -> StreamingResponse
     except ImportError:
         raise HTTPException(status_code=503, detail="PDF generation requires reportlab.")
     except Exception as exc:
+        # issue-local-026 follow-up: this route had no logger.exception call,
+        # unlike its two siblings (download_report_pdf, download_comparison_pdf)
+        # — a run-scoped PDF failure was invisible in app.log, silently
+        # indistinguishable from "never attempted" when investigating reports
+        # of intermittent PDF failures.
+        logger.exception("Run report PDF render failed for %s/%s: %s", pkg_id[:8], run_id[:8], exc)
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
 
     hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")

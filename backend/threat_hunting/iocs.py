@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, TypedDict
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Regex patterns
@@ -286,14 +287,27 @@ def extract_iocs_from_text(text: str) -> list[ExtractedIOC]:
     for m in _RE_IPV4.finditer(text):
         _add(m.group(), "ip")
 
-    # URLs (before domains so domains within URLs are not double-counted)
+    # URLs (before domains so domains within URLs are not double-counted).
+    # issue-local-026: each URL's hostname is ALSO added as its own separate
+    # domain IOC, kept alongside the original URL (not instead of it) — the
+    # domain is what SIEM/EDR/DNS-log queries typically pivot on, and it must
+    # exist as an atomic IOC before verdict/noise analysis runs downstream,
+    # not just embedded inside the URL string.
     for m in _RE_URL.finditer(text):
-        _add(m.group(), "url")
+        url_raw = m.group()
+        _add(url_raw, "url")
+        try:
+            hostname = urlsplit(url_raw).hostname
+        except ValueError:
+            hostname = None
+        if hostname:
+            _add(hostname, "domain", description="Domain extracted from URL IOC")
 
-    # Domains (skip if already seen as part of a URL)
+    # Domains found directly in text, not already covered by a URL's
+    # derived hostname above (_add's (type, normalized) dedup already
+    # no-ops an exact re-match; this skip avoids the substring-scan cost).
     for m in _RE_DOMAIN.finditer(text):
         val = m.group().lower()
-        # Only add if not already captured inside a URL IOC
         already_in_url = any(val in r["ioc"] for r in results if r["ioc_type"] == "url")
         if not already_in_url:
             _add(val, "domain")
@@ -317,16 +331,11 @@ def normalize_ioc_csv(rows: list[dict]) -> list[ExtractedIOC]:
     seen: set[tuple[str, str]] = set()
     results: list[ExtractedIOC] = []
 
-    for row in rows:
-        raw_ioc = str(row.get("ioc", "")).strip()
-        ioc_type = str(row.get("ioc_type", "other")).strip().lower()
-        description = str(row.get("ioc_description", "")).strip()
-        if not raw_ioc:
-            continue
+    def _add_row(raw_ioc: str, ioc_type: str, description: str) -> None:
         normalized = _normalize_ioc(raw_ioc, ioc_type)
         key = (ioc_type, normalized)
         if key in seen:
-            continue
+            return
         seen.add(key)
         score = _noise_score(normalized, ioc_type)
         results.append(
@@ -338,6 +347,25 @@ def normalize_ioc_csv(rows: list[dict]) -> list[ExtractedIOC]:
                 flagged_noisy=score >= NOISE_THRESHOLD,
             )
         )
+
+    for row in rows:
+        raw_ioc = str(row.get("ioc", "")).strip()
+        ioc_type = str(row.get("ioc_type", "other")).strip().lower()
+        description = str(row.get("ioc_description", "")).strip()
+        if not raw_ioc:
+            continue
+        _add_row(raw_ioc, ioc_type, description)
+
+        # issue-local-026: same URL -> domain derivation as extract_iocs_from_text,
+        # for CSV-sourced IOCs (Deep Retrohunt CSV upload/re-run).
+        if ioc_type == "url":
+            url_for_parse = raw_ioc if "://" in raw_ioc else f"http://{raw_ioc}"
+            try:
+                hostname = urlsplit(url_for_parse).hostname
+            except ValueError:
+                hostname = None
+            if hostname:
+                _add_row(hostname, "domain", "Domain extracted from URL IOC")
 
     return results
 

@@ -453,3 +453,142 @@ describe('ProviderCard (prompts-031: delete confirm + dropdown-after-save)', () 
     expect(within(select).getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
   })
 })
+
+describe('ProviderCard (issue-local-027: manual model management + Azure anthropic-passthrough fixes)', () => {
+  it('typing a model and clicking Add appends it as a removable chip in available_models', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({
+        kind: 'azure_ai_foundry',
+        base_url: 'https://my-resource.services.ai.azure.com',
+        api_style: 'anthropic',
+        model: 'claude-sonnet-5',
+        available_models: undefined,
+      }),
+    )
+    renderTab()
+    await expandP1()
+
+    const addInput = await screen.findByPlaceholderText(/e\.g\. claude-opus-4-8/i)
+    fireEvent.change(addInput, { target: { value: 'claude-opus-4-8' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+
+    expect(await screen.findByText('claude-opus-4-8')).toBeInTheDocument()
+    // Input clears after a successful add.
+    expect((addInput as HTMLInputElement).value).toBe('')
+  })
+
+  it('a manually-added model persists to available_models on Save', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({
+        kind: 'azure_ai_foundry',
+        base_url: 'https://my-resource.services.ai.azure.com',
+        api_style: 'anthropic',
+        model: 'claude-sonnet-5',
+        available_models: undefined,
+      }),
+    )
+    vi.mocked(api.llm.updateProvider).mockResolvedValue({
+      name: 'p1', kind: 'azure_ai_foundry', model: 'claude-sonnet-5',
+      has_api_key: true, skip_tls_verify: false,
+    })
+    renderTab()
+    await expandP1()
+
+    const addInput = await screen.findByPlaceholderText(/e\.g\. claude-opus-4-8/i)
+    fireEvent.change(addInput, { target: { value: 'claude-opus-4-8' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+    await screen.findByText('claude-opus-4-8')
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Save$/ })[1])
+    await waitFor(() => expect(api.llm.updateProvider).toHaveBeenCalledTimes(1))
+    const [, payload] = vi.mocked(api.llm.updateProvider).mock.calls[0]
+    expect(payload.available_models).toEqual(['claude-opus-4-8'])
+  })
+
+  it('does not add a duplicate or blank model', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({ available_models: ['gpt-4o-mini', 'gpt-4o'] }),
+    )
+    renderTab()
+    await expandP1()
+
+    const addInput = await screen.findByPlaceholderText(/e\.g\. claude-opus-4-8/i)
+    // Duplicate (already present) is a no-op.
+    fireEvent.change(addInput, { target: { value: 'gpt-4o' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+    // Scoped to the chips row — "gpt-4o" also legitimately appears as a
+    // dropdown <option>, which a page-wide query would double-count.
+    const chips = screen.getByTestId('available-models-chips')
+    expect(within(chips).getAllByText('gpt-4o')).toHaveLength(1)
+
+    // Blank/whitespace-only is a no-op — the Add button stays disabled.
+    fireEvent.change(addInput, { target: { value: '   ' } })
+    expect(screen.getByRole('button', { name: /^Add$/ })).toBeDisabled()
+  })
+
+  it('removing a model chip drops it from available_models', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({ available_models: ['gpt-4o-mini', 'gpt-4o'] }),
+    )
+    renderTab()
+    await expandP1()
+
+    const chips = await screen.findByTestId('available-models-chips')
+    expect(within(chips).getByText('gpt-4o')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove gpt-4o' }))
+    expect(within(chips).queryByText('gpt-4o')).not.toBeInTheDocument()
+    // The other model, and the dropdown's own option list, are untouched.
+    expect(within(chips).getByText('gpt-4o-mini')).toBeInTheDocument()
+  })
+
+  it('Discover Models shows an informational note (not an error) for an azure_ai_foundry anthropic-passthrough provider', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({
+        kind: 'azure_ai_foundry',
+        base_url: 'https://my-resource.services.ai.azure.com',
+        api_style: 'anthropic',
+        model: 'claude-sonnet-5',
+        available_models: undefined,
+      }),
+    )
+    renderTab()
+    await expandP1()
+
+    fireEvent.click(screen.getByRole('button', { name: /Discover Models/i }))
+    expect(
+      await screen.findByText(/no model-discovery endpoint\. Add models manually below\./i),
+    ).toBeInTheDocument()
+    // No wasted round trip and nothing (falsely) persisted as empty.
+    expect(api.llm.discoverProvider).not.toHaveBeenCalled()
+    expect(api.llm.updateProvider).not.toHaveBeenCalled()
+  })
+
+  it('Save after a base_url change on an anthropic-passthrough provider persists directly, without a doomed discovery call', async () => {
+    // Regression: discovery for this provider kind can never return models
+    // (no /models endpoint exists), so gating Save on it made it impossible
+    // to ever save a base_url change — this must persist directly instead.
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({
+        kind: 'azure_ai_foundry',
+        base_url: 'https://my-resource.services.ai.azure.com',
+        api_style: 'anthropic',
+        model: 'claude-sonnet-5',
+        available_models: undefined,
+      }),
+    )
+    vi.mocked(api.llm.updateProvider).mockResolvedValue({
+      name: 'p1', kind: 'azure_ai_foundry', model: 'claude-sonnet-5',
+      has_api_key: true, skip_tls_verify: false,
+    })
+    renderTab()
+    await expandP1()
+
+    const base = screen.getByDisplayValue('https://my-resource.services.ai.azure.com') as HTMLInputElement
+    fireEvent.change(base, { target: { value: 'https://my-resource-2.services.ai.azure.com' } })
+    fireEvent.click(screen.getAllByRole('button', { name: /^Save$/ })[1])
+
+    await waitFor(() => expect(api.llm.updateProvider).toHaveBeenCalledTimes(1))
+    expect(api.llm.discoverDraft).not.toHaveBeenCalled()
+    await screen.findByText(/^Saved\.$/)
+  })
+})

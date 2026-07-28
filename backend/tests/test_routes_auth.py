@@ -617,6 +617,46 @@ def test_admin_role_reaches_everything(auth_env):
     assert c.get("/api/auth/users").status_code == 200
 
 
+def test_researcher_role_reaches_llm_providers_and_config(auth_env):
+    """issue-local-026: /api/llm/ was missing from _RESEARCHER_GET_PREFIXES,
+    so the Threat Hunting model-selector dropdown's provider-list fetch
+    403'd for anyone who wasn't admin, even though threat-researcher is
+    exactly the role meant to see and use it."""
+    c = _login("admin", "Adminpass1")
+    c.post(
+        "/api/auth/users",
+        json={
+            "username": "researcher1",
+            "password": "Researchpass1",
+            "role": "threat-researcher",
+        },
+    )
+    nc = _login("researcher1", "Researchpass1")
+    nc.put(
+        "/api/auth/password",
+        json={"current_password": "Researchpass1", "new_password": "Researchpass2"},
+    )
+    assert nc.get("/api/llm/providers").status_code not in (401, 403)
+    assert nc.get("/api/llm/config").status_code not in (401, 403)
+
+
+def test_viewer_role_still_blocked_from_llm_providers(auth_env):
+    """The researcher-only /api/llm/ grant must not leak to threat-viewer —
+    _RESEARCHER_GET_PREFIXES adds to _VIEWER_GET_PREFIXES, it must not widen
+    it in place (that would be a shared-tuple aliasing bug)."""
+    c = _login("admin", "Adminpass1")
+    c.post(
+        "/api/auth/users",
+        json={"username": "viewer2", "password": "Viewerpass1", "role": "threat-viewer"},
+    )
+    nc = _login("viewer2", "Viewerpass1")
+    nc.put(
+        "/api/auth/password",
+        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+    )
+    assert nc.get("/api/llm/providers").status_code == 403
+
+
 # ── Throttle key derivation (prompts-045 audit, MAJOR #2) ──────────────────────
 
 

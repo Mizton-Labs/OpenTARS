@@ -215,6 +215,7 @@ def build_initial_state(
     model_name: str | None = None,
     research_effort: str = "medium",
     run_config: dict[str, Any] | None = None,
+    created_by: str | None = None,
 ) -> HuntPipelineState:
     """Build the initial pipeline state for a new generation run."""
     return HuntPipelineState(
@@ -223,6 +224,7 @@ def build_initial_state(
         model_name=model_name,
         research_effort=research_effort,
         run_config=run_config or {},
+        created_by=created_by,
         approved=False,
         rejected=False,
         approval_notes="",

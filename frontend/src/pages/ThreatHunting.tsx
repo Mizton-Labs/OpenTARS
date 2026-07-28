@@ -734,18 +734,24 @@ export default function ThreatHunting() {
               <button
                 type="button"
                 onClick={() => setSelectedId(pkg.id)}
-                className="flex items-center gap-2 text-left group"
+                className="flex items-center gap-2.5 text-left group w-full px-3 py-2.5 rounded-lg bg-gray-700/70 hover:bg-gray-700/90 transition-colors"
               >
                 {pkg.hunt_id_display && (
-                  <span className={clsx(HUNT_ID_BADGE, 'text-[11px]')}>{pkg.hunt_id_display}</span>
+                  <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>
                 )}
-                <p className="text-sm font-semibold text-gray-100 group-hover:text-brand-400 transition-colors">
+                <p className="text-base font-semibold text-gray-100 group-hover:text-brand-400 transition-colors">
                   {pkg.name}
                 </p>
-                <span className={clsx('badge text-[10px] px-1.5 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
+                <span className={clsx('badge text-xs px-2 py-0.5 rounded', STATUS_COLORS[pkg.status] ?? STATUS_COLORS.draft)}>
                   {pkg.status}
                 </span>
-                <span className="text-[10px] text-gray-600">{pkg.run_count ?? 0} run{pkg.run_count === 1 ? '' : 's'}</span>
+                <span className="text-xs text-gray-400">{pkg.run_count ?? 0} run{pkg.run_count === 1 ? '' : 's'}</span>
+                {pkg.created_by && (
+                  <span className="flex items-center gap-1 text-xs font-medium text-brand-300 bg-brand-900/30 px-2 py-0.5 rounded-full ml-auto">
+                    <UserCircle className="w-3.5 h-3.5" />
+                    {pkg.created_by}
+                  </span>
+                )}
               </button>
               {pkg.runs && pkg.runs.length > 0 ? (
                 <RunsStatusTable
