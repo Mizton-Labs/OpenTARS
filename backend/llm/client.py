@@ -942,12 +942,58 @@ def _temperature_is_deprecated(exc: LLMProviderError) -> bool:
     return "temperature" in message and "deprecated" in message
 
 
-def _anthropic_extract_text(data: dict) -> str:
+def _raise_anthropic_empty_content(
+    data: dict,
+    blocks: list[dict],
+    *,
+    provider_name: str,
+    status: int | None,
+) -> None:
+    """Raise :class:`LLMEmptyContentError` for a truncated/contentless Anthropic response.
+
+    Mirrors ``_extract_openai_content``'s ``finish_reason == "length"`` handling so the
+    generic max-tokens-and-retry loop in ``llm_bridge._call_with_retry`` applies uniformly
+    across providers. Without this, a response cut off by the output-token budget
+    (``stop_reason == "max_tokens"``) was silently treated as a successful completion —
+    the newer Claude models can spend part of that budget on an implicit ``thinking``
+    block before ever reaching a ``text`` block, so callers using the same ``max_tokens``
+    values tuned for other providers saw truncated, unparseable JSON far more often
+    (issue-local-025).
+    """
+    stop_reason = data.get("stop_reason")
+    if stop_reason == "max_tokens":
+        detail = (
+            "the output-token budget was exhausted (stop_reason=max_tokens) — "
+            "raise smart_mode.llm_max_tokens"
+        )
+    elif any(b.get("type") == "thinking" for b in blocks):
+        suffix = f", stop_reason={stop_reason}" if stop_reason else ""
+        detail = (
+            f"the model emitted reasoning but no final answer (empty content{suffix})"
+            " — raise smart_mode.llm_max_tokens or limit the model's reasoning"
+        )
+    else:
+        suffix = f" (stop_reason={stop_reason})" if stop_reason else ""
+        detail = f"the model returned no content{suffix}"
+    raise LLMEmptyContentError(
+        f"provider {provider_name!r} returned empty content: {detail}",
+        status=status,
+        body=json.dumps(data),
+        finish_reason=stop_reason,
+    )
+
+
+def _anthropic_extract_text(data: dict, *, provider_name: str, status: int | None) -> str:
     blocks = data.get("content", [])
-    return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    if text and data.get("stop_reason") != "max_tokens":
+        return text
+    _raise_anthropic_empty_content(data, blocks, provider_name=provider_name, status=status)
 
 
-def _anthropic_extract_tool_calls(data: dict) -> tuple[str, list[dict]]:
+def _anthropic_extract_tool_calls(
+    data: dict, *, provider_name: str, status: int | None
+) -> tuple[str, list[dict]]:
     blocks = data.get("content", [])
     text_parts: list[str] = []
     tool_calls: list[dict] = []
@@ -961,7 +1007,9 @@ def _anthropic_extract_tool_calls(data: dict) -> tuple[str, list[dict]]:
                     "arguments": block.get("input", {}),
                 }
             )
-    return "".join(text_parts), tool_calls
+    if (text_parts or tool_calls) and data.get("stop_reason") != "max_tokens":
+        return "".join(text_parts), tool_calls
+    _raise_anthropic_empty_content(data, blocks, provider_name=provider_name, status=status)
 
 
 class _AnthropicProtocolMixin:
@@ -973,8 +1021,14 @@ class _AnthropicProtocolMixin:
     ``api_style="anthropic"`` (Azure AI Foundry's Anthropic-passthrough
     deployment mode) send byte-identical request/response shapes — only
     ``base_url`` differs. Centralizing the wire logic here means the
-    temperature-deprecation retry (see :func:`_temperature_is_deprecated`)
-    and any future protocol fix only need to exist once.
+    temperature-deprecation retry (see :func:`_temperature_is_deprecated`),
+    the truncated-response detection (see :func:`_raise_anthropic_empty_content`
+    — a response cut off by ``stop_reason=max_tokens``, including one where the
+    entire budget was spent on an implicit ``thinking`` block before any
+    ``text`` block, raises :class:`LLMEmptyContentError` instead of handing
+    truncated JSON downstream, mirroring ``_extract_openai_content``'s
+    ``finish_reason=length`` handling — issue-local-025), and any future
+    protocol fix only need to exist once.
     """
 
     _ANTHROPIC_VERSION = "2023-06-01"
@@ -989,7 +1043,9 @@ class _AnthropicProtocolMixin:
             "anthropic-version": self._ANTHROPIC_VERSION,
         }
 
-    def _anthropic_send(self, payload: dict, *, step: str, timeout: float | None) -> dict:
+    def _anthropic_send(
+        self, payload: dict, *, step: str, timeout: float | None
+    ) -> tuple[dict, int | None]:
         headers = self._anthropic_headers()
         url = self._anthropic_url()
         body = json.dumps(payload).encode("utf-8")
@@ -1012,7 +1068,8 @@ class _AnthropicProtocolMixin:
             status, _, resp = self._send(
                 "POST", url, headers=headers, body=retry_body, timeout=timeout, step=step
             )
-        return _parse_json_or_raise(provider_name=self.name, body=resp, status=status, where=step)
+        data = _parse_json_or_raise(provider_name=self.name, body=resp, status=status, where=step)
+        return data, status
 
     def _anthropic_complete(
         self,
@@ -1032,10 +1089,10 @@ class _AnthropicProtocolMixin:
         }
         if system:
             payload["system"] = system
-        data = self._anthropic_send(payload, step="complete", timeout=timeout)
+        data, status = self._anthropic_send(payload, step="complete", timeout=timeout)
         # Anthropic returns content as a list of blocks.
         try:
-            return _anthropic_extract_text(data)
+            return _anthropic_extract_text(data, provider_name=self.name, status=status)
         except (AttributeError, TypeError) as exc:
             raise LLMProviderError(
                 f"provider {self.name!r} returned non-Anthropic response shape "
@@ -1073,8 +1130,8 @@ class _AnthropicProtocolMixin:
         }
         if system:
             payload["system"] = system
-        data = self._anthropic_send(payload, step="complete_with_tools", timeout=timeout)
-        return _anthropic_extract_tool_calls(data)
+        data, status = self._anthropic_send(payload, step="complete_with_tools", timeout=timeout)
+        return _anthropic_extract_tool_calls(data, provider_name=self.name, status=status)
 
 
 class AnthropicClient(_AnthropicProtocolMixin, LLMClient):

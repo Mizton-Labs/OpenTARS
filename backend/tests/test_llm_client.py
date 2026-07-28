@@ -16,7 +16,7 @@ from backend.llm.client import (
     OpenAIClient,
     OpenAICompatibleClient,
 )
-from backend.llm.errors import LLMDisabledError, LLMTransportError
+from backend.llm.errors import LLMDisabledError, LLMEmptyContentError, LLMTransportError
 from backend.llm.registry import get_client
 
 
@@ -218,6 +218,117 @@ def test_anthropic_client_does_not_retry_on_unrelated_400():
     with pytest.raises(client_mod.LLMProviderError, match="HTTP 400"):
         c.complete("hi")
     assert len(tx.calls) == 1
+
+
+def test_anthropic_client_raises_empty_content_on_max_tokens_truncation():
+    """issue-local-025: a response cut off by the output-token budget
+    (stop_reason=max_tokens) previously came back as a truncated,
+    unparseable "success" — the caller had no way to distinguish it from a
+    genuine answer and every downstream JSON parser failed on it. It must
+    now raise LLMEmptyContentError so llm_bridge's retry-with-higher-budget
+    loop (already wired generically) kicks in, exactly as it already does
+    for the OpenAI path's finish_reason=length."""
+    body = json.dumps(
+        {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "text", "text": '[{"id": "H1", "title": "trunc'}],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="claude-sonnet-5",
+        transport=tx,
+    )
+    with pytest.raises(LLMEmptyContentError, match="max_tokens"):
+        c.complete("hi")
+
+
+def test_anthropic_client_raises_empty_content_when_thinking_consumes_budget():
+    """Newer Claude models can emit an implicit `thinking` content block and
+    never reach a `text` block at all — HTTP 200 with
+    content=[{"type": "thinking", ...}] and no text, even when stop_reason
+    itself isn't max_tokens. This must be treated the same as truncation,
+    not as an empty-but-successful answer."""
+    body = json.dumps(
+        {
+            "stop_reason": "end_turn",
+            "content": [{"type": "thinking", "thinking": "reasoning about the task..."}],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="claude-sonnet-5",
+        transport=tx,
+    )
+    with pytest.raises(LLMEmptyContentError, match="reasoning"):
+        c.complete("hi")
+
+
+def test_anthropic_client_complete_with_tools_raises_on_max_tokens_truncation():
+    body = json.dumps(
+        {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "tool_use", "name": "lookup", "input": {"partial": "cu"}}],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="claude-sonnet-5",
+        transport=tx,
+    )
+    with pytest.raises(LLMEmptyContentError, match="max_tokens"):
+        c.complete_with_tools(
+            "hi", tools=[{"name": "lookup", "description": "d", "parameters": {}}]
+        )
+
+
+def test_anthropic_client_returns_text_when_stop_reason_absent_or_end_turn():
+    """Sanity check: a normal, complete response (no stop_reason=max_tokens)
+    must still return the text as before — the truncation check must not
+    regress the success path."""
+    body = json.dumps(
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "ok"}]}
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AnthropicClient(
+        name="claude",
+        base_url="https://api.anthropic.com",
+        api_key="sk-ant",
+        model="claude-sonnet-5",
+        transport=tx,
+    )
+    assert c.complete("hi") == "ok"
+
+
+def test_azure_foundry_anthropic_style_raises_on_max_tokens_truncation():
+    """The same truncation detection must apply to AzureAIFoundryClient's
+    api_style="anthropic" passthrough mode, since it shares the mixin."""
+    body = json.dumps(
+        {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "..."}],
+        }
+    ).encode()
+    tx = _FakeTransport([(200, {}, body)])
+    c = AzureAIFoundryClient(
+        name="foundry-claude",
+        base_url="https://my-resource.services.ai.azure.com",
+        api_key="key",
+        model="claude-sonnet-5",
+        api_style="anthropic",
+        transport=tx,
+    )
+    with pytest.raises(LLMEmptyContentError):
+        c.complete("hi")
 
 
 def test_ollama_client_no_auth_header():
