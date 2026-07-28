@@ -176,6 +176,35 @@ class TestPdfGeneration:
         empty_pdf = render_report_pdf(empty_report)
         assert len(pdf_bytes) > len(empty_pdf)
 
+    def test_pdf_generation_survives_long_evidence_text(self) -> None:
+        """issue-local-026 follow-up: extracted evidence text used to be
+        wrapped in a single-row Table for its bordered-box look. A 1-row
+        Table has no row boundary to paginate at, so any evidence item whose
+        text ran past one page's usable height raised a fatal
+        reportlab.platypus.doctemplate.LayoutError from doc.build(), aborting
+        the entire PDF. A live check of the last 25 real generated reports on
+        the test server found 12 (48%) failing exactly this way — this
+        reproduces it with a long-but-realistic article-length evidence text
+        (a real failure was triggered by ~2500-word articles)."""
+        long_text = "Cisco Talos has discovered a new Rust-based remote access trojan. " * 400
+        assert len(long_text) > 20_000
+        report = _base_report(
+            evidence_items=[
+                {
+                    "id": "e1",
+                    "label": "long-article.html",
+                    "item_type": "url",
+                    "source_ref": "http://example.com/article",
+                    "parser_used": "html",
+                    "parse_status": "ok",
+                    "extracted_text": long_text,
+                }
+            ]
+        )
+        pdf_bytes = render_report_pdf(report)
+        assert pdf_bytes[:4] == b"%PDF"
+        assert len(pdf_bytes) > 500
+
 
 SANITIZED_IOCS = [
     {

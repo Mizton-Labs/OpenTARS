@@ -734,7 +734,7 @@ export default function ThreatHunting() {
               <button
                 type="button"
                 onClick={() => setSelectedId(pkg.id)}
-                className="flex items-center gap-2.5 text-left group w-full px-3 py-2.5 rounded-lg bg-gray-800/60 hover:bg-gray-800/80 transition-colors"
+                className="flex items-center gap-2.5 text-left group w-full px-3 py-2.5 rounded-lg bg-gray-700/70 hover:bg-gray-700/90 transition-colors"
               >
                 {pkg.hunt_id_display && (
                   <span className={clsx(HUNT_ID_BADGE, 'text-xs')}>{pkg.hunt_id_display}</span>

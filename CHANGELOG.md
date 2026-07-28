@@ -9,6 +9,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — PDF report generation failing on ~half of real hunts
+
+Root-caused via a live check of the last 25 generated reports on the test server: 12 (48%)
+failed with a fatal `reportlab.platypus.doctemplate.LayoutError`. Each evidence item's extracted
+text was wrapped in a single-row, single-column `Table` for its bordered-box look — but a 1-row
+table has no row boundary to paginate at, so any evidence item whose text ran past one page's
+usable height (long articles routinely did) crashed the *entire* PDF, not just that section. This
+is what "PDF generation randomly fails" actually was: deterministic per report, driven by evidence
+length, not random. The border/background now live on the paragraph's own style instead of a
+wrapping table, so it paginates like normal document text. Also: `download_run_report_pdf` (the
+per-run PDF route, the one actually used from the Runs table) never logged its exceptions, unlike
+its two sibling PDF routes — a failure there was invisible in `app.log`, which is why nothing
+showed up when first grepping the logs for this issue.
+
+### Changed — Table view title-bar contrast
+
+The per-hunt title bar's background (added for issue-local-026) reads more clearly against the
+card body across the dark themes (Classic, Energy, Ocean).
+
 ### Added / Fixed — Threat Hunting IOC totals, URL->domain IOCs, RBAC, run attribution (issue-local-026)
 
 - **IOC totals now shown explicitly and can no longer read inconsistent.** A run's "IOCs (N)"
