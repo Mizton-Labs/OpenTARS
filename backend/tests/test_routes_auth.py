@@ -122,13 +122,16 @@ def test_logout_revokes_session(auth_env):
 # gate in the middleware, tested here rather than the generic 401 test above.
 
 
-@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+_DOCS_PATHS = ["/docs", "/redoc", "/openapi.json", "/openapi-api-keys.json"]
+
+
+@pytest.mark.parametrize("path", _DOCS_PATHS)
 def test_docs_paths_require_auth_when_enabled(auth_env, path):
     r = _client().get(path)
     assert r.status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+@pytest.mark.parametrize("path", _DOCS_PATHS)
 def test_docs_paths_reachable_once_authenticated(auth_env, path):
     c = _login("admin", "Adminpass1")
     r = c.get(path)

@@ -1,12 +1,12 @@
 /**
  * Tests for the About page's API Docs tab (issue-local-030).
  *
- * The API client's `getDoc` is mocked so the Markdown render and loading/
- * error states are driven deterministically without a network. `swaggerUiSrc`
- * is exercised for real (no network call itself — it just builds a relative
- * URL string) to confirm the iframe points at the right location.
+ * The API client's `getDoc` is mocked so the Markdown render, the derived
+ * table of contents, and the loading/error states are driven deterministically
+ * without a network.
  */
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -23,6 +23,7 @@ vi.mock('../api/client', async () => {
 
 import { api } from '../api/client'
 import ApiDocsTab from '../pages/about/ApiDocsTab'
+import { splitSections } from '../pages/about/docSections'
 
 const mockedGetDoc = api.getDoc as unknown as ReturnType<typeof vi.fn>
 
@@ -35,39 +36,132 @@ function renderTab() {
   )
 }
 
+const DOC = [
+  '# Threat Hunting API Reference',
+  '',
+  'Intro paragraph.',
+  '',
+  '## Authentication',
+  '',
+  'How auth works.',
+  '',
+  '## Hunt Packages',
+  '',
+  '| Method | Path |',
+  '|---|---|',
+  '| GET | /packages |',
+  '',
+  '## Threat Intel Tracking (issue-local-021)',
+  '',
+  'Cross-hunt aggregation.',
+].join('\n')
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
 
+describe('splitSections', () => {
+  it('splits on ## headings and keeps the intro separate', () => {
+    const { intro, sections } = splitSections(DOC)
+    expect(intro).toContain('# Threat Hunting API Reference')
+    expect(intro).toContain('Intro paragraph.')
+    expect(sections.map((s) => s.title)).toEqual([
+      'Authentication',
+      'Hunt Packages',
+      'Threat Intel Tracking',
+    ])
+  })
+
+  it('strips internal issue references from displayed titles', () => {
+    const { sections } = splitSections(DOC)
+    expect(sections[2].title).toBe('Threat Intel Tracking')
+    expect(sections[2].title).not.toContain('issue-local')
+  })
+
+  it('derives stable anchor ids from the titles', () => {
+    const { sections } = splitSections(DOC)
+    expect(sections.map((s) => s.id)).toEqual([
+      'authentication',
+      'hunt-packages',
+      'threat-intel-tracking',
+    ])
+  })
+
+  it('keeps each section body with its heading', () => {
+    const { sections } = splitSections(DOC)
+    expect(sections[0].body).toBe('How auth works.')
+    expect(sections[1].body).toContain('| GET | /packages |')
+  })
+
+  it('ignores ## lines inside fenced code blocks', () => {
+    const md = ['## Real', '', '```bash', '## not a heading', '```', '', '## Also real'].join('\n')
+    const { sections } = splitSections(md)
+    expect(sections.map((s) => s.title)).toEqual(['Real', 'Also real'])
+    expect(sections[0].body).toContain('## not a heading')
+  })
+
+  it('de-duplicates ids when two topics share a name', () => {
+    const { sections } = splitSections('## Reports\n\na\n\n## Reports\n\nb')
+    expect(sections.map((s) => s.id)).toEqual(['reports', 'reports-2'])
+  })
+
+  it('handles a document with no ## headings at all', () => {
+    const { intro, sections } = splitSections('# Only a title\n\nBody.')
+    expect(sections).toEqual([])
+    expect(intro).toContain('Only a title')
+  })
+})
+
 describe('ApiDocsTab', () => {
   it('shows a loading state before the doc resolves', () => {
-    mockedGetDoc.mockReturnValue(new Promise(() => {})) // never resolves
+    mockedGetDoc.mockReturnValue(new Promise(() => {}))
     renderTab()
     expect(screen.getByText('Loading…')).toBeInTheDocument()
   })
 
-  it('renders the fetched Markdown as real HTML', async () => {
-    mockedGetDoc.mockResolvedValue({
-      doc_id: 'api-threat-hunting',
-      content: '# Threat Hunting API Reference\n\nSome **bold** intro text.\n\n## Authentication\n\nDetails here.',
-    })
+  it('renders a table of contents listing every topic', async () => {
+    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: DOC })
     renderTab()
 
-    expect(await screen.findByRole('heading', { name: 'Threat Hunting API Reference', level: 1 })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Authentication', level: 2 })).toBeInTheDocument()
-    const bold = screen.getByText('bold')
-    expect(bold.tagName).toBe('STRONG')
+    const toc = await screen.findByRole('navigation', { name: /table of contents/i })
+    for (const title of ['Authentication', 'Hunt Packages', 'Threat Intel Tracking']) {
+      expect(within(toc).getByRole('button', { name: new RegExp(title) })).toBeInTheDocument()
+    }
   })
 
-  it('renders a Markdown table with styled cells', async () => {
-    mockedGetDoc.mockResolvedValue({
-      doc_id: 'api-threat-hunting',
-      content: '| Method | Path |\n|---|---|\n| GET | /packages |',
-    })
+  it('renders one card per topic, each with an anchor id', async () => {
+    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: DOC })
+    const { container } = renderTab()
+
+    await screen.findByRole('navigation', { name: /table of contents/i })
+    for (const id of ['authentication', 'hunt-packages', 'threat-intel-tracking']) {
+      expect(container.querySelector(`section#${id}`)).not.toBeNull()
+    }
+  })
+
+  it('scrolls to the matching section when a contents entry is clicked', async () => {
+    const user = userEvent.setup()
+    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: DOC })
+    const { container } = renderTab()
+
+    const toc = await screen.findByRole('navigation', { name: /table of contents/i })
+    const target = container.querySelector('section#hunt-packages') as HTMLElement
+    const scrollIntoView = vi.fn()
+    target.scrollIntoView = scrollIntoView
+
+    await user.click(within(toc).getByRole('button', { name: /Hunt Packages/ }))
+
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('renders the section content as real HTML, not raw Markdown', async () => {
+    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: DOC })
     renderTab()
 
-    expect(await screen.findByRole('columnheader', { name: 'Method' })).toBeInTheDocument()
+    await screen.findByRole('navigation', { name: /table of contents/i })
+    expect(screen.getByRole('columnheader', { name: 'Method' })).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: 'GET' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Threat Hunting API Reference', level: 1 })).toBeInTheDocument()
   })
 
   it('shows an error message if the doc fetch fails', async () => {
@@ -78,10 +172,10 @@ describe('ApiDocsTab', () => {
   })
 
   it('does not render the Swagger UI — that lives in its own sibling tab', async () => {
-    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: '# Ref' })
+    mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: DOC })
     renderTab()
 
-    await screen.findByRole('heading', { name: 'Ref', level: 1 })
+    await screen.findByRole('navigation', { name: /table of contents/i })
     expect(screen.queryByTitle('OpenTARS API Swagger UI')).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'API Swagger' })).not.toBeInTheDocument()
   })

@@ -17,10 +17,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`docs/api-threat-hunting.md`) as real formatted HTML — headings, tables, code blocks — styled with
   the app's own theme tokens rather than a generic typography plugin, so it matches every theme
   (Classic/Energy/Light/Ocean) instead of a mismatched hardcoded palette.
+  The reference is split on its topic headings into one card per topic — Authentication,
+  Hunt Packages, Evidence, Reports, and so on — behind a table of contents that jumps straight to
+  any of them, so a 470-line document is navigable instead of one long scroll. Splitting happens at
+  render time, so the committed Markdown stays a normal document that still reads correctly on
+  GitHub.
 - **New: API Swagger tab.** FastAPI's own interactive Swagger UI, embedded via an iframe (plus an
-  "open in a new tab" link), generated live from the running server's OpenAPI schema. Both API tabs
-  use the full page width, so the reference's endpoint tables and the Swagger schemas are readable
-  without horizontal scrolling; General keeps its narrower reading column.
+  "open in a new tab" link), generated live from the running server's OpenAPI schema. It defaults to
+  the endpoints a scoped **API access key** can actually call (29 operations) rather than the whole
+  application (220), since a reader on this tab is usually integrating with a key and most endpoints
+  can never be reached with one; a *Show all endpoints* checkbox switches to the complete API. The
+  subset is derived from `backend/auth/api_scopes.py` — the same source the auth middleware enforces
+  against — so the documentation cannot drift from what is actually permitted.
+- Both API tabs use the full page width, so the reference's endpoint tables and the Swagger schemas
+  are readable without horizontal scrolling; General keeps its narrower reading column.
+- **Fixed: the OpenAPI description still described the pre-rebrand product** ("Lightweight Threat
+  Intelligence feed receiver, normaliser, and viewer"), which was the first thing anyone opening the
+  API docs read. It now describes OpenTARS and summarises the two authentication modes.
 - **Fixed: the embedded Swagger showed a *different application's* endpoints** when OpenTARS ran
   behind a reverse-proxy alias. FastAPI's stock docs pages hardcode a root-anchored
   `/openapi.json`, and the usual alias block (`location /alias/ { proxy_pass http://host:port/; }` —

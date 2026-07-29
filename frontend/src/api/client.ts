@@ -41,12 +41,17 @@ export function logoSrc(cacheBust?: number | string): string {
 
 /**
  * URL for FastAPI's own interactive Swagger UI (issue-local-030's About ->
- * API Docs tab). Lives OUTSIDE /api/ (auto-registered by FastAPI), so it
+ * API Swagger tab). Lives OUTSIDE /api/ (auto-registered by FastAPI), so it
  * can't reuse BASE — same relative-vs-prefixed resolution as logoSrc above,
  * just rooted at the bare prefix instead of "<prefix>/api".
+ *
+ * `apiKeysOnly` narrows the rendered schema to the endpoints a scoped API
+ * access key can actually call (backend/main.py's _api_key_openapi), which is
+ * what the About tab shows by default.
  */
-export function swaggerUiSrc(): string {
-  return _prefix ? `${_prefix}/docs` : 'docs'
+export function swaggerUiSrc(opts?: { apiKeysOnly?: boolean }): string {
+  const base = _prefix ? `${_prefix}/docs` : 'docs'
+  return opts?.apiKeysOnly ? `${base}?api_keys_only=1` : base
 }
 
 // prompts-045: global 401 handler. The AuthProvider registers a callback so a

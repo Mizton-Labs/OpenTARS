@@ -224,3 +224,89 @@ def test_docs_asset_urls_are_relative_not_root_anchored(client_empty_prefix, pag
     assert "docs-assets/" in body
     assert '"/docs-assets/' not in body
     assert "'/docs-assets/" not in body
+
+
+# ── API-key-scoped schema variant (issue-local-030) ──────────────────────────
+#
+# The About page's API Swagger tab defaults to the subset an API key can
+# actually call, with a toggle for the full application API. The subset is
+# derived from backend.auth.api_scopes — the same source the auth middleware
+# authorizes against — so the documentation cannot drift from enforcement.
+
+_HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
+
+
+def _operations(schema: dict) -> set[tuple[str, str]]:
+    return {
+        (method.upper(), path)
+        for path, ops in schema["paths"].items()
+        for method in ops
+        if method.lower() in _HTTP_METHODS
+    }
+
+
+def test_api_key_schema_contains_exactly_the_scope_defined_routes(client_empty_prefix):
+    """One operation per (method, pattern) declared across every scope.
+
+    Guards both directions: a missed route would under-count, and an
+    over-broad pattern would over-count.
+    """
+    from backend.auth.api_scopes import API_SCOPES
+
+    declared = sum(len(scope.routes) for scope in API_SCOPES.values())
+    schema = client_empty_prefix.get("/openapi-api-keys.json").json()
+    assert len(_operations(schema)) == declared
+
+
+def test_api_key_schema_is_confined_to_threat_hunting(client_empty_prefix):
+    """The hard guarantee: no key may reach anything outside this prefix."""
+    schema = client_empty_prefix.get("/openapi-api-keys.json").json()
+    offenders = [p for _, p in _operations(schema) if not p.startswith("/api/threat-hunting/")]
+    assert offenders == []
+
+
+def test_api_key_schema_excludes_session_only_surfaces(client_empty_prefix):
+    """Spot-check surfaces an API key can never reach, including the routes
+    that manage API keys themselves."""
+    schema = client_empty_prefix.get("/openapi-api-keys.json").json()
+    paths = {p for _, p in _operations(schema)}
+    for forbidden in (
+        "/api/auth/users",
+        "/api/auth/api-keys",
+        "/api/llm/providers",
+        "/api/threat-hunting/connectors",
+    ):
+        assert forbidden not in paths
+
+
+def test_api_key_schema_is_a_strict_subset_of_the_full_schema(client_empty_prefix):
+    full = _operations(client_empty_prefix.get("/openapi.json").json())
+    subset = _operations(client_empty_prefix.get("/openapi-api-keys.json").json())
+    assert subset < full
+
+
+def test_filtering_does_not_mutate_the_cached_full_schema(client_empty_prefix):
+    """app.openapi() memoises; filtering in place would truncate the real
+    schema for every later caller."""
+    before = len(_operations(client_empty_prefix.get("/openapi.json").json()))
+    client_empty_prefix.get("/openapi-api-keys.json")
+    after = len(_operations(client_empty_prefix.get("/openapi.json").json()))
+    assert after == before
+
+
+def test_swagger_defaults_to_full_schema_and_opts_in_to_the_subset(client_empty_prefix):
+    assert "url: 'openapi.json'" in client_empty_prefix.get("/docs").text
+    narrowed = client_empty_prefix.get("/docs?api_keys_only=1").text
+    assert "url: 'openapi-api-keys.json'" in narrowed
+    # Still offline and still relative, like the unfiltered page.
+    assert "https://" not in narrowed
+    assert "'/openapi-api-keys.json'" not in narrowed
+
+
+def test_openapi_description_describes_opentars_not_the_former_product(client_empty_prefix):
+    schema = client_empty_prefix.get("/openapi.json").json()
+    description = schema["info"]["description"]
+    assert "OpenTARS" in description
+    assert "Threat Agentic Research System" in description
+    # The stale pre-rebrand wording must not come back.
+    assert "feed receiver, normaliser, and viewer" not in description

@@ -8,14 +8,19 @@
  * are styled directly via ReactMarkdown's `components` prop using the same
  * gray and brand color tokens as the rest of the app.
  *
+ * The document is split on its top-level (`##`) headings into one card per
+ * topic, preceded by a table of contents that jumps to them (see
+ * ./docSections).
+ *
  * The interactive Swagger UI lives in its own sibling tab (ApiSwaggerTab).
  */
-import type { ComponentPropsWithoutRef } from 'react'
+import { useMemo, type ComponentPropsWithoutRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { FileText } from 'lucide-react'
+import { FileText, List, Link2 } from 'lucide-react'
 import { api } from '../../api/client'
+import { splitSections } from './docSections'
 
 const markdownComponents = {
   h1: (p: ComponentPropsWithoutRef<'h1'>) => (
@@ -63,29 +68,94 @@ const markdownComponents = {
   strong: (p: ComponentPropsWithoutRef<'strong'>) => <strong className="text-gray-200 font-semibold" {...p} />,
 }
 
+function Markdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {children}
+    </ReactMarkdown>
+  )
+}
+
 export default function ApiDocsTab() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['about-doc', 'api-threat-hunting'],
     queryFn: () => api.getDoc('api-threat-hunting'),
   })
 
-  return (
-    <div className="card">
-      <div className="flex items-center gap-2 mb-4">
-        <FileText className="w-4 h-4 text-brand-400 shrink-0" />
-        <h2 className="text-sm font-semibold text-gray-200">Threat Hunting API Reference</h2>
+  const parsed = useMemo(
+    () => (data ? splitSections(data.content) : { intro: '', sections: [] }),
+    [data],
+  )
+
+  function jumpTo(id: string) {
+    // scrollIntoView walks up to the nearest scrollable ancestor, so this works
+    // whether the window or the layout's main pane is the scroll container.
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="card">
+        <p className="text-sm text-gray-500">Loading…</p>
       </div>
-      {isLoading && <p className="text-sm text-gray-500">Loading…</p>}
-      {isError && (
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="card">
         <p role="alert" className="text-sm text-red-400">
           Could not load the API documentation: {error instanceof Error ? error.message : String(error)}
         </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {parsed.intro && (
+        <div className="card">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="w-4 h-4 text-brand-400 shrink-0" />
+            <h2 className="text-sm font-semibold text-gray-200">Threat Hunting API Reference</h2>
+          </div>
+          <Markdown>{parsed.intro}</Markdown>
+        </div>
       )}
-      {data && (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {data.content}
-        </ReactMarkdown>
+
+      {parsed.sections.length > 0 && (
+        <nav className="card" aria-label="Table of contents">
+          <div className="flex items-center gap-2 mb-3">
+            <List className="w-4 h-4 text-brand-400 shrink-0" />
+            <h2 className="text-sm font-semibold text-gray-200">Contents</h2>
+          </div>
+          <ol className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 list-none">
+            {parsed.sections.map((section, i) => (
+              <li key={section.id}>
+                <button
+                  onClick={() => jumpTo(section.id)}
+                  className="group flex w-full items-baseline gap-2 text-left text-sm text-gray-400 hover:text-brand-300 transition-colors"
+                >
+                  <span className="text-[11px] font-mono text-gray-600 w-5 shrink-0">
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <span className="truncate">{section.title}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
       )}
+
+      {parsed.sections.map((section) => (
+        <section key={section.id} id={section.id} className="card scroll-mt-4">
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-800">
+            <Link2 className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+            <h2 className="text-sm font-semibold text-gray-200">{section.title}</h2>
+          </div>
+          <Markdown>{section.body}</Markdown>
+        </section>
+      ))}
     </div>
   )
 }

@@ -6,7 +6,9 @@ Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -33,7 +35,7 @@ from backend.api.routes_sources import router as sources_router
 from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
-from backend.auth.api_scopes import scope_allows
+from backend.auth.api_scopes import API_SCOPES, scope_allows
 from backend.auth.db import init_users_db
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
@@ -131,7 +133,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenTARS",
     version=__version__,
-    description="Lightweight Threat Intelligence feed receiver, normaliser, and viewer.",
+    description=(
+        "**OpenTARS (Threat Agentic Research System)** — a standalone, self-hosted "
+        "Threat Intelligence and Agentic Threat Hunting platform. It ingests, normalizes, "
+        "and correlates threat intel from multiple sources, and drives end-to-end threat "
+        "hunts through an LLM-powered agent pipeline.\n\n"
+        "**Authentication.** Two independent credentials are accepted: the session cookie "
+        "issued by `POST /api/auth/login` (authorized by role), or a scoped API access key "
+        "sent as `Authorization: Bearer <client_id>.<secret>`. An API key is authorized "
+        "purely by its granted scopes and can only ever reach `/api/threat-hunting/*` — it "
+        "can never reach configuration, user-management, or LLM-provider endpoints, "
+        "whatever scopes it holds."
+    ),
     lifespan=lifespan,
     # When deployed behind a reverse proxy at a sub-path, root_path makes
     # the OpenAPI docs / schema URLs reflect the external mount point.
@@ -330,9 +343,15 @@ def _role_allowed(role: str, method: str, path: str) -> bool:
 # entire route/schema surface (including admin/config/user-management routes,
 # not just Threat Hunting) to anyone who requests the URL directly, even
 # though the About page that links to them (issue-local-030) is itself behind
-# the authenticated SPA shell. Require a valid session for these three exact
-# paths, same as everything else once auth is on.
-_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
+# the authenticated SPA shell. Require a valid session for these exact paths,
+# same as everything else once auth is on.
+#
+# The API-key-scoped schema variant is listed here too: it is a projection of
+# the same schema, so leaving it out would have published — unauthenticated —
+# precisely the subset it describes. Its path is declared here (rather than
+# beside the docs routes further down) because this gate is evaluated first.
+_OPENAPI_API_KEYS_PATH = "/openapi-api-keys.json"
+_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json", _OPENAPI_API_KEYS_PATH})
 
 
 @app.middleware("http")
@@ -486,10 +505,72 @@ else:  # pragma: no cover — defensive
     )
 
 
+# ── API-key-scoped schema variant (issue-local-030) ──────────────────────────
+#
+# The full schema documents every route in the application, most of which an
+# API key can never call — an integrator holding a key mostly wants to see the
+# subset their credential actually works against. This variant reduces the
+# schema to exactly the operations some scope grants, derived from
+# backend.auth.api_scopes (the same single source of truth the middleware
+# authorizes against), so the two can never drift.
+#
+# The About page's API Swagger tab loads this by default and offers a toggle
+# for the full schema; /docs on its own still serves the complete API.
+# (_OPENAPI_API_KEYS_PATH is declared earlier, next to the auth gate.)
+_OPENAPI_API_KEYS_URL = "openapi-api-keys.json"
+
+# Path templates carry OpenAPI placeholders ("/packages/{pkg_id}") while scope
+# patterns match concrete request paths ("/packages/[^/]+"), so substitute a
+# placeholder-free segment before testing.
+_PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
+_HTTP_METHODS = frozenset({"get", "put", "post", "delete", "patch", "head", "options", "trace"})
+
+
+def _api_key_openapi() -> dict:
+    """Return the OpenAPI schema reduced to API-key-reachable operations."""
+    # deepcopy: app.openapi() memoises into app.openapi_schema, so filtering in
+    # place would permanently truncate the real schema served at /openapi.json.
+    schema = deepcopy(app.openapi())
+    every_scope = list(API_SCOPES)
+
+    filtered: dict[str, dict] = {}
+    for path, operations in (schema.get("paths") or {}).items():
+        concrete = _PATH_PARAM_RE.sub("x", path)
+        kept = {
+            method: operation
+            for method, operation in operations.items()
+            if method.lower() in _HTTP_METHODS
+            and scope_allows(every_scope, method.upper(), concrete)
+        }
+        if kept:
+            filtered[path] = kept
+    schema["paths"] = filtered
+
+    info = schema.setdefault("info", {})
+    info["title"] = f"{app.title} — API key endpoints"
+    info["description"] = (
+        "Only the endpoints reachable with a scoped **API access key** "
+        "(`Authorization: Bearer <client_id>.<secret>`).\n\n"
+        "Every operation below is granted by at least one scope; a given key can "
+        "call an operation only if one of *its* scopes covers it. Endpoints that "
+        "require the session cookie — configuration, user management, SIEM "
+        "connectors, run approval, and API-key management itself — are excluded "
+        "by design and cannot be reached by any key.\n\n"
+        "Use the *Show all endpoints* toggle to view the full application API."
+    )
+    return schema
+
+
+@app.get(_OPENAPI_API_KEYS_PATH, include_in_schema=False)
+async def _openapi_api_keys() -> JSONResponse:
+    return JSONResponse(_api_key_openapi())
+
+
 @app.get("/docs", include_in_schema=False)
-async def _swagger_ui() -> HTMLResponse:
+async def _swagger_ui(api_keys_only: bool = False) -> HTMLResponse:
+    """Swagger UI. ``?api_keys_only=1`` narrows it to the API-key subset."""
     return get_swagger_ui_html(
-        openapi_url=_OPENAPI_RELATIVE_URL,
+        openapi_url=_OPENAPI_API_KEYS_URL if api_keys_only else _OPENAPI_RELATIVE_URL,
         title=f"{app.title} — Swagger UI",
         swagger_js_url=_SWAGGER_JS_URL,
         swagger_css_url=_SWAGGER_CSS_URL,

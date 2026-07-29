@@ -466,3 +466,35 @@ def test_get_doc_allowlisted_id_missing_on_disk_is_404(client, monkeypatch, tmp_
     monkeypatch.setattr(routes_app, "_DOCS_DIR", tmp_path / "nonexistent-docs-dir")
     resp = client.get("/api/app/docs/api-threat-hunting")
     assert resp.status_code == 404
+
+
+def test_api_doc_headings_suit_the_generated_contents_list(client):
+    """The About page's API Docs tab derives a table of contents by splitting
+    this document on its ``##`` headings (frontend .../about/docSections.ts).
+
+    Asserted here rather than in the frontend suite because it is a property of
+    the document itself, and Python can read the file without pulling Node type
+    definitions into a browser-only type environment.
+    """
+    import re
+
+    content = client.get("/api/app/docs/api-threat-hunting").json()["content"]
+
+    headings: list[str] = []
+    in_fence = False
+    for line in content.splitlines():
+        if re.match(r"^\s*(```|~~~)", line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = re.match(r"^##\s+(.*\S)\s*$", line)
+        if match:
+            # Mirrors cleanTitle() in docSections.ts.
+            headings.append(re.sub(r"\s*\((?:issue|prompts)-[^)]*\)\s*$", "", match.group(1)))
+
+    assert len(headings) >= 10, "the reference should stay split into browsable topics"
+    # Colliding titles would produce duplicate anchors, so every contents entry
+    # would jump to the first of them.
+    assert len(set(headings)) == len(headings), f"duplicate topic headings: {headings}"
+    assert all(h.strip() for h in headings)
