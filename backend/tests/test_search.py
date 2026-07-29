@@ -615,3 +615,57 @@ def test_raw_intel_cannot_starve_normalized_within_the_shared_section(monkeypatc
     titles = [h["title"] for h in hits]
     assert any("(raw)" in t for t in titles), "raw store missing"
     assert any("(normalized)" in t for t in titles), "normalized store starved by raw"
+
+
+def test_context_reaches_later_sections_even_when_an_early_one_is_full(monkeypatch):
+    """Regression: "what CVEs were observed in the hunt packages?" came back
+    empty.
+
+    Searching `cve` does return Threat Intel Tracking entries, but Threat
+    Hunting is ordered ahead of it and had enough matches to consume the term's
+    whole allowance, so no CVE ever reached the model. A term's hits must be
+    spread across sections, not taken in section order.
+    """
+
+    async def crowded_search(query, *, role, limit):
+        return {
+            "query": query,
+            "total": 14,
+            "sections": [
+                # Enough to swallow any per-term allowance on its own.
+                {
+                    "section": "Threat Hunting",
+                    "hits": [
+                        {
+                            "section": "Threat Hunting",
+                            "title": f"hunt {i}",
+                            "snippet": "",
+                            "route": "/h",
+                        }
+                        for i in range(10)
+                    ],
+                },
+                {
+                    "section": "Threat Intel Tracking",
+                    "hits": [
+                        {
+                            "section": "Threat Intel Tracking",
+                            "title": f"CVE-2026-{i} (cve)",
+                            "snippet": "Seen in: TH01",
+                            "route": "/threat-hunting/tracking",
+                        }
+                        for i in range(4)
+                    ],
+                },
+            ],
+        }
+
+    monkeypatch.setattr(smart, "global_search", crowded_search)
+    hits = asyncio.run(
+        smart.gather_context("What are the CVE observed in the hunt packages?", role="admin")
+    )
+
+    assert any(h["section"] == "Threat Intel Tracking" for h in hits), (
+        "the section holding the answer was starved by the one ordered before it"
+    )
+    assert any("CVE-2026" in h["title"] for h in hits)

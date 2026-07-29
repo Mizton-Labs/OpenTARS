@@ -150,14 +150,28 @@ async def gather_context(question: str, *, role: str | None) -> list[dict[str, A
     quota = max(2, MAX_CONTEXT_HITS // (len(terms) + 1))
 
     async def absorb(query: str, allowance: int) -> None:
+        """Take up to *allowance* hits for one term, spread across sections.
+
+        Taking them in section order instead would spend the whole allowance on
+        whichever section happens to come first. That is how "what CVEs were
+        observed in the hunt packages?" came back empty: searching `cve` does
+        return Threat Intel Tracking entries, but Threat Hunting is ordered
+        ahead of it and had enough matches to consume every slot, so no CVE ever
+        reached the model. One hit per section per pass keeps a term's answer
+        visible wherever it lives.
+        """
         if not query or len(merged) >= MAX_CONTEXT_HITS:
             return
         result = await global_search(query, role=role, limit=MAX_TOTAL_RESULTS)
+        sections = [s["hits"] for s in result["sections"]]
         taken = 0
-        for section in result["sections"]:
-            for hit in section["hits"]:
+        for depth in range(max((len(hits) for hits in sections), default=0)):
+            for hits in sections:
                 if taken >= allowance or len(merged) >= MAX_CONTEXT_HITS:
                     return
+                if depth >= len(hits):
+                    continue
+                hit = hits[depth]
                 key = (hit["section"], hit["title"], hit["route"])
                 if key not in merged:
                     merged[key] = hit
