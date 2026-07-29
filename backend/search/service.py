@@ -294,12 +294,21 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
     from backend.threat_hunting import db as th_db
 
     def _hunts_of(record: dict[str, Any]) -> str:
-        names = [
-            sanitize_text(s.get("hunt_id_display") or s.get("name"))
-            for s in (record.get("sources") or [])
-        ]
+        """Name the hunts a tracked item came from.
+
+        The two aggregations spell this differently: `list_correlated_iocs`
+        attaches `hunt_packages`, while the entity aggregates attach `sources`.
+        Reading only one of them silently reported "no linked hunt" for every
+        IOC and CVE, which is worse than saying nothing — it told the model the
+        opposite of the truth, and the model repeated it.
+        """
+        linked = record.get("hunt_packages") or record.get("sources") or []
+        names = [sanitize_text(item.get("hunt_id_display") or item.get("name")) for item in linked]
         seen = [n for n in names if n]
-        return ", ".join(seen[:4]) if seen else "no linked hunt"
+        if not seen:
+            return "not linked to a hunt package"
+        shown = ", ".join(seen[:4])
+        return f"Seen in {len(seen)} hunt package(s): {shown}" if len(seen) > 4 else shown
 
     hits: list[SearchHit] = []
 

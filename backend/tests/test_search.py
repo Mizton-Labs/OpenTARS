@@ -79,12 +79,25 @@ def isolated_sources(monkeypatch):
         ]
 
     async def fake_correlated_iocs(*, search=None, limit=10, **_kw):
+        # Shape matches th_db.list_correlated_iocs: hunt_packages/hunt_count,
+        # NOT the `sources` key the entity aggregates use.
         rows = [
             {
                 "ioc": "203.0.113.10",
                 "ioc_type": "ip",
-                "sources": [{"id": "pkg-1", "hunt_id_display": "TH01", "name": "Lazarus sweep"}],
-            }
+                "hunt_count": 1,
+                "hunt_packages": [
+                    {"id": "pkg-1", "hunt_id_display": "TH01", "name": "Lazarus sweep"}
+                ],
+            },
+            {
+                "ioc": "CVE-2026-45321",
+                "ioc_type": "cve",
+                "hunt_count": 1,
+                "hunt_packages": [
+                    {"id": "pkg-1", "hunt_id_display": "TH01", "name": "Lazarus sweep"}
+                ],
+            },
         ]
         return [r for r in rows if not search or search.lower() in str(r).lower()][:limit]
 
@@ -669,3 +682,22 @@ def test_context_reaches_later_sections_even_when_an_early_one_is_full(monkeypat
         "the section holding the answer was starved by the one ordered before it"
     )
     assert any("CVE-2026" in h["title"] for h in hits)
+
+
+def test_tracked_cves_name_the_hunt_packages_they_were_seen_in():
+    """The IOC aggregation attaches `hunt_packages`; the entity aggregates
+    attach `sources`. Reading only one reported "no linked hunt" for every CVE,
+    which the chatbot then repeated as "no CVEs observed in hunt packages"."""
+    tracking = _sections(asyncio.run(global_search("cve", role="admin")))["Threat Intel Tracking"]
+    cve = next(h for h in tracking if "CVE-2026-45321" in h["title"])
+    assert "TH01" in cve["snippet"]
+    assert "not linked" not in cve["snippet"]
+
+
+def test_tracked_entities_still_name_their_hunts():
+    """The other spelling must keep working."""
+    tracking = _sections(asyncio.run(global_search("lazarus", role="admin")))[
+        "Threat Intel Tracking"
+    ]
+    actor = next(h for h in tracking if "threat actor" in h["title"])
+    assert "TH01" in actor["snippet"]
