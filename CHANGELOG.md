@@ -32,6 +32,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resolves inside the alias. Correct with or without `app_base_prefix` set, and with no cooperation
   required from the proxy — the `X-Script-Name` header it sends is deliberately not trusted, since
   it is client-controllable and relative URLs make it unnecessary.
+- **Fixed: the API documentation now works fully offline.** FastAPI's stock docs pages load Swagger
+  UI and ReDoc from `cdn.jsdelivr.net` (ReDoc additionally pulls Google Fonts), so on the isolated
+  and air-gapped networks this platform is built for, the page rendered blank. Both bundles are now
+  vendored under `backend/static/api-docs/` and served from `/docs-assets`; the pages reference no
+  external host at all, which also removes a third-party runtime dependency from an authenticated
+  page. Versions are pinned and attributed in `THIRD-PARTY-NOTICES.md`, with upstream license texts
+  alongside the files, and the asset URLs are relative for the same reverse-proxy reason as above.
 - **Fixed (security): FastAPI's `/docs`, `/redoc`, and `/openapi.json` were completely
   unauthenticated**, even with auth enabled — they're auto-registered outside `/api/`, so the
   existing "only guard `/api/`" bypass left the entire route/schema surface (including admin,

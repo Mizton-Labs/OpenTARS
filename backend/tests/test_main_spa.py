@@ -172,3 +172,55 @@ def test_openapi_schema_route_still_served_and_is_this_app(client_empty_prefix):
     assert schema["info"]["title"] == "OpenTARS"
     # A route unique to this application, proving it isn't another app's schema.
     assert "/api/threat-hunting/packages" in schema["paths"]
+
+
+# ── Vendored (offline-capable) API-docs assets (issue-local-030) ─────────────
+#
+# FastAPI's stock docs pages load Swagger UI / ReDoc from cdn.jsdelivr.net (and
+# ReDoc additionally pulls Google Fonts). OpenTARS is a standalone, local
+# platform routinely run on isolated or air-gapped networks, where those
+# fetches fail and the page renders blank. The bundles are vendored under
+# backend/static/api-docs and served at /docs-assets.
+
+_VENDORED_ASSETS = [
+    "swagger-ui-bundle.js",
+    "swagger-ui.css",
+    "redoc.standalone.js",
+]
+
+
+@pytest.mark.parametrize("name", _VENDORED_ASSETS)
+def test_vendored_docs_assets_are_present_on_disk(name):
+    from backend.main import _DOCS_ASSETS_DIR
+
+    path = _DOCS_ASSETS_DIR / name
+    assert path.is_file(), f"vendored asset missing: {path}"
+    assert path.stat().st_size > 1024, f"vendored asset looks truncated: {path}"
+
+
+@pytest.mark.parametrize("name", _VENDORED_ASSETS)
+def test_vendored_docs_assets_are_served(client_empty_prefix, name):
+    resp = client_empty_prefix.get(f"/docs-assets/{name}")
+    assert resp.status_code == 200
+    assert len(resp.content) > 1024
+
+
+@pytest.mark.parametrize("page", ["/docs", "/redoc"])
+def test_docs_pages_reference_no_external_hosts(client_empty_prefix, page):
+    """The offline guarantee: nothing on these pages may be fetched remotely."""
+    body = client_empty_prefix.get(page).text
+    assert "http://" not in body
+    assert "https://" not in body
+    # The specific hosts FastAPI's defaults would have used.
+    for host in ("cdn.jsdelivr.net", "fastapi.tiangolo.com", "fonts.googleapis.com"):
+        assert host not in body
+
+
+@pytest.mark.parametrize("page", ["/docs", "/redoc"])
+def test_docs_asset_urls_are_relative_not_root_anchored(client_empty_prefix, page):
+    """Root-anchored asset URLs would break under a proxy alias exactly like
+    the schema URL did — they must stay document-relative too."""
+    body = client_empty_prefix.get(page).text
+    assert "docs-assets/" in body
+    assert '"/docs-assets/' not in body
+    assert "'/docs-assets/" not in body

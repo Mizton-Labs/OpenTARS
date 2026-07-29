@@ -452,7 +452,38 @@ async def auth_enforcement(request, call_next):
 #
 # Note the docs route is exactly "/docs" ("/docs/" 404s), so the relative
 # reference is unambiguous.
+#
+# The Swagger UI / ReDoc bundles themselves are VENDORED (backend/static/
+# api-docs, served at /docs-assets) rather than pulled from cdn.jsdelivr.net
+# the way FastAPI's defaults do. OpenTARS is a standalone, local platform that
+# is routinely deployed on isolated or air-gapped networks, where a CDN fetch
+# simply fails and the docs render blank; vendoring also removes a
+# third-party runtime dependency from an authenticated page. Their URLs are
+# relative for exactly the same reverse-proxy reason as the schema above.
 _OPENAPI_RELATIVE_URL = "openapi.json"
+_SWAGGER_JS_URL = "docs-assets/swagger-ui-bundle.js"
+_SWAGGER_CSS_URL = "docs-assets/swagger-ui.css"
+_REDOC_JS_URL = "docs-assets/redoc.standalone.js"
+# Served from the frontend dist root by the SPA catch-all; referenced rather
+# than duplicated into the vendored directory (it is a 350+ KiB PNG).
+_DOCS_FAVICON_URL = "tars-favicon.png"
+
+_DOCS_ASSETS_DIR = Path(__file__).resolve().parent / "static" / "api-docs"
+if _DOCS_ASSETS_DIR.is_dir():
+    # Mounted here — BEFORE the SPA catch-all registered at the bottom of this
+    # module — so /docs-assets/* resolves to the vendored files. Public, like
+    # the SPA's own /assets mount: these are third-party static libraries
+    # carrying no application data.
+    app.mount(
+        "/docs-assets",
+        StaticFiles(directory=str(_DOCS_ASSETS_DIR)),
+        name="docs-assets",
+    )
+else:  # pragma: no cover — defensive
+    logger.warning(
+        "Vendored API-docs assets not found at %s; /docs and /redoc will not render.",
+        _DOCS_ASSETS_DIR,
+    )
 
 
 @app.get("/docs", include_in_schema=False)
@@ -460,6 +491,9 @@ async def _swagger_ui() -> HTMLResponse:
     return get_swagger_ui_html(
         openapi_url=_OPENAPI_RELATIVE_URL,
         title=f"{app.title} — Swagger UI",
+        swagger_js_url=_SWAGGER_JS_URL,
+        swagger_css_url=_SWAGGER_CSS_URL,
+        swagger_favicon_url=_DOCS_FAVICON_URL,
     )
 
 
@@ -468,6 +502,9 @@ async def _redoc() -> HTMLResponse:
     return get_redoc_html(
         openapi_url=_OPENAPI_RELATIVE_URL,
         title=f"{app.title} — ReDoc",
+        redoc_js_url=_REDOC_JS_URL,
+        redoc_favicon_url=_DOCS_FAVICON_URL,
+        with_google_fonts=False,
     )
 
 
