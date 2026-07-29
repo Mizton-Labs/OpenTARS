@@ -117,6 +117,22 @@ async def get_dashboard(
     return await th_db.get_hunt_dashboard_stats(search=search, date_from=date_from, date_to=date_to)
 
 
+@router.get("/explorer/{category}")
+async def get_explorer_rows(
+    category: str,
+    search: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+) -> list[dict]:
+    """Row-level data backing one Dashboard panel/stat card (issue-local-033,
+    Data Explorer). 404s on an unknown category rather than 500ing."""
+    if category not in th_db.EXPLORER_CATEGORIES:
+        raise HTTPException(status_code=404, detail=f"Unknown category: {category}")
+    return await th_db.list_explorer_rows(
+        category, search=search, date_from=date_from, date_to=date_to
+    )
+
+
 @router.post("/packages", response_model=HuntPackageOut, status_code=201)
 async def create_package(body: HuntPackageCreate, request: Request) -> dict:
     """Create a new hunt package in draft status."""

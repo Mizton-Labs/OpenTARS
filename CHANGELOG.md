@@ -9,6 +9,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Data Explorer, and Dashboard fixes/reordering (issue-local-033)
+
+- **New: "Data Explorer" sidebar entry**, below Threat Intel Tracking — the row-level data behind
+  every Dashboard panel/stat card, one tab per category (Hunt Packages, Runs, Evidence, Hypotheses,
+  Hunting Leads, Queries Drafted, IOCs Extracted, SIEM Searches, and the five Threat Intel
+  categories), with its own search box. Every panel and stat card on the Dashboard now links here
+  with the matching tab pre-selected, so "what does this number actually consist of" is always one
+  click away.
+- **Dashboard reordering**: the Threat Intel summary now leads the page (previously last), and
+  within the remaining breakdown panels, Evidence by Type and Packages by Status now come before
+  the two model breakdowns (Runs by Model, Hunt Packages by Model).
+- **Fixed: "View Hunt Packages" on the Dashboard led to a blank page.** The Dashboard is mounted at
+  the bare `threat-hunting` route (a single path segment); a relative `../packages` navigation from
+  a single-segment route resolves by climbing to the root and appending "packages" — landing on the
+  nonexistent `/packages`, not `/threat-hunting/packages`. Fixed by navigating to the absolute path.
+
 ### Added — Assistant chat sessions (issue-local-032)
 
 - **The Assistant/SmartSearch chatbot now remembers conversations.** Every conversation is a

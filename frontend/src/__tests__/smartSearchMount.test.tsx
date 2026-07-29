@@ -81,6 +81,7 @@ describe('search drawer mounting', () => {
     '/threat-hunting',
     '/threat-hunting/new',
     '/threat-hunting/tracking',
+    '/threat-hunting/explorer',
     '/threat-hunting/some-package-id',
     '/configuration',
     '/normalizer',

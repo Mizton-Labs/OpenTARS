@@ -124,6 +124,15 @@ _PAGES: list[CatalogEntry] = [
         keywords=("correlation", "aggregate", "actors", "campaigns", "ttp", "cve"),
     ),
     _e(
+        "page:th-explorer",
+        "Navigation",
+        "Data Explorer",
+        "Row-level data behind each Dashboard panel — hunt packages, runs, evidence, "
+        "hypotheses, hunting leads, queries, IOCs, SIEM searches, and threat intel.",
+        "/threat-hunting/explorer",
+        keywords=("explorer", "data", "list", "rows", "drill down"),
+    ),
+    _e(
         "page:normalizer",
         "Navigation",
         "Normalizer",

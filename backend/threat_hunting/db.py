@@ -890,6 +890,55 @@ async def list_hunt_packages(
     return result
 
 
+def _matching_pkg_where(
+    *, search: str | None, date_from: str | None, date_to: str | None
+) -> tuple[str, list[Any]]:
+    """Build the WHERE clause + params for "which non-archived hunt packages
+    match this search/date-range filter" — the same deep-search and
+    date-bound rules as ``list_hunt_packages``, shared by
+    ``get_hunt_dashboard_stats`` and ``list_explorer_rows`` so the two always
+    agree on what counts as "matching"."""
+    where_clauses = ["hp.status != 'archived'"]
+    params: list[Any] = []
+    if date_from:
+        where_clauses.append("hp.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_clauses.append("hp.created_at <= ?")
+        params.append(date_to)
+    if search:
+        like_term = f"%{_escape_like(search)}%"
+        where_clauses.append(
+            "("
+            "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
+            "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
+            "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
+            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
+            "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
+            "AND x.ioc LIKE ? ESCAPE '\\')"
+            ")"
+        )
+        params.extend([like_term] * 7)
+    return " AND ".join(where_clauses), params
+
+
+async def _matching_pkg_rows(
+    db: aiosqlite.Connection,
+    *,
+    search: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> list[aiosqlite.Row]:
+    where_sql, params = _matching_pkg_where(search=search, date_from=date_from, date_to=date_to)
+    cur = await db.execute(
+        f"SELECT hp.id, hp.status, hp.name, hp.hunt_seq FROM hunt_packages hp WHERE {where_sql}",  # noqa: S608
+        params,
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return rows
+
+
 async def get_hunt_dashboard_stats(
     *,
     search: str | None = None,
@@ -914,37 +963,10 @@ async def get_hunt_dashboard_stats(
     """
     import json as _json
 
-    where_clauses = ["hp.status != 'archived'"]
-    params: list[Any] = []
-    if date_from:
-        where_clauses.append("hp.created_at >= ?")
-        params.append(date_from)
-    if date_to:
-        where_clauses.append("hp.created_at <= ?")
-        params.append(date_to)
-    if search:
-        like_term = f"%{_escape_like(search)}%"
-        where_clauses.append(
-            "("
-            "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
-            "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
-            "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
-            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
-            "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
-            "AND x.ioc LIKE ? ESCAPE '\\')"
-            ")"
-        )
-        params.extend([like_term] * 7)
-
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        cur = await db.execute(
-            f"SELECT hp.id, hp.status FROM hunt_packages hp WHERE {' AND '.join(where_clauses)}",  # noqa: S608
-            params,
-        )
-        pkg_rows = await cur.fetchall()
-        await cur.close()
+        pkg_rows = await _matching_pkg_rows(db, search=search, date_from=date_from, date_to=date_to)
         pkg_ids = tuple(r["id"] for r in pkg_rows)
 
         packages_by_status: dict[str, int] = {}
@@ -1063,6 +1085,267 @@ async def _add_global_threat_intel_summary(stats: dict[str, Any]) -> dict[str, A
         1 for row in await get_summary() if row.get("source") != "__total__"
     )
     return stats
+
+
+#: Valid Data Explorer category ids (issue-local-033) — one per Dashboard
+#: panel/stat card. "hunts" and "runs" also back the Dashboard's
+#: packages-by-status and runs/hunts-by-model breakdown panels respectively;
+#: "siem_searches" also backs the events-retrieved stat (a search IS where
+#: those events came from, so there is no separate row-level "events" list).
+EXPLORER_CATEGORIES = frozenset(
+    {
+        "hunts",
+        "runs",
+        "evidence",
+        "hypotheses",
+        "hunting_leads",
+        "queries",
+        "iocs",
+        "siem_searches",
+        "threat_actors",
+        "campaigns",
+        "malware_families",
+        "ttps",
+        "feed_sources",
+    }
+)
+
+_EXPLORER_GLOBAL_CATEGORIES = frozenset(
+    {"threat_actors", "campaigns", "malware_families", "ttps", "feed_sources"}
+)
+
+
+async def list_explorer_rows(
+    category: str,
+    *,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Row-level data backing one Dashboard panel/stat card, for the Data
+    Explorer (issue-local-033).
+
+    Hunt-scoped categories (hunts/runs/evidence/hypotheses/hunting_leads/
+    queries/iocs/siem_searches) are filtered by the same search/date-range
+    rules ``get_hunt_dashboard_stats`` uses — the row set here always backs
+    the same numbers that function reports for the same filter.
+
+    The five Threat Intel categories are global aggregates (see that
+    function's docstring for why) — *date_from*/*date_to* are ignored for
+    them, and *search* instead matches the entity's own name/title.
+    """
+    import json as _json
+
+    if category not in EXPLORER_CATEGORIES:
+        raise ValueError(f"unknown Data Explorer category: {category!r}")
+
+    if category in _EXPLORER_GLOBAL_CATEGORIES:
+        return await _global_explorer_rows(category, search=search)
+
+    prefix = load_hunt_id_prefix()
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        pkg_rows = await _matching_pkg_rows(db, search=search, date_from=date_from, date_to=date_to)
+        pkg_ids = tuple(r["id"] for r in pkg_rows)
+        if not pkg_ids:
+            return []
+        placeholders = ",".join("?" for _ in pkg_ids)
+        hunt_id_by_pkg = {r["id"]: format_hunt_id(prefix, r["hunt_seq"]) for r in pkg_rows}
+        name_by_pkg = {r["id"]: r["name"] for r in pkg_rows}
+
+        if category == "hunts":
+            return [
+                {
+                    "id": r["id"],
+                    "hunt_id_display": hunt_id_by_pkg.get(r["id"], ""),
+                    "name": r["name"],
+                    "status": r["status"],
+                }
+                for r in pkg_rows
+            ]
+
+        if category == "runs":
+            cur = await db.execute(
+                "SELECT id, hunt_package_id, llm_model, generation_status, research_effort, "
+                "       run_seq, created_at "
+                f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
+                "ORDER BY created_at DESC",
+                pkg_ids,
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+            out = []
+            for r in rows:
+                hunt_id = hunt_id_by_pkg.get(r["hunt_package_id"], "")
+                out.append(
+                    {
+                        "id": r["id"],
+                        "hunt_package_id": r["hunt_package_id"],
+                        "hunt_id_display": hunt_id,
+                        "run_id_display": format_run_id(hunt_id, r["run_seq"]),
+                        "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                        "llm_model": r["llm_model"] or "unknown",
+                        "generation_status": r["generation_status"],
+                        "research_effort": r["research_effort"],
+                        "created_at": r["created_at"],
+                    }
+                )
+            return out
+
+        if category == "evidence":
+            cur = await db.execute(
+                "SELECT id, hunt_package_id, item_type, label, source_ref, created_at "
+                f"FROM evidence_items WHERE hunt_package_id IN ({placeholders}) "
+                "ORDER BY created_at DESC",
+                pkg_ids,
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+            return [
+                {
+                    "id": r["id"],
+                    "hunt_package_id": r["hunt_package_id"],
+                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
+                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                    "item_type": r["item_type"],
+                    "label": r["label"] or r["source_ref"] or "",
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+
+        if category == "iocs":
+            cur = await db.execute(
+                "SELECT id, hunt_package_id, ioc, ioc_type, action, noise_score, created_at "
+                f"FROM extracted_iocs WHERE hunt_package_id IN ({placeholders}) "
+                "ORDER BY created_at DESC",
+                pkg_ids,
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+            return [
+                {
+                    "id": r["id"],
+                    "hunt_package_id": r["hunt_package_id"],
+                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
+                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                    "ioc": r["ioc"],
+                    "ioc_type": r["ioc_type"],
+                    "action": r["action"],
+                    "noise_score": r["noise_score"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+
+        if category == "siem_searches":
+            cur = await db.execute(
+                "SELECT id, hunt_package_id, task_type, siem_connector, status, query_text, "
+                "       created_at, completed_at "
+                f"FROM task_results WHERE hunt_package_id IN ({placeholders}) "
+                "ORDER BY created_at DESC",
+                pkg_ids,
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+            return [
+                {
+                    "id": r["id"],
+                    "hunt_package_id": r["hunt_package_id"],
+                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
+                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                    "task_type": r["task_type"],
+                    "siem_connector": r["siem_connector"],
+                    "status": r["status"],
+                    "query_text": r["query_text"],
+                    "created_at": r["created_at"],
+                    "completed_at": r["completed_at"],
+                }
+                for r in rows
+            ]
+
+        # hypotheses / hunting_leads / queries — flattened out of each
+        # matching run's JSON blob.
+        field_by_category = {
+            "hypotheses": "hypotheses",
+            "hunting_leads": "hunting_leads",
+            "queries": "query_drafts",
+        }
+        json_field = field_by_category[category]
+        cur = await db.execute(
+            f"SELECT hunt_package_id, run_seq, created_at, {json_field} "  # noqa: S608
+            f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
+            "ORDER BY created_at DESC",
+            pkg_ids,
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        out = []
+        for r in rows:
+            try:
+                items = _json.loads(r[json_field] or "[]")
+            except Exception:  # noqa: BLE001
+                items = []
+            if not isinstance(items, list):
+                continue
+            hunt_id = hunt_id_by_pkg.get(r["hunt_package_id"], "")
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                row = {
+                    "id": item.get("id", ""),
+                    "hunt_package_id": r["hunt_package_id"],
+                    "hunt_id_display": hunt_id,
+                    "run_id_display": format_run_id(hunt_id, r["run_seq"]),
+                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                    "title": item.get("title", ""),
+                    "created_at": r["created_at"],
+                    "discarded": bool(item.get("discarded")),
+                }
+                if category == "hypotheses":
+                    row["relevance"] = item.get("relevance")
+                    row["confidence"] = item.get("confidence")
+                elif category == "hunting_leads":
+                    row["priority"] = item.get("priority")
+                elif category == "queries":
+                    row["language"] = item.get("language")
+                    row["query"] = item.get("query")
+                out.append(row)
+        return out
+
+
+async def _global_explorer_rows(category: str, *, search: str | None) -> list[dict[str, Any]]:
+    """Row-level data for a Threat Intel Data Explorer category — thin
+    wrappers over the same cross-hunt aggregates the Tracking dashboard
+    uses, filtered by a plain name substring match rather than the
+    hunt-package search rules (there is no single owning hunt package to
+    match against — these are deduped entities that can span many)."""
+
+    def _matches(value: str) -> bool:
+        return not search or search.lower() in (value or "").lower()
+
+    if category == "threat_actors":
+        return [r for r in await aggregate_threat_actors() if _matches(r["name"])]
+    if category == "campaigns":
+        return [r for r in await aggregate_campaigns() if _matches(r["name"])]
+    if category == "malware_families":
+        return [r for r in await aggregate_malware_families() if _matches(r["name"])]
+    if category == "ttps":
+        return [
+            r
+            for r in await aggregate_ttps()
+            if _matches(r["technique_name"]) or _matches(r["technique_id"])
+        ]
+    if category == "feed_sources":
+        from backend.db.manager import get_summary
+
+        return [
+            {"source": row.get("source"), "count": row.get("count", 0)}
+            for row in await get_summary()
+            if row.get("source") != "__total__" and _matches(str(row.get("source") or ""))
+        ]
+    raise ValueError(f"unknown global Data Explorer category: {category!r}")  # pragma: no cover
 
 
 async def update_hunt_package(

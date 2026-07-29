@@ -16,6 +16,7 @@ import Home from './pages/Home'
 import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
 import ThreatHuntingDetail from './pages/threat-hunting/ThreatHuntingDetail'
 import ThreatIntelTracking from './pages/threat-hunting/ThreatIntelTracking'
+import DataExplorer from './pages/threat-hunting/DataExplorer'
 import { api } from './api/client'
 import { useAuth } from './auth/useAuth'
 import { KNOWN_ROUTES } from './utils/basePrefix'
@@ -121,6 +122,8 @@ export default function App() {
             it over threat-hunting/:id regardless of declaration order, but
             it's declared first anyway for clarity, matching threat-hunting/new. */}
         <Route path="threat-hunting/tracking" element={<ThreatIntelTracking />} />
+        {/* issue-local-033: row-level data behind each Dashboard panel. */}
+        <Route path="threat-hunting/explorer" element={<DataExplorer />} />
         <Route path="threat-hunting/:id" element={<ThreatHuntingDetail />} />
       </Route>
     </Routes>

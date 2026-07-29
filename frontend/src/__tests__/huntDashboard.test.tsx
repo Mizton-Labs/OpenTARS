@@ -125,6 +125,72 @@ describe('HuntDashboard', () => {
 
     await user.click(screen.getByRole('button', { name: /view hunt packages/i }))
 
-    expect(navigate).toHaveBeenCalledWith('../packages', { relative: 'path' })
+    // Absolute path, not relative — this page is mounted at the bare
+    // "threat-hunting" route (a single segment), so relative '../packages'
+    // resolved to the nonexistent "/packages" (a bug, now fixed).
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/packages')
+  })
+})
+
+describe('HuntDashboard — panel order', () => {
+  it('shows the Threat Intel summary before the hunt-scoped stat cards', async () => {
+    renderDashboard()
+    await screen.findByText('Threat Intel — across all hunts')
+
+    const threatIntelHeading = screen.getByText('Threat Intel — across all hunts')
+    const huntPackagesLabel = screen.getByText('Hunt Packages')
+    expect(
+      threatIntelHeading.compareDocumentPosition(huntPackagesLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('shows Evidence by Type and Packages by Status before the model breakdowns', async () => {
+    renderDashboard()
+    await screen.findByText('Runs by Model')
+
+    const evidenceByType = screen.getByText('Evidence by Type')
+    const packagesByStatus = screen.getByText('Packages by Status')
+    const runsByModel = screen.getByText('Runs by Model')
+    const huntsByModel = screen.getByText('Hunt Packages by Model')
+
+    expect(
+      evidenceByType.compareDocumentPosition(runsByModel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      packagesByStatus.compareDocumentPosition(huntsByModel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+})
+
+describe('HuntDashboard — links to Data Explorer', () => {
+  it('navigates to the matching category when a stat card is clicked', async () => {
+    const user = userEvent.setup()
+    renderDashboard()
+    await screen.findByText('Hunt Packages')
+
+    await user.click(screen.getByText('Hunt Packages').closest('button')!)
+
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/explorer?tab=hunts')
+  })
+
+  it('navigates to the threat_actors category from the Threat Intel tile', async () => {
+    const user = userEvent.setup()
+    renderDashboard()
+    await screen.findByText('Threat Actors')
+
+    await user.click(screen.getByText('Threat Actors').closest('button')!)
+
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/explorer?tab=threat_actors')
+  })
+
+  it('navigates to the runs category from a breakdown panel header', async () => {
+    const user = userEvent.setup()
+    renderDashboard()
+    await screen.findByText('Runs by Model')
+
+    await user.click(screen.getByText('Runs by Model').closest('button')!)
+
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/explorer?tab=runs')
   })
 })

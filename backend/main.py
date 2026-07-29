@@ -267,6 +267,8 @@ _VIEWER_GET_PREFIXES = (
     "/api/threat-hunting/packages",
     # Threat Hunting Dashboard aggregate stats (issue-local-032) — read-only.
     "/api/threat-hunting/dashboard",
+    # Data Explorer row-level data behind each Dashboard panel (issue-local-033) — read-only.
+    "/api/threat-hunting/explorer/",
     # Project docs (About page's API Docs tab, issue-local-030) — read-only,
     # allowlisted content (see routes_app.get_doc).
     "/api/app/docs",

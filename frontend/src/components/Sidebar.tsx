@@ -17,6 +17,7 @@ import {
   Home as HomeIcon,
   Bot,
   Gauge,
+  Compass,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -88,6 +89,8 @@ const navSections: NavSection[] = [
       // issue-local-021: cross-hunt correlation dashboard — nested under
       // threat-hunting/ like the existing new/:id routes (App.tsx).
       { to: 'threat-hunting/tracking', label: 'Threat Intel Tracking', icon: Network, adminOnly: false, authOnly: false },
+      // issue-local-033: row-level data behind each Dashboard panel.
+      { to: 'threat-hunting/explorer', label: 'Data Explorer', icon: Compass, adminOnly: false, authOnly: false },
     ],
   },
 ]

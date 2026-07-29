@@ -20,6 +20,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { clsx } from 'clsx'
 import {
   Gauge,
   Search,
@@ -45,14 +46,25 @@ function StatCard({
   label,
   value,
   sub,
+  onClick,
 }: {
   icon: React.ElementType
   label: string
   value: number
   sub?: string
+  /** Deep-links to the Data Explorer category backing this stat (issue-local-033). */
+  onClick?: () => void
 }) {
+  const Tag = onClick ? 'button' : 'div'
   return (
-    <div className="card flex items-start gap-3 py-4">
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={clsx(
+        'card flex items-start gap-3 py-4 text-left w-full',
+        onClick && 'cursor-pointer hover:border-brand-600/50 hover:bg-gray-800/40 transition-colors',
+      )}
+    >
       <div className="rounded-lg bg-brand-900/30 border border-brand-800/40 p-2 shrink-0">
         <Icon className="w-4 h-4 text-brand-400" />
       </div>
@@ -61,7 +73,7 @@ function StatCard({
         <p className="text-xs text-gray-500 mt-1.5">{label}</p>
         {sub && <p className="text-[11px] text-gray-600 mt-0.5">{sub}</p>}
       </div>
-    </div>
+    </Tag>
   )
 }
 
@@ -69,18 +81,32 @@ function BarBreakdown({
   title,
   icon: Icon,
   rows,
+  onClick,
 }: {
   title: string
   icon: React.ElementType
   rows: [string, number][]
+  /** Deep-links to the Data Explorer category backing this breakdown (issue-local-033). */
+  onClick?: () => void
 }) {
   const max = Math.max(1, ...rows.map(([, n]) => n))
   return (
     <div className="border border-gray-700 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/40">
-        <Icon className="w-4 h-4 text-brand-400" />
-        <span className="text-sm font-medium text-gray-200">{title}</span>
-      </div>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className="flex w-full items-center gap-2 px-4 py-3 bg-gray-800/40 hover:bg-gray-800/70 transition-colors text-left"
+        >
+          <Icon className="w-4 h-4 text-brand-400" />
+          <span className="text-sm font-medium text-gray-200">{title}</span>
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/40">
+          <Icon className="w-4 h-4 text-brand-400" />
+          <span className="text-sm font-medium text-gray-200">{title}</span>
+        </div>
+      )}
       <div className="p-4 space-y-2.5">
         {rows.length === 0 ? (
           <p className="text-sm text-gray-500 italic">No data yet.</p>
@@ -154,6 +180,13 @@ export default function HuntDashboard() {
 
   const filtered = Boolean(debouncedSearch || timeRange.from || timeRange.to)
 
+  // issue-local-033: every panel/stat card links to the Data Explorer
+  // category it summarizes, via the same ?tab= deep-linking pattern
+  // Configuration/About/Viewer already use.
+  function goToExplorer(category: string) {
+    navigate(`/threat-hunting/explorer?tab=${category}`)
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -169,7 +202,14 @@ export default function HuntDashboard() {
         <button
           type="button"
           className="btn-secondary text-sm"
-          onClick={() => navigate('../packages', { relative: 'path' })}
+          // Absolute path, not relative: this page is mounted at the bare
+          // "threat-hunting" route (a single segment), so a relative
+          // '../packages' with { relative: 'path' } strips that one segment
+          // down to root and appends "packages", landing on the
+          // nonexistent "/packages" — an empty page. Fixed by navigating to
+          // the absolute in-router path, which still gets the reverse-proxy
+          // basename prepended automatically.
+          onClick={() => navigate('/threat-hunting/packages')}
         >
           View Hunt Packages
         </button>
@@ -208,66 +248,136 @@ export default function HuntDashboard() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <StatCard icon={Shield} label="Hunt Packages" value={data.packages_total} />
-            <StatCard icon={Layers} label="Runs" value={data.runs_total} />
-            <StatCard icon={FileStack} label="Evidence Items" value={data.evidence_total} />
-            <StatCard icon={Lightbulb} label="Hypotheses" value={data.hypotheses_total} />
-            <StatCard icon={Crosshair} label="Hunting Leads" value={data.hunting_leads_total} />
-            <StatCard icon={Terminal} label="Queries Drafted" value={data.queries_total} />
-            <StatCard
-              icon={Radar}
-              label="IOCs Extracted"
-              value={data.iocs_extracted_total}
-              sub={`${data.iocs_kept_total} kept`}
-            />
-            <StatCard
-              icon={Database}
-              label="SIEM Searches Executed"
-              value={data.siem_searches_total}
-              sub={`${data.siem_searches_completed} completed`}
-            />
-            <StatCard
-              icon={Terminal}
-              label="Events Retrieved"
-              value={data.siem_events_total}
-              sub="from SIEM execution results"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <BarBreakdown title="Runs by Model" icon={Layers} rows={sortedEntries(data.runs_by_model)} />
-            <BarBreakdown
-              title="Hunt Packages by Model"
-              icon={Shield}
-              rows={sortedEntries(data.hunts_by_model)}
-            />
-            <BarBreakdown
-              title="Evidence by Type"
-              icon={FileStack}
-              rows={sortedEntries(data.evidence_by_type)}
-            />
-            <BarBreakdown
-              title="Packages by Status"
-              icon={Shield}
-              rows={sortedEntries(data.packages_by_status)}
-            />
-          </div>
-
-          {/* Threat Intel summary — global across every hunt, not filtered by
-              the search/time controls above (see backend docstring). */}
+          {/* Threat Intel summary — moved to the top of the page. Global
+              across every hunt, not filtered by the search/time controls
+              above (see backend docstring). Each tile links to its Data
+              Explorer category (issue-local-033). */}
           <div>
             <p className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-brand-400" />
               Threat Intel — across all hunts
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              <StatCard icon={Users} label="Threat Actors" value={data.threat_actors_total} />
-              <StatCard icon={Flag} label="Campaigns" value={data.campaigns_total} />
-              <StatCard icon={Boxes} label="Malware Families" value={data.malware_families_total} />
-              <StatCard icon={Crosshair} label="MITRE Techniques" value={data.ttps_total} />
-              <StatCard icon={Database} label="Feed Sources Processed" value={data.sources_processed} />
+              <StatCard
+                icon={Users}
+                label="Threat Actors"
+                value={data.threat_actors_total}
+                onClick={() => goToExplorer('threat_actors')}
+              />
+              <StatCard
+                icon={Flag}
+                label="Campaigns"
+                value={data.campaigns_total}
+                onClick={() => goToExplorer('campaigns')}
+              />
+              <StatCard
+                icon={Boxes}
+                label="Malware Families"
+                value={data.malware_families_total}
+                onClick={() => goToExplorer('malware_families')}
+              />
+              <StatCard
+                icon={Crosshair}
+                label="MITRE Techniques"
+                value={data.ttps_total}
+                onClick={() => goToExplorer('ttps')}
+              />
+              <StatCard
+                icon={Database}
+                label="Feed Sources Processed"
+                value={data.sources_processed}
+                onClick={() => goToExplorer('feed_sources')}
+              />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <StatCard
+              icon={Shield}
+              label="Hunt Packages"
+              value={data.packages_total}
+              onClick={() => goToExplorer('hunts')}
+            />
+            <StatCard
+              icon={Layers}
+              label="Runs"
+              value={data.runs_total}
+              onClick={() => goToExplorer('runs')}
+            />
+            <StatCard
+              icon={FileStack}
+              label="Evidence Items"
+              value={data.evidence_total}
+              onClick={() => goToExplorer('evidence')}
+            />
+            <StatCard
+              icon={Lightbulb}
+              label="Hypotheses"
+              value={data.hypotheses_total}
+              onClick={() => goToExplorer('hypotheses')}
+            />
+            <StatCard
+              icon={Crosshair}
+              label="Hunting Leads"
+              value={data.hunting_leads_total}
+              onClick={() => goToExplorer('hunting_leads')}
+            />
+            <StatCard
+              icon={Terminal}
+              label="Queries Drafted"
+              value={data.queries_total}
+              onClick={() => goToExplorer('queries')}
+            />
+            <StatCard
+              icon={Radar}
+              label="IOCs Extracted"
+              value={data.iocs_extracted_total}
+              sub={`${data.iocs_kept_total} kept`}
+              onClick={() => goToExplorer('iocs')}
+            />
+            <StatCard
+              icon={Database}
+              label="SIEM Searches Executed"
+              value={data.siem_searches_total}
+              sub={`${data.siem_searches_completed} completed`}
+              onClick={() => goToExplorer('siem_searches')}
+            />
+            <StatCard
+              icon={Terminal}
+              label="Events Retrieved"
+              value={data.siem_events_total}
+              sub="from SIEM execution results"
+              onClick={() => goToExplorer('siem_searches')}
+            />
+          </div>
+
+          {/* Evidence by Type / Packages by Status moved above the model
+              breakdowns. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <BarBreakdown
+              title="Evidence by Type"
+              icon={FileStack}
+              rows={sortedEntries(data.evidence_by_type)}
+              onClick={() => goToExplorer('evidence')}
+            />
+            <BarBreakdown
+              title="Packages by Status"
+              icon={Shield}
+              rows={sortedEntries(data.packages_by_status)}
+              onClick={() => goToExplorer('hunts')}
+            />
+            <BarBreakdown
+              title="Runs by Model"
+              icon={Layers}
+              rows={sortedEntries(data.runs_by_model)}
+              onClick={() => goToExplorer('runs')}
+            />
+            <BarBreakdown
+              title="Hunt Packages by Model"
+              icon={Shield}
+              rows={sortedEntries(data.hunts_by_model)}
+              onClick={() => goToExplorer('runs')}
+            />
           </div>
         </>
       )}
