@@ -416,16 +416,24 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
     by_type: list[dict[str, Any]] = []
     if any_hash or any_ioc or wanted_types:
         seen_values = {r.get("ioc") for r in by_value}
-        for row in await th_db.list_correlated_iocs(limit=MAX_PER_SECTION * 20):
+        # Bucketed per type and interleaved below. "hashes" would otherwise
+        # return sha256 only: the store holds an order of magnitude more of
+        # them, so they fill the cap before a sha1 or md5 is ever reached.
+        per_kind: dict[str, list[dict[str, Any]]] = {}
+        for row in await th_db.list_correlated_iocs(limit=MAX_PER_SECTION * 40):
             kind = str(row.get("ioc_type") or "")
             if row.get("ioc") in seen_values:
                 continue
             # Hash flavours are matched by prefix so a new one is covered
             # without editing the term table.
             if any_ioc or kind in wanted_types or (any_hash and kind.startswith("hash")):
-                by_type.append(row)
-                if len(by_type) >= MAX_PER_SECTION:
-                    break
+                bucket = per_kind.setdefault(kind, [])
+                if len(bucket) < MAX_PER_SECTION:
+                    bucket.append(row)
+        for row in interleave([per_kind[k] for k in sorted(per_kind)]):
+            by_type.append(row)
+            if len(by_type) >= MAX_PER_SECTION:
+                break
 
     ioc_hits = [_ioc_hit(row) for row in by_value]
     typed_hits = [_ioc_hit(row) for row in by_type]
