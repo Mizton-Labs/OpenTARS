@@ -7,7 +7,7 @@ raw schema's recognized core fields (indicator, indicator_type, threat_type,
 severity, confidence, source_url, title, description, tags, actor, campaign).
 The payload is meant to be piped straight into the API client's `send`:
 
-    python scripts/client_tests_demo/gen_events.py \
+    python scripts/client_tests_demo/threat_intel/gen_events.py \
       | scripts/api_client.py --url http://HOST:8001 send
 
 Six events are deterministically seeded so the search tests return meaningful

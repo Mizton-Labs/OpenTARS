@@ -377,6 +377,41 @@ export interface CreateUserPayload {
   role: UserRole
 }
 
+/** A defined API-key scope (issue-local-029) — the wizard's toggle list
+ *  source, from GET /api/auth/api-keys/scopes. */
+export interface ApiScope {
+  id: string
+  label: string
+  description: string
+}
+
+/** A persisted API key as returned by list/update — never includes the
+ *  secret (redacted server-side; the secret only ever appears once, in
+ *  createApiKey's response). */
+export interface ApiKey {
+  id: number
+  client_id: string
+  name: string
+  scopes: string[]
+  enabled: boolean
+  created_by: string | null
+  created_at: string
+  last_used_at: string | null
+}
+
+/** POST /api/auth/api-keys's response — the ONLY time `secret`/`api_key`
+ *  are ever available; the caller must show/copy/download them immediately,
+ *  they cannot be retrieved again afterward. */
+export interface CreatedApiKey extends ApiKey {
+  secret: string
+  /** The combined `<client_id>.<secret>` bearer value to send as
+   *  `Authorization: Bearer <api_key>`. */
+  api_key: string
+  /** Base URL for the scoped Threat Hunting API, resolved from the request
+   *  that created the key (host + any configured base prefix). */
+  endpoint: string
+}
+
 /**
  * Password policy published by GET /api/auth/status (prompts-046).
  * The backend (_validate_password) is the source of truth; the SPA mirrors
@@ -472,6 +507,39 @@ export const api = {
         body: JSON.stringify(cfg),
       }),
     getSsoCallbackUrl: () => request<{ callback_url: string }>('/auth/sso/callback-url'),
+    // API access keys (issue-local-029) — admin only
+    getApiAccessConfig: () => request<{ enabled: boolean }>('/auth/api-keys/config'),
+    setApiAccessConfig: (enabled: boolean) =>
+      request<{ enabled: boolean }>('/auth/api-keys/config', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      }),
+    listApiKeyScopes: () =>
+      request<{ scopes: ApiScope[]; default_profile: string[] }>('/auth/api-keys/scopes'),
+    listApiKeys: () => request<ApiKey[]>('/auth/api-keys'),
+    createApiKey: (name: string, scopes: string[]) =>
+      request<CreatedApiKey>('/auth/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({ name, scopes }),
+      }),
+    updateApiKey: (
+      clientId: string,
+      patch: { name?: string; scopes?: string[]; enabled?: boolean },
+    ) =>
+      request<ApiKey>(`/auth/api-keys/${encodeURIComponent(clientId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      }),
+    deleteApiKey: (clientId: string) =>
+      request<{ status: string; client_id: string }>(
+        `/auth/api-keys/${encodeURIComponent(clientId)}`,
+        { method: 'DELETE' },
+      ),
+    testApiKey: (clientId: string) =>
+      request<{ status: 'ok' | 'warning' | 'error'; detail: string; scopes: string[] }>(
+        `/auth/api-keys/${encodeURIComponent(clientId)}/test`,
+        { method: 'POST' },
+      ),
   },
 
   // Viewer

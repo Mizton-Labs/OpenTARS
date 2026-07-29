@@ -575,15 +575,15 @@ scripts/api_client.py list-feeds --type normalized
 
 ### Demo runner — run the whole test plan with one command
 
-`scripts/client_tests_demo/run_tests.sh` drives `api_client.py` through the full
+`scripts/client_tests_demo/threat_intel/run_tests.sh` drives `api_client.py` through the full
 T1–T11 test plan against a running server and saves every result to disk. It is
 the easiest way to see the client in action end to end.
 
 **1. Configure connection + credentials.** Copy the example env file and fill it
-in (it is read from `scripts/client_tests_demo/.env.test` by default):
+in (it is read from `scripts/client_tests_demo/threat_intel/.env.test` by default):
 
 ```bash
-cp scripts/client_tests_demo/.env.example scripts/client_tests_demo/.env.test
+cp scripts/client_tests_demo/threat_intel/.env.example scripts/client_tests_demo/threat_intel/.env.test
 # then edit .env.test:
 #   host [+ port]          — target host; port is OPTIONAL (defaults: 80 http / 443 https).
 #                            host may include a scheme (https://host); bare host -> http. OR
@@ -597,13 +597,13 @@ cp scripts/client_tests_demo/.env.example scripts/client_tests_demo/.env.test
 **2. Run it.**
 
 ```bash
-bash scripts/client_tests_demo/run_tests.sh                 # uses .env.test
-bash scripts/client_tests_demo/run_tests.sh --env /path/to/other.env
-bash scripts/client_tests_demo/run_tests.sh -k              # also skip TLS verification
+bash scripts/client_tests_demo/threat_intel/run_tests.sh                 # uses .env.test
+bash scripts/client_tests_demo/threat_intel/run_tests.sh --env /path/to/other.env
+bash scripts/client_tests_demo/threat_intel/run_tests.sh -k              # also skip TLS verification
 ```
 
 **3. Read the results.** Each run creates a fresh `test-client-<epoch>/`
-directory inside `scripts/client_tests_demo/` containing:
+directory inside `scripts/client_tests_demo/threat_intel/` containing:
 
 - `T1..T11-*.md` — one markdown file per test (the command run + the captured response),
 - `script-run.log` — the exact `api_client.py` invocation for each test (password masked),
@@ -788,6 +788,7 @@ notice offering to add it — see [Config-drift notice](#configuration) above.
 | [`docs/platform-overview.md`](docs/platform-overview.md) | Everyone | Plain-language platform overview, capability diagram, agent team descriptions, role guide |
 | [`docs/agent-architecture.md`](docs/agent-architecture.md) | Engineers | LangGraph/LangChain usage, tool-calling design, per-agent skill matrix, pipeline DAG, state management |
 | [`docs/threat-hunting-framework-design.md`](docs/threat-hunting-framework-design.md) | Engineers | Full TH domain model: Hunt Package schema, evidence model, IOC model, SSRF policy, DB schema, API route map |
+| [`docs/api-threat-hunting.md`](docs/api-threat-hunting.md) | Integrators | Full `/api/threat-hunting/*` endpoint reference: session vs. scoped API-key auth, every route's request/response shape, API-key management |
 | [`docs/architecture.md`](docs/architecture.md) | Engineers | Whole-platform module map, data flows, config files, external dependencies |
 
 ---

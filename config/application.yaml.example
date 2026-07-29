@@ -88,6 +88,16 @@
 #                  never the secret. Change the password immediately via the
 #                  Account tab, then delete the file.
 #
+# api_access_enabled: whether programmatic API-key access is available
+#                  (issue-local-029). Default false. When true, requests may
+#                  authenticate with `Authorization: Bearer <client_id>.<secret>`
+#                  as an alternative to the session cookie, scoped to whatever
+#                  capabilities the key was granted at creation (never the
+#                  admin/configuration surface, regardless of scope). Managed
+#                  through the API Access config tab (admin only). Has no
+#                  effect when auth_enabled is false — the app is already
+#                  fully open in that mode, for every credential type.
+#
 # cookie_secure:   override for the session cookie's Secure attribute
 #                  (prompts-045). Default "auto": Secure is set when the request
 #                  is HTTPS or X-Forwarded-Proto=https. Behind a TLS-terminating
@@ -139,6 +149,7 @@ app_title: ""
 app_base_prefix: ""
 max_decompressed_bytes: 104857600
 auth_enabled: true
+api_access_enabled: false
 logo_path: ""
 cookie_secure: auto
 password_min_length: 8

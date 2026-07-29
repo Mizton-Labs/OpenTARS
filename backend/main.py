@@ -32,13 +32,19 @@ from backend.api.routes_sources import router as sources_router
 from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
+from backend.auth.api_scopes import scope_allows
 from backend.auth.db import init_users_db
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
     bootstrap_admin_if_empty,
+    resolve_api_key,
     resolve_session,
 )
-from backend.config.loader import load_app_base_prefix, load_auth_enabled
+from backend.config.loader import (
+    load_api_access_enabled,
+    load_app_base_prefix,
+    load_auth_enabled,
+)
 from backend.db.watchers import init_watchers_db
 from backend.logging_config import setup_logging
 from backend.normalizer.consolidated import init_consolidated_db
@@ -336,11 +342,30 @@ async def auth_enforcement(request, call_next):
     if method == "GET" and path in ("/api/app/theme", "/api/app/title"):
         return await call_next(request)
 
-    # Require a valid session for everything else.
+    # Require a valid credential for everything else — the session cookie,
+    # or (issue-local-029) an API key when api_access_enabled.
     token = request.cookies.get(SESSION_COOKIE_NAME)
     user = await resolve_session(token or "")
+    if user is None and load_api_access_enabled():
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            user = await resolve_api_key(auth_header[len("Bearer ") :])
     if user is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    # issue-local-029: an API key is authorized purely by its granted scopes
+    # (backend.auth.api_scopes), never the role model below. Defense in
+    # depth on top of every scope's own route patterns already being
+    # confined to /api/threat-hunting/: hard-cap API-key requests to that
+    # prefix here too, so a future scope-definition mistake can't
+    # accidentally reach the admin/configuration surface.
+    if user.get("is_api_key"):
+        if not path.startswith("/api/threat-hunting/") or not scope_allows(
+            user.get("scopes") or [], method, path
+        ):
+            return JSONResponse(status_code=403, content={"detail": "Insufficient privileges"})
+        request.state.user = user
+        return await call_next(request)
 
     # Forced password change (prompts-047): a user whose password is a generated
     # default (first-run bootstrap or --reset-admin-password) must change it
