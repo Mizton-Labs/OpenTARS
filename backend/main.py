@@ -30,6 +30,7 @@ from backend.api.routes_llm import router as llm_router
 from backend.api.routes_mappings import router as mappings_router
 from backend.api.routes_normalizer import router as normalizer_router
 from backend.api.routes_query import router as query_router
+from backend.api.routes_search import router as search_router
 from backend.api.routes_smart import router as smart_router
 from backend.api.routes_sources import router as sources_router
 from backend.api.routes_threat_hunting import router as threat_hunting_router
@@ -178,6 +179,7 @@ app.include_router(fields_router)
 app.include_router(control_router)
 app.include_router(normalizer_router)
 app.include_router(query_router)
+app.include_router(search_router)
 app.include_router(jobs_router)
 app.include_router(app_config_router)
 app.include_router(llm_router)
@@ -258,13 +260,17 @@ _VIEWER_GET_PREFIXES = (
     # Project docs (About page's API Docs tab, issue-local-030) — read-only,
     # allowlisted content (see routes_app.get_doc).
     "/api/app/docs",
+    # Global search (issue-local-031). Read-only, and every source is filtered
+    # by the caller's own role inside backend.search.service, so a viewer
+    # reaching it can still only ever see viewer-visible content.
+    "/api/search",
 )
 
 # POST endpoints a 'threat-viewer' (read-only) account may reach. The
 # natural-language query endpoint (prompts-064) is a read operation expressed
 # as a POST (it carries a JSON body). The push-only 'feed-sender' role is
 # deliberately NOT granted this.
-_VIEWER_POST_PATHS = ("/api/query/nl",)
+_VIEWER_POST_PATHS = ("/api/query/nl", "/api/search/smart")
 
 # GET prefixes a 'threat-researcher' may read (everything viewer can + more).
 # Researchers can also mutate Threat Hunting resources; those mutations are

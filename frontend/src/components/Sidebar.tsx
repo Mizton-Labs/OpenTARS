@@ -15,6 +15,7 @@ import {
   Crosshair,
   Network,
   Home as HomeIcon,
+  Bot,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -83,6 +84,7 @@ const [homeSection, ...moduleSections] = navSections
 
 const utilityItems: NavItem[] = [
   { to: 'configuration', label: 'Configuration', icon: Settings,   adminOnly: true,  authOnly: false },
+  { to: 'assistant',     label: 'Assistant',     icon: Bot,        adminOnly: false, authOnly: false },
   { to: 'account',       label: 'Account',       icon: UserCircle, adminOnly: false, authOnly: true  },
   { to: 'about',         label: 'About',         icon: Info,       adminOnly: false, authOnly: false },
 ]

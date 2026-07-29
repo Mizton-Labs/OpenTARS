@@ -463,7 +463,11 @@ def test_get_doc_rejects_non_allowlisted_ids(client, doc_id):
 
 
 def test_get_doc_allowlisted_id_missing_on_disk_is_404(client, monkeypatch, tmp_path):
-    monkeypatch.setattr(routes_app, "_DOCS_DIR", tmp_path / "nonexistent-docs-dir")
+    # The allowlist and path resolution live in backend/docs_registry.py, shared
+    # with global search (issue-local-031), so patch it there.
+    from backend import docs_registry
+
+    monkeypatch.setattr(docs_registry, "DOCS_DIR", tmp_path / "nonexistent-docs-dir")
     resp = client.get("/api/app/docs/api-threat-hunting")
     assert resp.status_code == 404
 

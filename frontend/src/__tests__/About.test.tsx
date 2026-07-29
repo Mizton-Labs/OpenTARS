@@ -8,6 +8,7 @@
  */
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../api/client', async () => {
@@ -25,9 +26,13 @@ import About from '../pages/About'
 
 function renderAbout() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // About reads ?tab= to deep-link a tab (issue-local-031), so it needs a
+  // router context — it always has one in the app.
   return render(
     <QueryClientProvider client={qc}>
-      <About />
+      <MemoryRouter>
+        <About />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }

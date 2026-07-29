@@ -9,6 +9,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Global search and SmartSearch chatbot (issue-local-031)
+
+- **New: a search button flush in the top-right corner of every page**, opening a right-hand
+  drawer that stays fully collapsed until you ask for it. The shell reserves a gutter for it, so it
+  never covers a page's own controls. Search spans the whole application — hunt packages; the
+  Threat Intel module (both the raw and normalized stores, which are independent, plus the
+  configured feeds); the Threat Intel Tracking submodule (correlated IOCs and CVEs, and the threat
+  actors, campaigns, malware families and MITRE techniques aggregated across hunts, each linked
+  back to the hunts it was seen in); watchers; pages; settings; and documentation. Each hit names
+  the section it was found in with a short context snippet, and opens the exact place it lives —
+  including the right Viewer store, since a raw match and a normalized match are different things.
+- **Categories are searchable by name, not just by value.** Asking for *hashes*, *sha256*, *domains*,
+  *ips*, *CVEs*, *malware families*, *threat actors*, *campaigns* or *techniques* lists what exists,
+  rather than looking for an entry whose text happens to contain that word — a hash is hex and never
+  contains the word "hash", and the malware families are called `msaRAT` and `Chaos ransomware`, so
+  the obvious way of asking previously returned nothing. Results are spread across the types and
+  categories present, so the commonest one cannot crowd out the rest.
+- **New: SmartSearch**, a chatbot over the same results, behind a switch that is always visible.
+  When no LLM provider is configured the Smart side is greyed out and its tooltip names the setting
+  that enables it (Configuration → General → LLM Providers) rather than failing silently.
+- **Answers are grounded in this installation.** SmartSearch is retrieval-augmented rather than a
+  model with tools: the question is reduced to search terms, the ordinary search retrieves matching
+  snippets, and the model answers from those plus a short description of the product. It cites the
+  sections it used, and says so when it does not know instead of inventing hunts or indicators.
+- **The guardrails are structural, not prompt-deep.** Retrieval runs as the calling user's role, so
+  the model is only ever shown content that user could already fetch themselves — no phrasing of a
+  question can widen it. There is no tool calling, no query generation and no write path, so no
+  input can execute code or change data. Settings are indexed as names and locations only, never
+  values, so no credential is reachable in the first place. Hunt evidence is adversary-authored by
+  definition (fetched pages, uploaded threat reports), so retrieved text is fenced and the model is
+  told it is data and never instructions. Question length, history depth, snippet count, output
+  tokens and timeout are all bounded. Answers are formatted as Markdown — lists, tables, `code`
+  for indicators and queries — rendered with no raw HTML, no images, and no clickable links: a URL
+  in this product is frequently the malicious indicator under investigation, so it is shown as code
+  rather than as something to click.
+- Search results are stripped of invisible and directional characters before display. A
+  right-to-left override inside an attacker-supplied hostname would otherwise make a result read
+  differently from the indicator it actually matched — the wrong failure mode for a tool whose
+  output analysts act on.
+- **New: an "Assistant" section in the sidebar**, above Account, giving SmartSearch a permanent,
+  full-height home instead of only living behind the drawer. It is the same chat — same request,
+  history and Markdown-rendering logic as the drawer's Smart tab — both are built on one shared
+  `useSmartChat`/`SmartChatPanel` implementation, so there is a single place that logic can drift.
+
 ### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
 
 - **New: a tab bar on the About page** — General (the existing version/license content, now topped by

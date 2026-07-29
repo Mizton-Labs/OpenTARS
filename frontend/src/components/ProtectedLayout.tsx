@@ -17,6 +17,7 @@ import { Loader2 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import ChangePasswordCard from './ChangePasswordCard'
 import ConfigDriftBanner from './ConfigDriftBanner'
+import SmartSearchDrawer from './SmartSearchDrawer'
 import { useAuth } from '../auth/useAuth'
 
 export default function ProtectedLayout() {
@@ -74,9 +75,15 @@ export default function ProtectedLayout() {
       <ConfigDriftBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto">
+        {/* issue-local-031: the right-hand gutter is the search button's slot.
+            Reserving it here — rather than letting the button float over the
+            page — is what keeps it from covering page header controls such as
+            Threat Hunting's "New Package". */}
+        <main className="flex-1 overflow-auto pr-11">
           <Outlet />
         </main>
+        {/* Search is global, so the entry point is available from every page. */}
+        <SmartSearchDrawer />
       </div>
     </div>
   )

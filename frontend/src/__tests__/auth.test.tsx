@@ -25,6 +25,13 @@ vi.mock('../api/client', async () => {
       },
       // Sidebar (rendered inside ProtectedLayout) queries logo presence.
       getLogoInfo: vi.fn().mockResolvedValue({ has_logo: false }),
+      // The search drawer (issue-local-031) is part of the shell on every page,
+      // so it probes SmartSearch availability as soon as ProtectedLayout mounts.
+      search: {
+        status: vi.fn().mockResolvedValue({ available: false, reason: null, provider: null }),
+        query: vi.fn().mockResolvedValue({ query: '', total: 0, sections: [] }),
+        smart: vi.fn(),
+      },
     },
   }
 })
