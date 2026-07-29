@@ -20,6 +20,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   back to the hunts it was seen in); watchers; pages; settings; and documentation. Each hit names
   the section it was found in with a short context snippet, and opens the exact place it lives —
   including the right Viewer store, since a raw match and a normalized match are different things.
+- **Categories are searchable by name, not just by value.** Asking for *hashes*, *sha256*, *domains*,
+  *ips*, *CVEs*, *malware families*, *threat actors*, *campaigns* or *techniques* lists what exists,
+  rather than looking for an entry whose text happens to contain that word — a hash is hex and never
+  contains the word "hash", and the malware families are called `msaRAT` and `Chaos ransomware`, so
+  the obvious way of asking previously returned nothing. Results are spread across the types and
+  categories present, so the commonest one cannot crowd out the rest.
 - **New: SmartSearch**, a chatbot over the same results, behind a switch that is always visible.
   When no LLM provider is configured the Smart side is greyed out and its tooltip names the setting
   that enables it (Configuration → General → LLM Providers) rather than failing silently.
