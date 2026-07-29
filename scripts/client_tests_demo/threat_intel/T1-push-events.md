@@ -12,7 +12,7 @@ Auth is disabled on the test server, so no credentials are passed.
 ## Command executed
 
 ```bash
-python scripts/client_tests_demo/gen_events.py \
+python scripts/client_tests_demo/threat_intel/gen_events.py \
   | scripts/api_client.py --url http://<test-server>:8001 send
 ```
 

@@ -155,6 +155,89 @@ describe('ApiAccessTab', () => {
     expect(await screen.findByText('Key is healthy (1 scope granted).')).toBeInTheDocument()
   })
 
+  it('edits scopes on an existing key, preselecting its current scopes', async () => {
+    const user = userEvent.setup()
+    mockedAuth.listApiKeys.mockResolvedValue([apiKey({ scopes: ['hunts:create'] })])
+    mockedAuth.updateApiKey.mockResolvedValue(
+      apiKey({ scopes: ['hunts:create', 'evidence:add'] }),
+    )
+    renderTab()
+
+    await screen.findByText('CI pipeline')
+    await user.click(screen.getByTitle('Edit scopes'))
+
+    const huntsCheckbox = screen.getByText(SCOPES[0].label).closest('label')!.querySelector('input')!
+    const evidenceCheckbox = screen.getByText(SCOPES[1].label).closest('label')!.querySelector('input')!
+    expect(huntsCheckbox.checked).toBe(true)
+    expect(evidenceCheckbox.checked).toBe(false)
+
+    await user.click(evidenceCheckbox)
+    await user.click(screen.getByRole('button', { name: /save scopes/i }))
+
+    await waitFor(() =>
+      expect(mockedAuth.updateApiKey).toHaveBeenCalledWith('ak_abc123def456', {
+        scopes: ['hunts:create', 'evidence:add'],
+      }),
+    )
+  })
+
+  it('"Use default profile" and "Select all" quick-picks work in the scope editor', async () => {
+    const user = userEvent.setup()
+    mockedAuth.listApiKeys.mockResolvedValue([apiKey({ scopes: [] })])
+    renderTab()
+
+    await screen.findByText('CI pipeline')
+    await user.click(screen.getByTitle('Edit scopes'))
+
+    await user.click(screen.getByText('Use default profile'))
+    for (const s of SCOPES) {
+      const checkbox = screen.getByText(s.label).closest('label')!.querySelector('input')!
+      expect(checkbox.checked).toBe(DEFAULT_PROFILE.includes(s.id))
+    }
+
+    // DEFAULT_PROFILE in this fixture already covers every scope, so the
+    // quick-pick now reads "Deselect all" — exercise the full off/on toggle.
+    expect(screen.getByText('Deselect all')).toBeInTheDocument()
+    await user.click(screen.getByText('Deselect all'))
+    for (const s of SCOPES) {
+      const checkbox = screen.getByText(s.label).closest('label')!.querySelector('input')!
+      expect(checkbox.checked).toBe(false)
+    }
+
+    await user.click(screen.getByText('Select all'))
+    for (const s of SCOPES) {
+      const checkbox = screen.getByText(s.label).closest('label')!.querySelector('input')!
+      expect(checkbox.checked).toBe(true)
+    }
+  })
+
+  it('cancelling the scope editor does not call the API', async () => {
+    const user = userEvent.setup()
+    mockedAuth.listApiKeys.mockResolvedValue([apiKey()])
+    renderTab()
+
+    await screen.findByText('CI pipeline')
+    await user.click(screen.getByTitle('Edit scopes'))
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    expect(screen.queryByRole('button', { name: /save scopes/i })).not.toBeInTheDocument()
+    expect(mockedAuth.updateApiKey).not.toHaveBeenCalled()
+  })
+
+  it('opening delete confirmation closes an open scope editor, and vice versa', async () => {
+    const user = userEvent.setup()
+    mockedAuth.listApiKeys.mockResolvedValue([apiKey()])
+    renderTab()
+
+    await screen.findByText('CI pipeline')
+    await user.click(screen.getByTitle('Edit scopes'))
+    expect(screen.getByRole('button', { name: /save scopes/i })).toBeInTheDocument()
+
+    await user.click(screen.getByTitle('Delete key'))
+    expect(screen.queryByRole('button', { name: /save scopes/i })).not.toBeInTheDocument()
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  })
+
   it('requires confirmation before deleting a key', async () => {
     const user = userEvent.setup()
     mockedAuth.listApiKeys.mockResolvedValue([apiKey()])

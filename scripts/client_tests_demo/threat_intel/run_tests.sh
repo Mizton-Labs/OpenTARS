@@ -27,8 +27,8 @@ set -u
 
 # ── locate ourselves ─────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-API_CLIENT="$(cd "${SCRIPT_DIR}/.." && pwd)/api_client.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+API_CLIENT="$(cd "${SCRIPT_DIR}/../.." && pwd)/api_client.py"
 GEN_EVENTS="${SCRIPT_DIR}/gen_events.py"
 
 # Prefer the project virtualenv python, fall back to python3.

@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   Download,
   FlaskConical,
+  Pencil,
 } from 'lucide-react'
 import { api, type ApiScope, type CreatedApiKey } from '../../api/client'
 import Toggle from '../../components/Toggle'
@@ -41,6 +42,8 @@ export default function ApiAccessTab() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [editingScopesId, setEditingScopesId] = useState<string | null>(null)
+  const [editingSelected, setEditingSelected] = useState<Set<string>>(new Set())
   const [testResult, setTestResult] = useState<
     { clientId: string; status: string; detail: string } | null
   >(null)
@@ -66,11 +69,33 @@ export default function ApiAccessTab() {
     onSuccess: () => { setActionError(null); setConfirmDeleteId(null); invalidateKeys() },
     onError: (e) => { setConfirmDeleteId(null); setActionError(errorMessage(e)) },
   })
+  const scopesMut = useMutation({
+    mutationFn: ({ clientId, scopes }: { clientId: string; scopes: string[] }) =>
+      api.auth.updateApiKey(clientId, { scopes }),
+    onSuccess: () => { setActionError(null); setEditingScopesId(null); invalidateKeys() },
+    onError: (e) => setActionError(errorMessage(e)),
+  })
   const testMut = useMutation({
     mutationFn: (clientId: string) => api.auth.testApiKey(clientId),
     onSuccess: (r, clientId) => setTestResult({ clientId, status: r.status, detail: r.detail }),
     onError: (e, clientId) => setTestResult({ clientId, status: 'error', detail: errorMessage(e) }),
   })
+
+  function startEditScopes(k: { client_id: string; scopes: string[] }) {
+    setActionError(null)
+    setConfirmDeleteId(null)
+    setEditingScopesId(k.client_id)
+    setEditingSelected(new Set(k.scopes))
+  }
+
+  function toggleEditScope(id: string) {
+    setEditingSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   if (isLoading) return <div className="text-sm text-gray-500">Loading…</div>
 
@@ -110,8 +135,13 @@ export default function ApiAccessTab() {
         )}
         {keys.map((k) => {
           const armed = confirmDeleteId === k.client_id
+          const editingScopes = editingScopesId === k.client_id
           const testing = testMut.isPending && testMut.variables === k.client_id
           const result = testResult?.clientId === k.client_id ? testResult : null
+          const editAllSelected =
+            scopesData !== undefined &&
+            scopesData.scopes.length > 0 &&
+            scopesData.scopes.every((s) => editingSelected.has(s.id))
           return (
             <div key={k.client_id} className="rounded-lg border border-gray-700 bg-gray-800/50">
               <div className="flex items-center gap-3 px-3 py-2.5">
@@ -132,6 +162,13 @@ export default function ApiAccessTab() {
                 />
                 <button
                   className="btn-ghost p-1"
+                  title="Edit scopes"
+                  onClick={() => (editingScopes ? setEditingScopesId(null) : startEditScopes(k))}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  className="btn-ghost p-1"
                   title="Test key"
                   disabled={testing}
                   onClick={() => testMut.mutate(k.client_id)}
@@ -141,11 +178,80 @@ export default function ApiAccessTab() {
                 <button
                   className="btn-ghost p-1 text-red-400 hover:text-red-300"
                   title="Delete key"
-                  onClick={() => { setActionError(null); setConfirmDeleteId(k.client_id) }}
+                  onClick={() => {
+                    setActionError(null)
+                    setEditingScopesId(null)
+                    setConfirmDeleteId(k.client_id)
+                  }}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {editingScopes && (
+                <div className="border-t border-gray-700 bg-gray-900/30 px-3 py-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="label !mb-0">Endpoint access</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="text-xs text-brand-400 hover:underline"
+                        onClick={() => setEditingSelected(new Set(scopesData?.default_profile ?? []))}
+                      >
+                        Use default profile
+                      </button>
+                      <span className="text-gray-700">·</span>
+                      <button
+                        type="button"
+                        className="text-xs text-brand-400 hover:underline"
+                        onClick={() =>
+                          setEditingSelected(
+                            editAllSelected
+                              ? new Set()
+                              : new Set((scopesData?.scopes ?? []).map((s) => s.id)),
+                          )
+                        }
+                      >
+                        {editAllSelected ? 'Deselect all' : 'Select all'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                    {(scopesData?.scopes ?? []).map((s) => (
+                      <label
+                        key={s.id}
+                        className="flex items-start gap-2 rounded border border-gray-700/60 bg-gray-900/40 px-2.5 py-1.5 cursor-pointer hover:border-gray-600"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={editingSelected.has(s.id)}
+                          onChange={() => toggleEditScope(s.id)}
+                        />
+                        <span>
+                          <span className="block text-xs font-medium text-gray-200">{s.label}</span>
+                          <span className="block text-[11px] text-gray-500">{s.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button className="btn-ghost" onClick={() => setEditingScopesId(null)}>
+                      <X className="w-3.5 h-3.5" /> Cancel
+                    </button>
+                    <button
+                      className="btn-primary"
+                      disabled={scopesMut.isPending}
+                      onClick={() =>
+                        scopesMut.mutate({ clientId: k.client_id, scopes: Array.from(editingSelected) })
+                      }
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      {scopesMut.isPending ? 'Saving…' : 'Save scopes'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {result && (
                 <div
