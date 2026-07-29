@@ -931,7 +931,8 @@ async def _matching_pkg_rows(
 ) -> list[aiosqlite.Row]:
     where_sql, params = _matching_pkg_where(search=search, date_from=date_from, date_to=date_to)
     cur = await db.execute(
-        f"SELECT hp.id, hp.status, hp.name, hp.hunt_seq FROM hunt_packages hp WHERE {where_sql}",  # noqa: S608
+        "SELECT hp.id, hp.status, hp.name, hp.hunt_seq, hp.created_at "
+        f"FROM hunt_packages hp WHERE {where_sql}",  # noqa: S608
         params,
     )
     rows = await cur.fetchall()
@@ -954,6 +955,12 @@ async def get_hunt_dashboard_stats(
     and date-range filter, so the numbers here always describe the same set
     a user would see by applying the same filter to the package list.
 
+    ``hunts_per_day``/``iocs_per_day`` (issue-local-034) are the same
+    matching rows bucketed by ``created_at`` day (``[{"date": "YYYY-MM-DD",
+    "count": N}]``, sorted ascending) for the Dashboard's two timeline
+    charts — no fixed window is applied, so a narrow date range yields a
+    short series and no filter yields the whole history.
+
     The Threat Intel summary (threat actors / campaigns / malware families /
     TTPs / feed sources) is deliberately NOT filtered by search/date — it is
     a cross-hunt aggregate keyed by deduplicated entity name, the same
@@ -970,12 +977,17 @@ async def get_hunt_dashboard_stats(
         pkg_ids = tuple(r["id"] for r in pkg_rows)
 
         packages_by_status: dict[str, int] = {}
+        hunts_per_day: dict[str, int] = {}
         for r in pkg_rows:
             packages_by_status[r["status"]] = packages_by_status.get(r["status"], 0) + 1
+            day = (r["created_at"] or "")[:10]
+            if day:
+                hunts_per_day[day] = hunts_per_day.get(day, 0) + 1
 
         stats: dict[str, Any] = {
             "packages_total": len(pkg_ids),
             "packages_by_status": packages_by_status,
+            "hunts_per_day": [{"date": d, "count": c} for d, c in sorted(hunts_per_day.items())],
             "runs_total": 0,
             "runs_by_model": {},
             "hunts_by_model": {},
@@ -986,6 +998,7 @@ async def get_hunt_dashboard_stats(
             "queries_total": 0,
             "iocs_extracted_total": 0,
             "iocs_kept_total": 0,
+            "iocs_per_day": [],
             "siem_searches_total": 0,
             "siem_searches_completed": 0,
             "siem_events_total": 0,
@@ -1054,6 +1067,17 @@ async def get_hunt_dashboard_stats(
         removed_iocs = row["removed"] or 0
         stats["iocs_extracted_total"] = total_iocs
         stats["iocs_kept_total"] = total_iocs - removed_iocs
+
+        cur = await db.execute(
+            "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n "
+            f"FROM extracted_iocs WHERE hunt_package_id IN ({placeholders}) "
+            "GROUP BY day ORDER BY day",
+            pkg_ids,
+        )
+        stats["iocs_per_day"] = [
+            {"date": r["day"], "count": r["n"]} for r in await cur.fetchall() if r["day"]
+        ]
+        await cur.close()
 
         # ── SIEM execution activity (task_results) ──────────────────────────
         cur = await db.execute(

@@ -160,3 +160,82 @@ describe('DataExplorer — rendering rows', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0)
   })
 })
+
+describe('DataExplorer — tab bar layout (issue-local-034)', () => {
+  it('wraps onto multiple rows instead of scrolling horizontally', async () => {
+    renderExplorer()
+    await screen.findByRole('button', { name: /hunt packages/i })
+
+    const nav = screen.getByRole('button', { name: /hunt packages/i }).closest('nav')!
+    expect(nav.className).toContain('flex-wrap')
+    expect(nav.className).not.toContain('overflow-x-auto')
+  })
+})
+
+describe('DataExplorer — pagination (issue-local-034)', () => {
+  function rowsOf(n: number): ExplorerRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `pkg-${i}`,
+      name: `Hunt ${i}`,
+      status: 'draft',
+      hunt_id_display: `TH${i}`,
+    }))
+  }
+
+  it('defaults to a page size of 25', async () => {
+    mockGetRows.mockResolvedValue(rowsOf(60))
+    renderExplorer()
+
+    await screen.findByText('Hunt 0')
+    expect(screen.getByLabelText(/show/i)).toHaveValue('25')
+    expect(screen.getByText('Hunt 24')).toBeInTheDocument()
+    expect(screen.queryByText('Hunt 25')).not.toBeInTheDocument()
+  })
+
+  it('offers 25/50/100/200 as page-size options', async () => {
+    mockGetRows.mockResolvedValue(rowsOf(60))
+    renderExplorer()
+    await screen.findByText('Hunt 0')
+
+    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
+    expect(options).toEqual(['25', '50', '100', '200'])
+  })
+
+  it('advances to the next page and shows the next slice of rows', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue(rowsOf(60))
+    renderExplorer()
+    await screen.findByText('Hunt 0')
+
+    await user.click(screen.getByRole('button', { name: /next page/i }))
+
+    expect(screen.getByText('Hunt 25')).toBeInTheDocument()
+    expect(screen.queryByText('Hunt 0')).not.toBeInTheDocument()
+  })
+
+  it('changing page size shows more rows and resets to page 1', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue(rowsOf(60))
+    renderExplorer()
+    await screen.findByText('Hunt 0')
+
+    await user.selectOptions(screen.getByLabelText(/show/i), '50')
+
+    expect(screen.getByText('Hunt 49')).toBeInTheDocument()
+    expect(screen.queryByText('Hunt 50')).not.toBeInTheDocument()
+  })
+
+  it('resets to page 1 when switching category', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue(rowsOf(60))
+    renderExplorer()
+    await screen.findByText('Hunt 0')
+    await user.click(screen.getByRole('button', { name: /next page/i }))
+    await screen.findByText(/page 2 of/i)
+
+    await user.click(screen.getByRole('button', { name: /^runs$/i }))
+    await waitFor(() => expect(mockGetRows).toHaveBeenLastCalledWith('runs', expect.anything()))
+
+    expect(await screen.findByText(/page 1 of/i)).toBeInTheDocument()
+  })
+})

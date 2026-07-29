@@ -39,6 +39,10 @@ const mockGetDashboard = api.threatHunting.getDashboard as unknown as ReturnType
 const STATS: THDashboardStats = {
   packages_total: 7,
   packages_by_status: { draft: 2, completed: 5 },
+  hunts_per_day: [
+    { date: '2026-01-01', count: 2 },
+    { date: '2026-01-02', count: 5 },
+  ],
   runs_total: 12,
   runs_by_model: { 'gpt-a': 8, 'gpt-b': 4 },
   hunts_by_model: { 'gpt-a': 5, 'gpt-b': 2 },
@@ -49,6 +53,10 @@ const STATS: THDashboardStats = {
   queries_total: 25,
   iocs_extracted_total: 100,
   iocs_kept_total: 80,
+  iocs_per_day: [
+    { date: '2026-01-01', count: 40 },
+    { date: '2026-01-02', count: 60 },
+  ],
   siem_searches_total: 10,
   siem_searches_completed: 9,
   siem_events_total: 500,
@@ -73,6 +81,48 @@ function renderDashboard() {
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetDashboard.mockResolvedValue(STATS)
+})
+
+describe('HuntDashboard — timeline charts (issue-local-034)', () => {
+  it('renders both timeline charts as the top panel', async () => {
+    renderDashboard()
+
+    const activityHeading = await screen.findByText('Activity over time')
+    const huntsChart = screen.getByText('Hunts per Day')
+    const iocsChart = screen.getByText('IOCs per Day')
+    expect(huntsChart).toBeInTheDocument()
+    expect(iocsChart).toBeInTheDocument()
+
+    // Leads the page — before the Threat Intel summary.
+    const threatIntelHeading = screen.getByText('Threat Intel — across all hunts')
+    expect(
+      activityHeading.compareDocumentPosition(threatIntelHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('shows the correct totals from hunts_per_day / iocs_per_day', async () => {
+    renderDashboard()
+    await screen.findByText('Hunts per Day')
+
+    // hunts_per_day: 2 + 5 = 7; iocs_per_day: 40 + 60 = 100.
+    expect(screen.getByText('Total: 7')).toBeInTheDocument()
+    expect(screen.getByText('Total: 100')).toBeInTheDocument()
+  })
+})
+
+describe('HuntDashboard — Evidence/Packages as pie charts (issue-local-034)', () => {
+  it('renders Evidence by Type and Packages by Status as pie charts, not bars', async () => {
+    renderDashboard()
+    await screen.findByText('Evidence by Type')
+
+    expect(
+      screen.getByRole('img', { name: /evidence by type pie chart/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: /packages by status pie chart/i }),
+    ).toBeInTheDocument()
+  })
 })
 
 describe('HuntDashboard', () => {

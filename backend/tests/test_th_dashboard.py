@@ -65,6 +65,8 @@ class TestEmptyState:
         assert stats["iocs_extracted_total"] == 0
         assert stats["runs_by_model"] == {}
         assert stats["hunts_by_model"] == {}
+        assert stats["hunts_per_day"] == []
+        assert stats["iocs_per_day"] == []
         # The global Threat Intel summary is still computed (all zero, but present).
         assert stats["threat_actors_total"] == 0
         assert stats["sources_processed"] == 0
@@ -236,6 +238,71 @@ class TestModelBreakdown:
             stats = await th_db.get_hunt_dashboard_stats()
 
         assert stats["runs_by_model"] == {"unknown": 1}
+
+
+class TestTimelineData:
+    @pytest.mark.asyncio
+    async def test_hunts_per_day_buckets_by_creation_date(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Hunt A", "")
+            pkg_b = await th_db.create_hunt_package("Hunt B", "")
+            pkg_c = await th_db.create_hunt_package("Hunt C", "")
+            async with aiosqlite.connect(db_path) as db:
+                for pkg, day in (
+                    (pkg_a, "2026-01-01T09:00:00Z"),
+                    (pkg_b, "2026-01-01T14:00:00Z"),
+                    (pkg_c, "2026-01-02T09:00:00Z"),
+                ):
+                    await db.execute(
+                        "UPDATE hunt_packages SET created_at = ? WHERE id = ?", (day, pkg["id"])
+                    )
+                await db.commit()
+
+            stats = await th_db.get_hunt_dashboard_stats()
+
+        assert stats["hunts_per_day"] == [
+            {"date": "2026-01-01", "count": 2},
+            {"date": "2026-01-02", "count": 1},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_iocs_per_day_buckets_by_extraction_date(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            ev = await th_db.add_evidence_item(pkg["id"], item_type="file")
+            await th_db.add_extracted_iocs(
+                pkg["id"], ev["id"], [{"ioc": "1.2.3.4", "ioc_type": "ip"}]
+            )
+            await th_db.add_extracted_iocs(
+                pkg["id"], ev["id"], [{"ioc": "5.6.7.8", "ioc_type": "ip"}]
+            )
+
+            stats = await th_db.get_hunt_dashboard_stats()
+
+        assert len(stats["iocs_per_day"]) == 1
+        today_bucket = stats["iocs_per_day"][0]
+        assert today_bucket["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_timeline_series_sorted_ascending(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_later = await th_db.create_hunt_package("Later", "")
+            pkg_earlier = await th_db.create_hunt_package("Earlier", "")
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "UPDATE hunt_packages SET created_at = ? WHERE id = ?",
+                    ("2026-03-01T00:00:00Z", pkg_later["id"]),
+                )
+                await db.execute(
+                    "UPDATE hunt_packages SET created_at = ? WHERE id = ?",
+                    ("2026-01-01T00:00:00Z", pkg_earlier["id"]),
+                )
+                await db.commit()
+
+            stats = await th_db.get_hunt_dashboard_stats()
+
+        dates = [row["date"] for row in stats["hunts_per_day"]]
+        assert dates == sorted(dates)
 
 
 class TestSearchAndDateFilter:

@@ -9,6 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Dashboard charts, pagination (issue-local-034)
+
+- **New: two timeline charts lead the Dashboard** — Hunts per Day and IOCs per Day, both respecting
+  the page's search/time-range filter the same way every other hunt-scoped figure does.
+- **Evidence by Type and Packages by Status are now pie charts** instead of bar breakdowns, each
+  slice labeled with its count and share; still link through to their Data Explorer category.
+- **Runs by Model and Hunt Packages by Model are now paginated at 10 rows per page** — an
+  installation with many models no longer turns those two panels into a very long scroll.
+- **New: pagination in the Data Explorer**, with a page-size dropdown (25/50/100/200, default 25).
+- **The Data Explorer's category tabs now wrap onto a second row** instead of scrolling
+  horizontally — 13 categories never fit one row at any reasonable width.
+- No new charting dependency: the timeline charts are hand-rolled SVG and the pie charts are a CSS
+  `conic-gradient`, consistent with the rest of the app's no-charting-library approach.
+
 ### Added — Data Explorer, and Dashboard fixes/reordering (issue-local-033)
 
 - **New: "Data Explorer" sidebar entry**, below Threat Intel Tracking — the row-level data behind

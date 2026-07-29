@@ -2,11 +2,11 @@
  * HuntDashboard — the Threat Hunting module's default view (issue-local-032).
  *
  * A metrics-first overview replacing the hunt-package list as the landing
- * page for the module: hunt/run/evidence/IOC/query counts, a per-model
- * breakdown of runs, and a summary of the Threat Intel identified across
- * hunts. The package list itself moved to its own sidebar entry ("Hunt
- * Packages", threat-hunting/packages) — nothing about it changed, it just
- * isn't the first thing you see anymore.
+ * page for the module: two timeline charts up top (issue-local-034), then
+ * the Threat Intel summary, then hunt/run/evidence/IOC/query counts, then
+ * pie/bar breakdowns. The package list itself moved to its own sidebar
+ * entry ("Hunt Packages", threat-hunting/packages) — nothing about it
+ * changed, it just isn't the first thing you see anymore.
  *
  * Shares the same search + time-range filter as the Hunt Packages list
  * (same debounce, same HuntTimeFilter component, same query-param shape) so
@@ -14,13 +14,12 @@
  * there. The Threat Intel summary panel is deliberately NOT filtered by
  * search/date — see get_hunt_dashboard_stats's docstring for why.
  *
- * No charting library: this app has none, and one card of stat tiles plus
- * proportional-width bar rows doesn't need one.
+ * Rendering building blocks (StatCard/BarBreakdown/PieChart/TimelineChart)
+ * live in DashboardCharts.tsx — this file owns data-fetching and layout.
  */
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { clsx } from 'clsx'
 import {
   Gauge,
   Search,
@@ -37,99 +36,11 @@ import {
   Boxes,
   ShieldAlert,
   Database,
+  TrendingUp,
 } from 'lucide-react'
 import { api, type THDashboardStats } from '../../api/client'
 import HuntTimeFilter, { type HuntTimeRange } from './HuntTimeFilter'
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  onClick,
-}: {
-  icon: React.ElementType
-  label: string
-  value: number
-  sub?: string
-  /** Deep-links to the Data Explorer category backing this stat (issue-local-033). */
-  onClick?: () => void
-}) {
-  const Tag = onClick ? 'button' : 'div'
-  return (
-    <Tag
-      type={onClick ? 'button' : undefined}
-      onClick={onClick}
-      className={clsx(
-        'card flex items-start gap-3 py-4 text-left w-full',
-        onClick && 'cursor-pointer hover:border-brand-600/50 hover:bg-gray-800/40 transition-colors',
-      )}
-    >
-      <div className="rounded-lg bg-brand-900/30 border border-brand-800/40 p-2 shrink-0">
-        <Icon className="w-4 h-4 text-brand-400" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-2xl font-semibold text-gray-100 leading-none">{value.toLocaleString()}</p>
-        <p className="text-xs text-gray-500 mt-1.5">{label}</p>
-        {sub && <p className="text-[11px] text-gray-600 mt-0.5">{sub}</p>}
-      </div>
-    </Tag>
-  )
-}
-
-function BarBreakdown({
-  title,
-  icon: Icon,
-  rows,
-  onClick,
-}: {
-  title: string
-  icon: React.ElementType
-  rows: [string, number][]
-  /** Deep-links to the Data Explorer category backing this breakdown (issue-local-033). */
-  onClick?: () => void
-}) {
-  const max = Math.max(1, ...rows.map(([, n]) => n))
-  return (
-    <div className="border border-gray-700 rounded-lg overflow-hidden">
-      {onClick ? (
-        <button
-          type="button"
-          onClick={onClick}
-          className="flex w-full items-center gap-2 px-4 py-3 bg-gray-800/40 hover:bg-gray-800/70 transition-colors text-left"
-        >
-          <Icon className="w-4 h-4 text-brand-400" />
-          <span className="text-sm font-medium text-gray-200">{title}</span>
-        </button>
-      ) : (
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-800/40">
-          <Icon className="w-4 h-4 text-brand-400" />
-          <span className="text-sm font-medium text-gray-200">{title}</span>
-        </div>
-      )}
-      <div className="p-4 space-y-2.5">
-        {rows.length === 0 ? (
-          <p className="text-sm text-gray-500 italic">No data yet.</p>
-        ) : (
-          rows.map(([label, count]) => (
-            <div key={label}>
-              <div className="flex items-center justify-between text-[11px] text-gray-400 mb-0.5">
-                <span className="truncate">{label}</span>
-                <span className="font-mono text-gray-500 shrink-0 ml-2">{count}</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-brand-500"
-                  style={{ width: `${Math.max(4, (count / max) * 100)}%` }}
-                />
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
+import { StatCard, BarBreakdown, PieChart, TimelineChart } from './DashboardCharts'
 
 function sortedEntries(rec: Record<string, number>): [string, number][] {
   return Object.entries(rec).sort((a, b) => b[1] - a[1])
@@ -138,6 +49,7 @@ function sortedEntries(rec: Record<string, number>): [string, number][] {
 const EMPTY: THDashboardStats = {
   packages_total: 0,
   packages_by_status: {},
+  hunts_per_day: [],
   runs_total: 0,
   runs_by_model: {},
   hunts_by_model: {},
@@ -148,6 +60,7 @@ const EMPTY: THDashboardStats = {
   queries_total: 0,
   iocs_extracted_total: 0,
   iocs_kept_total: 0,
+  iocs_per_day: [],
   siem_searches_total: 0,
   siem_searches_completed: 0,
   siem_events_total: 0,
@@ -248,10 +161,21 @@ export default function HuntDashboard() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : (
         <>
-          {/* Threat Intel summary — moved to the top of the page. Global
-              across every hunt, not filtered by the search/time controls
-              above (see backend docstring). Each tile links to its Data
-              Explorer category (issue-local-033). */}
+          {/* issue-local-034: timeline charts lead the page. */}
+          <div>
+            <p className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-brand-400" />
+              Activity over time
+            </p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <TimelineChart title="Hunts per Day" icon={Shield} data={data.hunts_per_day} />
+              <TimelineChart title="IOCs per Day" icon={Radar} data={data.iocs_per_day} />
+            </div>
+          </div>
+
+          {/* Threat Intel summary — global across every hunt, not filtered
+              by the search/time controls above (see backend docstring).
+              Each tile links to its Data Explorer category (issue-local-033). */}
           <div>
             <p className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-brand-400" />
@@ -351,16 +275,16 @@ export default function HuntDashboard() {
             />
           </div>
 
-          {/* Evidence by Type / Packages by Status moved above the model
-              breakdowns. */}
+          {/* Evidence by Type / Packages by Status — pie charts, ahead of
+              the (paginated) model breakdowns. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <BarBreakdown
+            <PieChart
               title="Evidence by Type"
               icon={FileStack}
               rows={sortedEntries(data.evidence_by_type)}
               onClick={() => goToExplorer('evidence')}
             />
-            <BarBreakdown
+            <PieChart
               title="Packages by Status"
               icon={Shield}
               rows={sortedEntries(data.packages_by_status)}

@@ -35,6 +35,9 @@ import {
 } from 'lucide-react'
 import { api, type ExplorerRow } from '../../api/client'
 import { HUNT_ID_BADGE } from './runStatusUtils'
+import Pagination from '../../components/Pagination'
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 
 interface Category {
   id: string
@@ -235,6 +238,9 @@ export default function DataExplorer() {
   const [category, setCategory] = useState(DEFAULT_CATEGORY)
   const [searchInput, setSearchInput] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  // issue-local-034: pagination, page-size selectable (default 25).
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25)
 
   // Deep-link from a Dashboard panel — same ?tab= pattern as Configuration/
   // About/Viewer.
@@ -250,12 +256,20 @@ export default function DataExplorer() {
     return () => clearTimeout(t)
   }, [searchInput])
 
+  // Changing category or search invalidates the current page.
+  useEffect(() => {
+    setPage(1)
+  }, [category, debouncedSearch])
+
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['th-explorer', category, debouncedSearch],
     queryFn: () => api.threatHunting.getExplorerRows(category, { search: debouncedSearch || undefined }),
   })
 
   const columns = columnsFor(category)
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize))
+  const clampedPage = Math.min(page, totalPages)
+  const pageRows = rows.slice((clampedPage - 1) * pageSize, clampedPage * pageSize)
 
   return (
     <div className="p-6 space-y-5">
@@ -270,8 +284,11 @@ export default function DataExplorer() {
         </p>
       </div>
 
+      {/* issue-local-034: wraps onto a second row instead of scrolling
+          horizontally — 13 categories don't fit one row at any reasonable
+          width. */}
       <div className="border-b border-gray-800">
-        <nav className="flex gap-4 overflow-x-auto">
+        <nav className="flex flex-wrap gap-x-4 gap-y-2">
           {EXPLORER_CATEGORIES.map((c) => (
             <button
               key={c.id}
@@ -318,30 +335,45 @@ export default function DataExplorer() {
       ) : rows.length === 0 ? (
         <p className="text-sm text-gray-500 text-center py-8">No data yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-800">
-          <table className="w-full min-w-[700px]">
-            <thead>
-              <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
-                {columns.map((col) => (
-                  <th key={col.header} className="text-left py-1.5 px-2">
-                    {col.header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, i) => (
-                <tr key={row.id ?? i} className="border-t border-gray-800/60">
+        <>
+          <div className="overflow-x-auto rounded-lg border border-gray-800">
+            <table className="w-full min-w-[700px]">
+              <thead>
+                <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
                   {columns.map((col) => (
-                    <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
-                      {col.render(row)}
-                    </td>
+                    <th key={col.header} className="text-left py-1.5 px-2">
+                      {col.header}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pageRows.map((row, i) => (
+                  <tr key={row.id ?? i} className="border-t border-gray-800/60">
+                    {columns.map((col) => (
+                      <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
+                        {col.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <Pagination
+            page={clampedPage}
+            totalPages={totalPages}
+            totalItems={rows.length}
+            onPageChange={setPage}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSizeChange={(n) => {
+              setPageSize(n as (typeof PAGE_SIZE_OPTIONS)[number])
+              setPage(1)
+            }}
+          />
+        </>
       )}
     </div>
   )

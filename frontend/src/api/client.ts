@@ -2618,9 +2618,16 @@ export interface THTrackingDashboard {
 }
 
 // issue-local-032: Threat Hunting Dashboard aggregate stats.
+/** issue-local-034: one point of a Dashboard timeline chart. */
+export interface THTimelinePoint {
+  date: string
+  count: number
+}
+
 export interface THDashboardStats {
   packages_total: number
   packages_by_status: Record<string, number>
+  hunts_per_day: THTimelinePoint[]
   runs_total: number
   runs_by_model: Record<string, number>
   hunts_by_model: Record<string, number>
@@ -2631,6 +2638,7 @@ export interface THDashboardStats {
   queries_total: number
   iocs_extracted_total: number
   iocs_kept_total: number
+  iocs_per_day: THTimelinePoint[]
   siem_searches_total: number
   siem_searches_completed: number
   siem_events_total: number
