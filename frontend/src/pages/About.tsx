@@ -1,30 +1,93 @@
+import { lazy, Suspense, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { clsx } from 'clsx'
 import { api } from '../api/client'
-import { GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale } from 'lucide-react'
+import { GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale, Loader2 } from 'lucide-react'
 import BrandLogo from '../components/BrandLogo'
+
+// Lazy-loaded: pulls in react-markdown/remark-gfm, which most visitors never
+// need (About defaults to the General tab) — same pattern as the Threat
+// Hunting workflow visualizer's Mermaid/ReactFlow tabs.
+const ApiDocsTab = lazy(() => import('./about/ApiDocsTab'))
+const ApiSwaggerTab = lazy(() => import('./about/ApiSwaggerTab'))
 
 declare const __APP_VERSION__: string
 declare const __GIT_COMMIT__: string
 declare const __GIT_BRANCH__: string
 declare const __GIT_COMMIT_DATE__: string
 
+type AboutTab = 'general' | 'api-docs' | 'api-swagger'
+
+const TABS: { id: AboutTab; label: string }[] = [
+  { id: 'general', label: 'General' },
+  { id: 'api-docs', label: 'API Docs' },
+  { id: 'api-swagger', label: 'API Swagger' },
+]
+
 export default function About() {
+  const [tab, setTab] = useState<AboutTab>('general')
+
+  // Full-width root (matching the other content-heavy pages); each tab then
+  // constrains itself — General stays a narrow reading column, while the API
+  // reference and Swagger get the whole width for their tables and schemas.
+  return (
+    <div className="p-6 space-y-4">
+      <div>
+        <h1 className="text-lg font-semibold text-gray-100">About</h1>
+        <p className="text-sm text-gray-500">OpenTARS — version information and API documentation.</p>
+      </div>
+
+      <div className="border-b border-gray-800">
+        <nav className="flex gap-6 flex-wrap">
+          {TABS.map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={clsx('pb-3 text-sm font-medium transition-colors', tab === id ? 'tab-active' : 'tab-inactive')}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {tab === 'general' && <GeneralTab />}
+      {tab === 'api-docs' && (
+        <Suspense fallback={<TabLoading label="Loading API documentation…" />}>
+          <ApiDocsTab />
+        </Suspense>
+      )}
+      {tab === 'api-swagger' && (
+        <Suspense fallback={<TabLoading label="Loading Swagger UI…" />}>
+          <ApiSwaggerTab />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+function TabLoading({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-500">
+      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      {label}
+    </div>
+  )
+}
+
+function GeneralTab() {
   const { data: health } = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
   })
 
   return (
-    <div className="p-6 max-w-lg space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-gray-100">About</h1>
-        <p className="text-sm text-gray-500">OpenTARS — version information.</p>
-      </div>
-
+    <div className="max-w-lg space-y-6">
       <div className="card space-y-5">
-        {/* App identity */}
-        <div className="flex items-center gap-3">
-          <BrandLogo size={40} />
+        {/* App identity — a prominent, medium-sized logo header at the top of
+            the card, per issue-local-030. */}
+        <div className="flex flex-col items-center text-center gap-2 pt-1">
+          <BrandLogo size={64} />
           <div>
             <p className="text-base font-semibold text-gray-100">OpenTARS</p>
             <p className="text-xs text-gray-500">Threat Agentic Research System</p>

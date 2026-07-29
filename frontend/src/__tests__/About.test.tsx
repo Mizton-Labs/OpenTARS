@@ -14,7 +14,10 @@ vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
   return {
     ...actual,
-    api: { health: vi.fn().mockResolvedValue({ status: 'ok', version: '0.1.0' }) },
+    api: {
+      health: vi.fn().mockResolvedValue({ status: 'ok', version: '0.1.0' }),
+      getDoc: vi.fn().mockResolvedValue({ doc_id: 'api-threat-hunting', content: '# API Reference\n\nSome docs.' }),
+    },
   }
 })
 
@@ -71,5 +74,47 @@ describe('About page (prompts-051)', () => {
   it('shows the commit date alongside the commit', () => {
     renderAbout()
     expect(screen.getByText('Commit Date')).toBeInTheDocument()
+  })
+})
+
+describe('About page tabs (issue-local-030)', () => {
+  it('defaults to the General tab', () => {
+    renderAbout()
+    expect(screen.getByRole('button', { name: 'General' })).toHaveClass('tab-active')
+    expect(screen.getByRole('button', { name: 'API Docs' })).toHaveClass('tab-inactive')
+    expect(screen.getByRole('button', { name: 'API Swagger' })).toHaveClass('tab-inactive')
+    // General-tab-only content is visible by default.
+    expect(screen.getByText('Code Dev Team')).toBeInTheDocument()
+  })
+
+  it('offers General, API Docs and API Swagger as separate tabs', () => {
+    renderAbout()
+    for (const label of ['General', 'API Docs', 'API Swagger']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
+  })
+
+  it('switches to the API Docs tab and hides General content', async () => {
+    const userEventModule = await import('@testing-library/user-event')
+    const user = userEventModule.default.setup()
+    renderAbout()
+
+    await user.click(screen.getByRole('button', { name: 'API Docs' }))
+
+    expect(screen.getByRole('button', { name: 'API Docs' })).toHaveClass('tab-active')
+    expect(screen.queryByText('Code Dev Team')).not.toBeInTheDocument()
+  })
+
+  it('switches to the API Swagger tab and hides General content', async () => {
+    const userEventModule = await import('@testing-library/user-event')
+    const user = userEventModule.default.setup()
+    renderAbout()
+
+    await user.click(screen.getByRole('button', { name: 'API Swagger' }))
+
+    expect(screen.getByRole('button', { name: 'API Swagger' })).toHaveClass('tab-active')
+    expect(screen.queryByText('Code Dev Team')).not.toBeInTheDocument()
+    // Lazily loaded, so the iframe itself appears once the chunk resolves.
+    expect(await screen.findByTitle('OpenTARS API Swagger UI')).toBeInTheDocument()
   })
 })

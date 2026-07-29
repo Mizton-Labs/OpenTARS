@@ -27,6 +27,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path: string) => path.replace(/^.*?\/api/, '/api'),
       },
+      // FastAPI's own interactive docs/redoc/openapi.json (issue-local-030's
+      // About -> API Docs tab), embedded via <iframe swaggerUiSrc()>. These
+      // live outside /api/, so they need their own proxy rule — same
+      // relative-URL-under-any-prefix strategy as the rule above.
+      '^.*/(docs|redoc|openapi\\.json)$': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^.*?\/(docs|redoc|openapi\.json)$/, '/$1'),
+      },
     },
   },
   build: {

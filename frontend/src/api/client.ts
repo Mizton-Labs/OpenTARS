@@ -39,6 +39,21 @@ export function logoSrc(cacheBust?: number | string): string {
   return `${BASE}/app/logo${suffix}`
 }
 
+/**
+ * URL for FastAPI's own interactive Swagger UI (issue-local-030's About ->
+ * API Swagger tab). Lives OUTSIDE /api/ (auto-registered by FastAPI), so it
+ * can't reuse BASE — same relative-vs-prefixed resolution as logoSrc above,
+ * just rooted at the bare prefix instead of "<prefix>/api".
+ *
+ * `apiKeysOnly` narrows the rendered schema to the endpoints a scoped API
+ * access key can actually call (backend/main.py's _api_key_openapi), which is
+ * what the About tab shows by default.
+ */
+export function swaggerUiSrc(opts?: { apiKeysOnly?: boolean }): string {
+  const base = _prefix ? `${_prefix}/docs` : 'docs'
+  return opts?.apiKeysOnly ? `${base}?api_keys_only=1` : base
+}
+
 // prompts-045: global 401 handler. The AuthProvider registers a callback so a
 // 401 from ANY request (e.g. an expired session) drops the cached user and
 // bounces the SPA to /login. Kept module-level so the plain `request` helper
@@ -761,6 +776,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ app_title: value }),
     }),
+
+  // Application — allowlisted project docs (About page's API Docs tab, issue-local-030)
+  getDoc: (docId: string) =>
+    request<{ doc_id: string; content: string }>(`/app/docs/${encodeURIComponent(docId)}`),
 
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.

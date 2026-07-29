@@ -116,6 +116,46 @@ def test_logout_revokes_session(auth_env):
     assert c.get("/api/auth/me").status_code == 401
 
 
+# ── FastAPI's own docs/redoc/openapi.json (issue-local-030) ────────────────────
+# These live OUTSIDE /api/ (auto-registered by FastAPI), so they are NOT
+# covered by the generic "/api/" prefix check — they get their own explicit
+# gate in the middleware, tested here rather than the generic 401 test above.
+
+
+_DOCS_PATHS = ["/docs", "/redoc", "/openapi.json", "/openapi-api-keys.json"]
+
+
+@pytest.mark.parametrize("path", _DOCS_PATHS)
+def test_docs_paths_require_auth_when_enabled(auth_env, path):
+    r = _client().get(path)
+    assert r.status_code == 401
+
+
+@pytest.mark.parametrize("path", _DOCS_PATHS)
+def test_docs_paths_reachable_once_authenticated(auth_env, path):
+    c = _login("admin", "Adminpass1")
+    r = c.get(path)
+    assert r.status_code == 200
+
+
+def test_docs_paths_reachable_by_non_admin_role(auth_env):
+    """Any authenticated role may view the docs, not just admin — matches the
+    About page itself, which has no role restriction."""
+    asyncio.run(
+        auth_db.create_user("viewer1", service.hash_password("Viewerpass1"), role="threat-viewer")
+    )
+    c = _login("viewer1", "Viewerpass1")
+    assert c.get("/docs").status_code == 200
+
+
+def test_docs_paths_open_when_auth_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(auth_db, "_USERS_DB_PATH", tmp_path / "users.db")
+    monkeypatch.delenv("OPENTARS_ENABLE_AUTH", raising=False)
+    monkeypatch.setattr("backend.config.loader.load_app_config", lambda: {"auth_enabled": False})
+    r = _client().get("/docs")
+    assert r.status_code == 200
+
+
 # ── self password change ──────────────────────────────────────────────────────
 
 

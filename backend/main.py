@@ -6,11 +6,14 @@ Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -32,7 +35,7 @@ from backend.api.routes_sources import router as sources_router
 from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
-from backend.auth.api_scopes import scope_allows
+from backend.auth.api_scopes import API_SCOPES, scope_allows
 from backend.auth.db import init_users_db
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
@@ -130,12 +133,30 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenTARS",
     version=__version__,
-    description="Lightweight Threat Intelligence feed receiver, normaliser, and viewer.",
+    description=(
+        "**OpenTARS (Threat Agentic Research System)** — a standalone, self-hosted "
+        "Threat Intelligence and Agentic Threat Hunting platform. It ingests, normalizes, "
+        "and correlates threat intel from multiple sources, and drives end-to-end threat "
+        "hunts through an LLM-powered agent pipeline.\n\n"
+        "**Authentication.** Two independent credentials are accepted: the session cookie "
+        "issued by `POST /api/auth/login` (authorized by role), or a scoped API access key "
+        "sent as `Authorization: Bearer <client_id>.<secret>`. An API key is authorized "
+        "purely by its granted scopes and can only ever reach `/api/threat-hunting/*` — it "
+        "can never reach configuration, user-management, or LLM-provider endpoints, "
+        "whatever scopes it holds."
+    ),
     lifespan=lifespan,
     # When deployed behind a reverse proxy at a sub-path, root_path makes
     # the OpenAPI docs / schema URLs reflect the external mount point.
     # Empty string == mounted at root (default).
     root_path=load_app_base_prefix(),
+    # issue-local-030: the stock docs pages are replaced by the relative-URL
+    # versions defined below (see _swagger_ui / _redoc). Disabling them here
+    # frees /docs and /redoc for those custom routes; /openapi.json is left
+    # auto-registered (openapi_url is untouched) — only the URL the HTML
+    # *references* changes, not where the schema is actually served.
+    docs_url=None,
+    redoc_url=None,
 )
 if app.root_path:
     logger.info("Application mounted under base prefix: %s", app.root_path)
@@ -185,7 +206,10 @@ app.include_router(feed_router)
 #   - 'feed-sender' (listener-only machine): POST /api/ingest/listener only
 #     (issue-local-002: replaces old 'normal'/'sender' roles).
 # Non-API paths (the SPA shell + static assets) are always served so the login
-# page can load; the SPA itself redirects to /login when unauthenticated.
+# page can load; the SPA itself redirects to /login when unauthenticated. The
+# one exception is FastAPI's own docs/redoc/openapi.json (issue-local-030,
+# see _DOCS_PATHS below), which — despite living outside /api/ — are gated
+# the same as everything else once auth is enabled.
 
 # Exact public API paths (method-checked below).
 _PUBLIC_API_PATHS = frozenset(
@@ -231,6 +255,9 @@ _VIEWER_GET_PREFIXES = (
     "/api/smart-mappings/active",
     # Threat Hunting read-only access (issue-local-002, Phase 1)
     "/api/threat-hunting/packages",
+    # Project docs (About page's API Docs tab, issue-local-030) — read-only,
+    # allowlisted content (see routes_app.get_doc).
+    "/api/app/docs",
 )
 
 # POST endpoints a 'threat-viewer' (read-only) account may reach. The
@@ -310,6 +337,23 @@ def _role_allowed(role: str, method: str, path: str) -> bool:
     return False
 
 
+# FastAPI auto-registers its interactive docs (Swagger UI), ReDoc, and the raw
+# OpenAPI schema OUTSIDE /api/ — the "only guard /api/" bypass below would
+# otherwise leave them fully public regardless of auth_enabled, exposing the
+# entire route/schema surface (including admin/config/user-management routes,
+# not just Threat Hunting) to anyone who requests the URL directly, even
+# though the About page that links to them (issue-local-030) is itself behind
+# the authenticated SPA shell. Require a valid session for these exact paths,
+# same as everything else once auth is on.
+#
+# The API-key-scoped schema variant is listed here too: it is a projection of
+# the same schema, so leaving it out would have published — unauthenticated —
+# precisely the subset it describes. Its path is declared here (rather than
+# beside the docs routes further down) because this gate is evaluated first.
+_OPENAPI_API_KEYS_PATH = "/openapi-api-keys.json"
+_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json", _OPENAPI_API_KEYS_PATH})
+
+
 @app.middleware("http")
 async def auth_enforcement(request, call_next):
     if not load_auth_enabled():
@@ -317,6 +361,15 @@ async def auth_enforcement(request, call_next):
 
     method = request.method
     path = request.url.path
+
+    if path in _DOCS_PATHS:
+        if method != "GET":
+            return await call_next(request)
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        user = await resolve_session(token or "")
+        if user is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        return await call_next(request)
 
     # Only guard the API surface; serve the SPA/static unconditionally.
     if not path.startswith("/api/"):
@@ -388,6 +441,152 @@ async def auth_enforcement(request, call_next):
 
     request.state.user = user
     return await call_next(request)
+
+
+# ── Interactive API docs (issue-local-030) ────────────────────────────────────
+#
+# FastAPI's stock /docs and /redoc hardcode a ROOT-ANCHORED schema URL
+# ("/openapi.json"). That breaks whenever the app is served under a
+# reverse-proxy alias whose location block strips the prefix before
+# forwarding, e.g.
+#
+#     location /opentars/ { proxy_pass http://host:8003/; }   # note the slash
+#
+# The backend then only ever sees "/docs" and cannot learn its external mount
+# point from the path, so the page it returns still points at "/openapi.json".
+# The browser resolves that against the proxy ROOT — not the alias — and loads
+# whatever *other* application is mounted there. Observed in the real
+# deployment: the docs page rendered the parent app-manager's endpoints
+# instead of this application's.
+#
+# Fix: reference the schema RELATIVELY, which is the same document-relative
+# strategy the SPA already relies on (see _render_index_html's <base href="./">
+# and the API client's relative "api" BASE). The browser is at
+# <origin><alias>/docs, so "openapi.json" resolves to
+# <origin><alias>/openapi.json and is routed straight back to this app. This
+# is correct with OR without app_base_prefix configured, and needs no
+# cooperation from the proxy (the X-Script-Name header it sends is
+# deliberately NOT trusted — it is client-controllable, and relative URLs make
+# it unnecessary).
+#
+# Note the docs route is exactly "/docs" ("/docs/" 404s), so the relative
+# reference is unambiguous.
+#
+# The Swagger UI / ReDoc bundles themselves are VENDORED (backend/static/
+# api-docs, served at /docs-assets) rather than pulled from cdn.jsdelivr.net
+# the way FastAPI's defaults do. OpenTARS is a standalone, local platform that
+# is routinely deployed on isolated or air-gapped networks, where a CDN fetch
+# simply fails and the docs render blank; vendoring also removes a
+# third-party runtime dependency from an authenticated page. Their URLs are
+# relative for exactly the same reverse-proxy reason as the schema above.
+_OPENAPI_RELATIVE_URL = "openapi.json"
+_SWAGGER_JS_URL = "docs-assets/swagger-ui-bundle.js"
+_SWAGGER_CSS_URL = "docs-assets/swagger-ui.css"
+_REDOC_JS_URL = "docs-assets/redoc.standalone.js"
+# Served from the frontend dist root by the SPA catch-all; referenced rather
+# than duplicated into the vendored directory (it is a 350+ KiB PNG).
+_DOCS_FAVICON_URL = "tars-favicon.png"
+
+_DOCS_ASSETS_DIR = Path(__file__).resolve().parent / "static" / "api-docs"
+if _DOCS_ASSETS_DIR.is_dir():
+    # Mounted here — BEFORE the SPA catch-all registered at the bottom of this
+    # module — so /docs-assets/* resolves to the vendored files. Public, like
+    # the SPA's own /assets mount: these are third-party static libraries
+    # carrying no application data.
+    app.mount(
+        "/docs-assets",
+        StaticFiles(directory=str(_DOCS_ASSETS_DIR)),
+        name="docs-assets",
+    )
+else:  # pragma: no cover — defensive
+    logger.warning(
+        "Vendored API-docs assets not found at %s; /docs and /redoc will not render.",
+        _DOCS_ASSETS_DIR,
+    )
+
+
+# ── API-key-scoped schema variant (issue-local-030) ──────────────────────────
+#
+# The full schema documents every route in the application, most of which an
+# API key can never call — an integrator holding a key mostly wants to see the
+# subset their credential actually works against. This variant reduces the
+# schema to exactly the operations some scope grants, derived from
+# backend.auth.api_scopes (the same single source of truth the middleware
+# authorizes against), so the two can never drift.
+#
+# The About page's API Swagger tab loads this by default and offers a toggle
+# for the full schema; /docs on its own still serves the complete API.
+# (_OPENAPI_API_KEYS_PATH is declared earlier, next to the auth gate.)
+_OPENAPI_API_KEYS_URL = "openapi-api-keys.json"
+
+# Path templates carry OpenAPI placeholders ("/packages/{pkg_id}") while scope
+# patterns match concrete request paths ("/packages/[^/]+"), so substitute a
+# placeholder-free segment before testing.
+_PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
+_HTTP_METHODS = frozenset({"get", "put", "post", "delete", "patch", "head", "options", "trace"})
+
+
+def _api_key_openapi() -> dict:
+    """Return the OpenAPI schema reduced to API-key-reachable operations."""
+    # deepcopy: app.openapi() memoises into app.openapi_schema, so filtering in
+    # place would permanently truncate the real schema served at /openapi.json.
+    schema = deepcopy(app.openapi())
+    every_scope = list(API_SCOPES)
+
+    filtered: dict[str, dict] = {}
+    for path, operations in (schema.get("paths") or {}).items():
+        concrete = _PATH_PARAM_RE.sub("x", path)
+        kept = {
+            method: operation
+            for method, operation in operations.items()
+            if method.lower() in _HTTP_METHODS
+            and scope_allows(every_scope, method.upper(), concrete)
+        }
+        if kept:
+            filtered[path] = kept
+    schema["paths"] = filtered
+
+    info = schema.setdefault("info", {})
+    info["title"] = f"{app.title} — API key endpoints"
+    info["description"] = (
+        "Only the endpoints reachable with a scoped **API access key** "
+        "(`Authorization: Bearer <client_id>.<secret>`).\n\n"
+        "Every operation below is granted by at least one scope; a given key can "
+        "call an operation only if one of *its* scopes covers it. Endpoints that "
+        "require the session cookie — configuration, user management, SIEM "
+        "connectors, run approval, and API-key management itself — are excluded "
+        "by design and cannot be reached by any key.\n\n"
+        "Use the *Show all endpoints* toggle to view the full application API."
+    )
+    return schema
+
+
+@app.get(_OPENAPI_API_KEYS_PATH, include_in_schema=False)
+async def _openapi_api_keys() -> JSONResponse:
+    return JSONResponse(_api_key_openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+async def _swagger_ui(api_keys_only: bool = False) -> HTMLResponse:
+    """Swagger UI. ``?api_keys_only=1`` narrows it to the API-key subset."""
+    return get_swagger_ui_html(
+        openapi_url=_OPENAPI_API_KEYS_URL if api_keys_only else _OPENAPI_RELATIVE_URL,
+        title=f"{app.title} — Swagger UI",
+        swagger_js_url=_SWAGGER_JS_URL,
+        swagger_css_url=_SWAGGER_CSS_URL,
+        swagger_favicon_url=_DOCS_FAVICON_URL,
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def _redoc() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url=_OPENAPI_RELATIVE_URL,
+        title=f"{app.title} — ReDoc",
+        redoc_js_url=_REDOC_JS_URL,
+        redoc_favicon_url=_DOCS_FAVICON_URL,
+        with_google_fonts=False,
+    )
 
 
 @app.get("/api/health")

@@ -9,6 +9,60 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
+
+- **New: a tab bar on the About page** — General (the existing version/license content, now topped by
+  a prominent, medium-sized OpenTARS logo header), API Docs, and API Swagger.
+- **New: API Docs tab.** Renders the Threat Hunting API reference
+  (`docs/api-threat-hunting.md`) as real formatted HTML — headings, tables, code blocks — styled with
+  the app's own theme tokens rather than a generic typography plugin, so it matches every theme
+  (Classic/Energy/Light/Ocean) instead of a mismatched hardcoded palette.
+  The reference is split on its topic headings into one card per topic — Authentication,
+  Hunt Packages, Evidence, Reports, and so on — behind a table of contents that jumps straight to
+  any of them, so a 470-line document is navigable instead of one long scroll. Splitting happens at
+  render time, so the committed Markdown stays a normal document that still reads correctly on
+  GitHub.
+- **New: API Swagger tab.** FastAPI's own interactive Swagger UI, embedded via an iframe (plus an
+  "open in a new tab" link), generated live from the running server's OpenAPI schema. It defaults to
+  the endpoints a scoped **API access key** can actually call (29 operations) rather than the whole
+  application (220), since a reader on this tab is usually integrating with a key and most endpoints
+  can never be reached with one; a *Show all endpoints* checkbox switches to the complete API. The
+  subset is derived from `backend/auth/api_scopes.py` — the same source the auth middleware enforces
+  against — so the documentation cannot drift from what is actually permitted.
+- Both API tabs use the full page width, so the reference's endpoint tables and the Swagger schemas
+  are readable without horizontal scrolling; General keeps its narrower reading column.
+- **Fixed: the OpenAPI description still described the pre-rebrand product** ("Lightweight Threat
+  Intelligence feed receiver, normaliser, and viewer"), which was the first thing anyone opening the
+  API docs read. It now describes OpenTARS and summarises the two authentication modes.
+- **Fixed: the embedded Swagger showed a *different application's* endpoints** when OpenTARS ran
+  behind a reverse-proxy alias. FastAPI's stock docs pages hardcode a root-anchored
+  `/openapi.json`, and the usual alias block (`location /alias/ { proxy_pass http://host:port/; }` —
+  the trailing slash strips the prefix) leaves the backend unable to learn its external mount point
+  from the path. The browser therefore resolved the schema URL against the proxy *root* and loaded
+  whatever application was mounted there — in the observed deployment, the parent app manager's
+  schema. `/docs` and `/redoc` are now served with a document-relative `openapi.json`, the same
+  strategy the SPA already uses (`<base href="./">` and a relative `api` base), so the schema always
+  resolves inside the alias. Correct with or without `app_base_prefix` set, and with no cooperation
+  required from the proxy — the `X-Script-Name` header it sends is deliberately not trusted, since
+  it is client-controllable and relative URLs make it unnecessary.
+- **Fixed: the API documentation now works fully offline.** FastAPI's stock docs pages load Swagger
+  UI and ReDoc from `cdn.jsdelivr.net` (ReDoc additionally pulls Google Fonts), so on the isolated
+  and air-gapped networks this platform is built for, the page rendered blank. Both bundles are now
+  vendored under `backend/static/api-docs/` and served from `/docs-assets`; the pages reference no
+  external host at all, which also removes a third-party runtime dependency from an authenticated
+  page. Versions are pinned and attributed in `THIRD-PARTY-NOTICES.md`, with upstream license texts
+  alongside the files, and the asset URLs are relative for the same reverse-proxy reason as above.
+- **Fixed (security): FastAPI's `/docs`, `/redoc`, and `/openapi.json` were completely
+  unauthenticated**, even with auth enabled — they're auto-registered outside `/api/`, so the
+  existing "only guard `/api/`" bypass left the entire route/schema surface (including admin,
+  configuration, and user-management routes, not just Threat Hunting) reachable by anyone who
+  requested the URL directly. They now require the same valid session as everything else once auth
+  is enabled — any authenticated role, matching the About page's own accessibility.
+- Both the Swagger UI and the new `GET /api/app/docs/{doc_id}` endpoint that feeds the rendered
+  reference resolve correctly under a configured reverse-proxy base prefix, same as the existing
+  branding-logo/base-prefix handling. `doc_id` is allowlisted server-side (a fixed dict lookup, never
+  concatenated into a filesystem path), so it can't become an arbitrary-file-read primitive.
+
 ### Added — Programmatic API access with scoped keys (issue-local-029)
 
 - **New: API access keys**, configurable from Configuration → General → API Access. A master
