@@ -417,3 +417,23 @@ describe('SmartSearchDrawer — Markdown answers', () => {
     expect(screen.getByText(/failed: \*\*not bold\*\*/)).toBeInTheDocument()
   })
 })
+
+describe('SmartSearchDrawer — surface', () => {
+  it('reads as its own layer rather than blending into the page', () => {
+    // The drawer overlays whatever page you were on, so it should not look
+    // like just another card on that page.
+    renderDrawer()
+    const cls = screen.getByLabelText('Search').className
+    expect(cls).toMatch(/from-brand-\d+/)
+    expect(cls).toMatch(/bg-gray-950/)
+  })
+
+  it('shows its brand accent edge only once opened', async () => {
+    const user = userEvent.setup()
+    renderDrawer()
+    expect(screen.getByLabelText('Search').className).not.toMatch(/border-brand/)
+
+    await user.click(openButton())
+    expect(screen.getByLabelText('Search').className).toMatch(/border-brand-\d+/)
+  })
+})

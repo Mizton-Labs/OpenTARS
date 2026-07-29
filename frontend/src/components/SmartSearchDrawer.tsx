@@ -162,7 +162,10 @@ export default function SmartSearchDrawer() {
           // reserves a matching right-hand gutter on <main>, so it can never
           // cover a page's own header controls (the Threat Hunting header, for
           // one, puts "New Package" exactly here).
-          className="fixed top-0 right-0 z-30 rounded-bl-lg border-b border-l border-gray-700 bg-gray-900/95 p-2.5 text-gray-300 shadow-lg backdrop-blur hover:border-brand-600 hover:text-brand-300 transition-colors"
+          // Brand-filled rather than another grey icon button: this is the only
+          // entry point to search and it sits in a corner people do not
+          // habitually look at, so it needs to read as a primary action.
+          className="fixed top-0 right-0 z-30 rounded-bl-xl bg-brand-600 p-3 text-white shadow-lg ring-1 ring-brand-400/40 hover:bg-brand-500 hover:ring-brand-300/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 transition-colors"
         >
           <Search className="w-4 h-4" />
         </button>
@@ -171,9 +174,14 @@ export default function SmartSearchDrawer() {
       <aside
         aria-label="Search"
         aria-hidden={!open}
+        // Its own surface rather than another card: a brand-tinted wash over a
+        // darker base, behind a brand accent edge. The panel overlays whatever
+        // page you were on, so it should read as a distinct layer instead of
+        // blending into the content underneath it. Both tints come from the
+        // theme tokens, so this re-skins with the rest of the app.
         className={clsx(
-          'fixed inset-y-0 right-0 z-40 flex flex-col overflow-hidden border-l border-gray-800 bg-gray-900 shadow-2xl transition-[width] duration-200 ease-out',
-          open ? 'w-full sm:w-[420px]' : 'w-0 border-l-0',
+          'fixed inset-y-0 right-0 z-40 flex flex-col overflow-hidden bg-gray-950 bg-gradient-to-b from-brand-900/30 via-gray-950/0 to-gray-950/0 shadow-2xl transition-[width] duration-200 ease-out',
+          open ? 'w-full border-l-2 border-brand-700/50 sm:w-[420px]' : 'w-0',
         )}
       >
         {/* Rendered only when open so nothing is focusable while collapsed. */}

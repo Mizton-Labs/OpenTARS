@@ -92,6 +92,15 @@ describe('search drawer mounting', () => {
     expect(cls).toContain('right-0')
   })
 
+  it('is emphasised as a primary action, not another grey icon', () => {
+    // It is the only entry point to search and sits in a corner people do not
+    // habitually look at, so a plain grey button is too easy to miss.
+    renderAt('/home')
+    const cls = searchButton()!.className
+    expect(cls).toMatch(/bg-brand-\d+/)
+    expect(cls).not.toMatch(/bg-gray-\d+/)
+  })
+
   it('reserves a right-hand gutter so it cannot cover page header controls', () => {
     // Threat Hunting puts "New Package" at the top right of its own header;
     // without this gutter the floating button would land on top of it.
