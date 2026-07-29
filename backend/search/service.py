@@ -74,13 +74,57 @@ _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 # Words that name a Threat Intel Tracking *category* rather than an entry.
 # Asking "which malware families show up?" should list the families, even
-# though none of them is called "malware". Kept narrow on purpose: a term
-# broad enough to appear in ordinary prose would make every query dump the
-# whole category.
-_ACTOR_TERMS = ("threat actor", "actors", "actor", "adversary", "adversaries", "apt group")
-_CAMPAIGN_TERMS = ("campaign", "campaigns")
-_MALWARE_TERMS = ("malware", "malware family", "malware families")
-_TECHNIQUE_TERMS = ("ttp", "ttps", "technique", "techniques", "mitre", "att&ck")
+# though none of them is called "malware".
+#
+# Matched as whole words, not substrings: "ip" would otherwise fire on
+# "script" and "recipient". Single words only — SmartSearch reduces a question
+# to individual terms before searching, so a multi-word entry like
+# "malware families" would never be tested on that path.
+_ACTOR_TERMS = frozenset({"actor", "actors", "adversary", "adversaries", "apt"})
+_CAMPAIGN_TERMS = frozenset({"campaign", "campaigns", "operation", "operations"})
+_MALWARE_TERMS = frozenset(
+    {
+        "malware",
+        "family",
+        "families",
+        "ransomware",
+        "stealer",
+        "infostealer",
+        "trojan",
+        "botnet",
+        "worm",
+    }
+)
+_TECHNIQUE_TERMS = frozenset({"ttp", "ttps", "technique", "techniques", "mitre", "attck"})
+
+# Words that name an IOC *type* rather than an IOC value. A hash is a hex
+# string, so "hashes", "sha256" and "md5" can never substring-match one — the
+# tracked hashes were unreachable by every natural way of asking for them.
+_IOC_TYPE_TERMS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
+    (frozenset({"sha256"}), frozenset({"hash_sha256"})),
+    (frozenset({"sha1"}), frozenset({"hash_sha1"})),
+    (frozenset({"md5"}), frozenset({"hash_md5"})),
+    (frozenset({"domain", "domains", "hostname", "hostnames"}), frozenset({"domain"})),
+    (frozenset({"url", "urls"}), frozenset({"url"})),
+    (frozenset({"ip", "ips"}), frozenset({"ip"})),
+    (frozenset({"email", "emails"}), frozenset({"email"})),
+    (
+        frozenset({"cve", "cves", "vulnerability", "vulnerabilities"}),
+        frozenset({"cve"}),
+    ),
+    (frozenset({"registry"}), frozenset({"registry_key"})),
+)
+#: Any hash flavour. Matched by prefix so a new hash type is covered without
+#: touching this list.
+_ANY_HASH_TERMS = frozenset({"hash", "hashes", "checksum", "checksums", "fingerprint"})
+_ANY_IOC_TERMS = frozenset({"ioc", "iocs", "indicator", "indicators"})
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def query_words(query: str) -> frozenset[str]:
+    """Whole words of a query, lowercased — the unit category terms match on."""
+    return frozenset(_WORD_RE.findall(query.lower()))
 
 
 @dataclass(frozen=True)
@@ -350,22 +394,47 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
             ref=ref,
         )
 
-    # IOCs and CVEs share one aggregation; the store already filters by substring.
-    ioc_hits = [
-        _hit(
-            f"{sanitize_text(row.get('ioc'))} ({sanitize_text(row.get('ioc_type')) or 'ioc'})",
-            row,
-            sanitize_text(row.get("ioc")) or None,
-        )
-        for row in await th_db.list_correlated_iocs(search=query, limit=MAX_PER_SECTION)
-    ]
+    def _ioc_hit(row: dict[str, Any]) -> SearchHit:
+        ioc = sanitize_text(row.get("ioc"))
+        return _hit(f"{ioc} ({sanitize_text(row.get('ioc_type')) or 'ioc'})", row, ioc or None)
+
+    words = query_words(query)
+
+    # Matching the IOC *value* — an indicator pasted verbatim, or a CVE id.
+    by_value = await th_db.list_correlated_iocs(search=query, limit=MAX_PER_SECTION)
+
+    # Matching the IOC *type* — "which hashes have we seen?". The store filters
+    # on the value only, so without this the 100+ tracked hashes were reachable
+    # by no phrasing at all: a hash is hex, and never contains the word "hash".
+    wanted_types: set[str] = set()
+    any_hash = bool(words & _ANY_HASH_TERMS)
+    any_ioc = bool(words & _ANY_IOC_TERMS)
+    for terms, types in _IOC_TYPE_TERMS:
+        if words & terms:
+            wanted_types |= types
+
+    by_type: list[dict[str, Any]] = []
+    if any_hash or any_ioc or wanted_types:
+        seen_values = {r.get("ioc") for r in by_value}
+        for row in await th_db.list_correlated_iocs(limit=MAX_PER_SECTION * 20):
+            kind = str(row.get("ioc_type") or "")
+            if row.get("ioc") in seen_values:
+                continue
+            # Hash flavours are matched by prefix so a new one is covered
+            # without editing the term table.
+            if any_ioc or kind in wanted_types or (any_hash and kind.startswith("hash")):
+                by_type.append(row)
+                if len(by_type) >= MAX_PER_SECTION:
+                    break
+
+    ioc_hits = [_ioc_hit(row) for row in by_value]
+    typed_hits = [_ioc_hit(row) for row in by_type]
 
     # Kept per category and interleaved with the IOCs below. Appending them
     # after a full IOC list meant a term like "malware" — which matches plenty
     # of IOC URLs — filled the section before the malware-family and
     # threat-actor aggregates were ever reached.
-    grouped: list[list[SearchHit]] = [ioc_hits]
-    needle = query.lower()
+    grouped: list[list[SearchHit]] = [ioc_hits, typed_hits]
     for label, keywords, records in (
         ("threat actor", _ACTOR_TERMS, await th_db.aggregate_threat_actors()),
         ("campaign", _CAMPAIGN_TERMS, await th_db.aggregate_campaigns()),
@@ -377,7 +446,7 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
         # families here are called msaRAT and Chaos ransomware, so a substring
         # match returns nothing. When the query names the category, list its
         # entries; otherwise fall back to matching individual names.
-        wants_category = any(word in needle for word in keywords)
+        wants_category = bool(words & keywords)
         matched: list[SearchHit] = []
         for record in records:
             name = sanitize_text(record.get("name") or record.get("technique_id"))

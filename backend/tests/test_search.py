@@ -784,3 +784,90 @@ def test_a_category_word_does_not_dump_unrelated_categories(monkeypatch):
     titles = " ".join(h["title"] for h in found.get("Threat Intel Tracking", []))
     assert "malware family" in titles
     assert "campaign" not in titles
+
+
+# ── IOC types are searchable by name (issue-local-031) ───────────────────────
+
+
+@pytest.fixture
+def typed_iocs(monkeypatch):
+    """A tracking store holding several IOC types, hashes included."""
+    import backend.threat_hunting.db as th_db
+
+    rows = [
+        {
+            "ioc": "a" * 64,
+            "ioc_type": "hash_sha256",
+            "hunt_packages": [{"hunt_id_display": "TH01"}],
+        },
+        {"ioc": "b" * 40, "ioc_type": "hash_sha1", "hunt_packages": [{"hunt_id_display": "TH02"}]},
+        {"ioc": "c" * 32, "ioc_type": "hash_md5", "hunt_packages": [{"hunt_id_display": "TH03"}]},
+        {"ioc": "evil.test", "ioc_type": "domain", "hunt_packages": [{"hunt_id_display": "TH04"}]},
+        {"ioc": "203.0.113.9", "ioc_type": "ip", "hunt_packages": [{"hunt_id_display": "TH05"}]},
+    ]
+
+    async def fake(*, ioc_type=None, search=None, limit=200, **_kw):
+        out = rows
+        if ioc_type:
+            out = [r for r in out if r["ioc_type"] == ioc_type]
+        if search:
+            out = [r for r in out if search.lower() in str(r).lower()]
+        return out[:limit]
+
+    monkeypatch.setattr(th_db, "list_correlated_iocs", fake)
+
+
+def _tracking_titles(query: str) -> str:
+    found = _sections(asyncio.run(global_search(query, role="admin")))
+    return " ".join(h["title"] for h in found.get("Threat Intel Tracking", []))
+
+
+@pytest.mark.parametrize("question", ["hashes", "what hashes have we seen?", "checksums"])
+def test_asking_for_hashes_returns_every_hash_flavour(typed_iocs, question):
+    """A hash is hex, so it never contains the word "hash" — matching on the
+    IOC value alone made the tracked hashes unreachable by any phrasing."""
+    titles = _tracking_titles(question)
+    for kind in ("hash_sha256", "hash_sha1", "hash_md5"):
+        assert kind in titles, f"{kind} missing for {question!r}"
+
+
+@pytest.mark.parametrize(
+    "question,expected,unexpected",
+    [
+        ("sha256", "hash_sha256", "hash_md5"),
+        ("md5", "hash_md5", "hash_sha256"),
+        ("which domains?", "domain", "hash_sha256"),
+        ("list the ips", "(ip)", "domain"),
+    ],
+)
+def test_naming_one_ioc_type_returns_that_type(typed_iocs, question, expected, unexpected):
+    titles = _tracking_titles(question)
+    assert expected in titles
+    assert unexpected not in titles
+
+
+def test_short_type_words_match_whole_words_only(typed_iocs):
+    """ "ip" is a substring of "script" and "recipient"; matching substrings
+    would make ordinary prose dump the whole IP list."""
+    assert "(ip)" not in _tracking_titles("the script recipient")
+
+
+def test_asking_for_iocs_generally_returns_a_mix(typed_iocs):
+    titles = _tracking_titles("show me the iocs")
+    assert "hash_sha256" in titles
+    assert "domain" in titles
+
+
+def test_a_pasted_indicator_still_matches_by_value(typed_iocs):
+    assert "evil.test" in _tracking_titles("evil.test")
+
+
+def test_bare_family_word_lists_malware_families(monkeypatch):
+    """SmartSearch searches single words, so "families" alone must work — the
+    multi-word term "malware families" is never tested on that path."""
+    import backend.threat_hunting.db as th_db
+
+    monkeypatch.setattr(
+        th_db, "aggregate_malware_families", lambda: _aio([{"name": "Chaos ransomware"}])
+    )
+    assert "malware family" in _tracking_titles("families")
