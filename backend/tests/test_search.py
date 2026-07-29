@@ -590,3 +590,28 @@ def test_smart_search_context_includes_threat_intelligence(monkeypatch):
     sections = {h["section"] for h in hits}
     assert "Threat Intel" in sections
     assert "Threat Intel Tracking" in sections
+
+
+def test_raw_intel_cannot_starve_normalized_within_the_shared_section(monkeypatch):
+    """Both stores land in "Threat Intel". Draining one source at a time let raw
+    fill the whole bucket and silently discard every normalized match, so the
+    module was only half reported even though both sources worked."""
+    import backend.db.manager as manager
+    import backend.normalizer.db as norm_db
+
+    async def many_raw(*, search=None, limit=10, **_kw):
+        return [{"title": f"raw entry {i}", "description": "x", "source": "f"} for i in range(20)]
+
+    async def many_normalized(*, search=None, limit=10, **_kw):
+        return [
+            {"title": f"normalized entry {i}", "description": "x", "source_name": "f"}
+            for i in range(20)
+        ]
+
+    monkeypatch.setattr(manager, "query_entries", many_raw)
+    monkeypatch.setattr(norm_db, "query_normalized", many_normalized)
+
+    hits = _sections(asyncio.run(global_search("entry", role="admin")))["Threat Intel"]
+    titles = [h["title"] for h in hits]
+    assert any("(raw)" in t for t in titles), "raw store missing"
+    assert any("(normalized)" in t for t in titles), "normalized store starved by raw"

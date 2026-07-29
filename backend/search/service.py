@@ -431,28 +431,37 @@ async def global_search(query: str, *, role: str | None, limit: int = MAX_TOTAL_
     if not cleaned:
         return {"query": "", "total": 0, "sections": []}
 
-    collected: list[SearchHit] = [
-        *await _search_hunts(cleaned, role),
-        *await _search_threat_intel(cleaned, role),
-        *await _search_normalized(cleaned, role),
-        *await _search_tracking(cleaned, role),
-        *await _search_feeds(cleaned, role),
-        *await _search_watchers(cleaned, role),
-        # The catalogue spans several sections (Navigation, Settings, Docs), so
-        # hits are grouped by their own section below rather than by source.
-        *_search_catalog(cleaned, role),
-        *_search_docs(cleaned, role),
+    # Kept per source rather than flattened, because several sources feed the
+    # same section: raw and normalized threat intel both land in "Threat Intel",
+    # and the catalogue alone spans Navigation, Settings and Docs.
+    per_source: list[list[SearchHit]] = [
+        await _search_hunts(cleaned, role),
+        await _search_threat_intel(cleaned, role),
+        await _search_normalized(cleaned, role),
+        await _search_tracking(cleaned, role),
+        await _search_feeds(cleaned, role),
+        await _search_watchers(cleaned, role),
+        _search_catalog(cleaned, role),
+        _search_docs(cleaned, role),
     ]
 
-    # Bucket by section first, capping each section, but WITHOUT spending the
-    # overall budget in source order — otherwise a query that matches many
-    # hunts leaves nothing for Settings or Docs, and the point of this search
-    # is to show which sections a term appears in.
+    # Bucket by section, capping each section, interleaving the sources as we
+    # go. Draining one source at a time would let raw threat intel fill the
+    # whole "Threat Intel" bucket and silently discard every normalized match —
+    # the two are independent stores, so that would report only half the module.
+    # The depth runs to the longest source, not to MAX_PER_SECTION: a single
+    # source can feed several sections (the catalogue's first entries are all
+    # Navigation, with Settings and Docs behind them), so stopping at the
+    # per-section cap would leave the tail of that source unvisited.
     buckets: dict[str, list[SearchHit]] = {}
-    for hit in collected:
-        bucket = buckets.setdefault(hit.section, [])
-        if len(bucket) < MAX_PER_SECTION:
-            bucket.append(hit)
+    for depth in range(max((len(s) for s in per_source), default=0)):
+        for source_hits in per_source:
+            if depth >= len(source_hits):
+                continue
+            hit = source_hits[depth]
+            bucket = buckets.setdefault(hit.section, [])
+            if len(bucket) < MAX_PER_SECTION:
+                bucket.append(hit)
 
     # Stable, most-actionable-first ordering; any section not listed (a future
     # source) still appears, after the known ones.
