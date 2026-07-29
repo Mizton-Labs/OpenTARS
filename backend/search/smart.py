@@ -42,6 +42,7 @@ from backend.llm.registry import get_client
 from backend.search.service import (
     MAX_TOTAL_RESULTS,
     global_search,
+    interleave,
     sanitize_multiline,
     sanitize_text,
 )
@@ -163,19 +164,14 @@ async def gather_context(question: str, *, role: str | None) -> list[dict[str, A
         if not query or len(merged) >= MAX_CONTEXT_HITS:
             return
         result = await global_search(query, role=role, limit=MAX_TOTAL_RESULTS)
-        sections = [s["hits"] for s in result["sections"]]
         taken = 0
-        for depth in range(max((len(hits) for hits in sections), default=0)):
-            for hits in sections:
-                if taken >= allowance or len(merged) >= MAX_CONTEXT_HITS:
-                    return
-                if depth >= len(hits):
-                    continue
-                hit = hits[depth]
-                key = (hit["section"], hit["title"], hit["route"])
-                if key not in merged:
-                    merged[key] = hit
-                    taken += 1
+        for hit in interleave([s["hits"] for s in result["sections"]]):
+            if taken >= allowance or len(merged) >= MAX_CONTEXT_HITS:
+                return
+            key = (hit["section"], hit["title"], hit["route"])
+            if key not in merged:
+                merged[key] = hit
+                taken += 1
 
     # The whole (trimmed) question first — it catches exact phrases such as an
     # IOC or a hunt name pasted verbatim — then the individual terms.

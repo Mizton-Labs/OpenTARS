@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from backend import docs_registry
 from backend.search.catalog import catalog_for_role, role_allows
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 #: Longest query we will act on. Anything longer is almost certainly not a
 #: search — it is a paste, or an attempt to stuff a prompt.
@@ -140,6 +143,24 @@ def _snippet(text: Any, query: str, *, width: int = SNIPPET_CHARS) -> str:
 def _matches(query: str, *fields: Any) -> bool:
     needle = query.lower()
     return any(needle in sanitize_text(f).lower() for f in fields if f)
+
+
+def interleave(sequences: Iterable[Sequence[T]]) -> Iterator[T]:
+    """Yield items round-robin across *sequences*.
+
+    Used everywhere several producers share one bounded budget. Draining them
+    one at a time instead lets whichever runs first consume the whole budget
+    and silently drop the rest — which has bitten this feature repeatedly: raw
+    threat intel hiding the normalized store, correlated IOCs hiding the threat
+    actor and malware aggregates, and one section hiding another in a
+    SmartSearch term's retrieval. Round-robin makes "everything gets a share"
+    the default rather than something each call site has to remember.
+    """
+    lists = [s for s in sequences if s]
+    for depth in range(max((len(s) for s in lists), default=0)):
+        for seq in lists:
+            if depth < len(seq):
+                yield seq[depth]
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -310,46 +331,51 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
         shown = ", ".join(seen[:4])
         return f"Seen in {len(seen)} hunt package(s): {shown}" if len(seen) > 4 else shown
 
-    hits: list[SearchHit] = []
+    def _hit(title: str, record: dict[str, Any], ref: str | None) -> SearchHit:
+        return SearchHit(
+            section="Threat Intel Tracking",
+            title=title,
+            snippet=_hunts_of(record),
+            route="/threat-hunting/tracking",
+            ref=ref,
+        )
 
     # IOCs and CVEs share one aggregation; the store already filters by substring.
-    for row in await th_db.list_correlated_iocs(search=query, limit=MAX_PER_SECTION):
-        ioc = sanitize_text(row.get("ioc"))
-        kind = sanitize_text(row.get("ioc_type")) or "ioc"
-        hits.append(
-            SearchHit(
-                section="Threat Intel Tracking",
-                title=f"{ioc} ({kind})",
-                snippet=f"Seen in: {_hunts_of(row)}",
-                route="/threat-hunting/tracking",
-                ref=ioc or None,
-            )
+    ioc_hits = [
+        _hit(
+            f"{sanitize_text(row.get('ioc'))} ({sanitize_text(row.get('ioc_type')) or 'ioc'})",
+            row,
+            sanitize_text(row.get("ioc")) or None,
         )
-        if len(hits) >= MAX_PER_SECTION:
-            return hits
+        for row in await th_db.list_correlated_iocs(search=query, limit=MAX_PER_SECTION)
+    ]
 
-    labelled: list[tuple[str, list[dict[str, Any]]]] = [
+    # Kept per category and interleaved with the IOCs below. Appending them
+    # after a full IOC list meant a term like "malware" — which matches plenty
+    # of IOC URLs — filled the section before the malware-family and
+    # threat-actor aggregates were ever reached.
+    grouped: list[list[SearchHit]] = [ioc_hits]
+    for label, records in (
         ("threat actor", await th_db.aggregate_threat_actors()),
         ("campaign", await th_db.aggregate_campaigns()),
         ("malware family", await th_db.aggregate_malware_families()),
         ("technique", await th_db.aggregate_ttps()),
-    ]
-    for label, records in labelled:
+    ):
+        matched: list[SearchHit] = []
         for record in records:
             name = sanitize_text(record.get("name") or record.get("technique_id"))
             if not name or not _matches(query, name, record.get("description")):
                 continue
-            hits.append(
-                SearchHit(
-                    section="Threat Intel Tracking",
-                    title=f"{name} ({label})",
-                    snippet=f"Seen in: {_hunts_of(record)}",
-                    route="/threat-hunting/tracking",
-                    ref=name,
-                )
-            )
-            if len(hits) >= MAX_PER_SECTION:
-                return hits
+            matched.append(_hit(f"{name} ({label})", record, name))
+            if len(matched) >= MAX_PER_SECTION:
+                break
+        grouped.append(matched)
+
+    hits: list[SearchHit] = []
+    for hit in interleave(grouped):
+        hits.append(hit)
+        if len(hits) >= MAX_PER_SECTION:
+            break
     return hits
 
 
@@ -458,19 +484,11 @@ async def global_search(query: str, *, role: str | None, limit: int = MAX_TOTAL_
     # go. Draining one source at a time would let raw threat intel fill the
     # whole "Threat Intel" bucket and silently discard every normalized match —
     # the two are independent stores, so that would report only half the module.
-    # The depth runs to the longest source, not to MAX_PER_SECTION: a single
-    # source can feed several sections (the catalogue's first entries are all
-    # Navigation, with Settings and Docs behind them), so stopping at the
-    # per-section cap would leave the tail of that source unvisited.
     buckets: dict[str, list[SearchHit]] = {}
-    for depth in range(max((len(s) for s in per_source), default=0)):
-        for source_hits in per_source:
-            if depth >= len(source_hits):
-                continue
-            hit = source_hits[depth]
-            bucket = buckets.setdefault(hit.section, [])
-            if len(bucket) < MAX_PER_SECTION:
-                bucket.append(hit)
+    for hit in interleave(per_source):
+        bucket = buckets.setdefault(hit.section, [])
+        if len(bucket) < MAX_PER_SECTION:
+            bucket.append(hit)
 
     # Stable, most-actionable-first ordering; any section not listed (a future
     # source) still appears, after the known ones.

@@ -701,3 +701,40 @@ def test_tracked_entities_still_name_their_hunts():
     ]
     actor = next(h for h in tracking if "threat actor" in h["title"])
     assert "TH01" in actor["snippet"]
+
+
+def test_correlated_iocs_cannot_starve_the_entity_aggregates(monkeypatch):
+    """ "malware" matches plenty of IOC URLs. Appending the aggregates after a
+    full IOC list meant the malware-family and threat-actor entries were never
+    reached, so asking about actors or malware returned only IOCs."""
+    import backend.threat_hunting.db as th_db
+
+    async def many_iocs(*, search=None, limit=10, **_kw):
+        return [
+            {
+                "ioc": f"http://example.test/{i}-malware",
+                "ioc_type": "url",
+                "hunt_packages": [{"hunt_id_display": "TH01"}],
+            }
+            for i in range(10)
+        ]
+
+    async def one_family():
+        return [{"name": "Emotet malware", "sources": [{"hunt_id_display": "TH02"}]}]
+
+    monkeypatch.setattr(th_db, "list_correlated_iocs", many_iocs)
+    monkeypatch.setattr(th_db, "aggregate_malware_families", one_family)
+
+    tracking = _sections(asyncio.run(global_search("malware", role="admin")))[
+        "Threat Intel Tracking"
+    ]
+    titles = " ".join(h["title"] for h in tracking)
+    assert "malware family" in titles, "aggregates starved by the IOC list"
+    assert any("(url)" in h["title"] for h in tracking), "IOCs should still appear"
+
+
+def test_interleave_gives_every_sequence_a_share():
+    from backend.search.service import interleave
+
+    assert list(interleave([[1, 2, 3], ["a"], []])) == [1, "a", 2, 3]
+    assert list(interleave([])) == []
