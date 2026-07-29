@@ -77,25 +77,12 @@ describe('ApiDocsTab', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('boom')
   })
 
-  it('embeds the Swagger UI iframe pointing at the docs route', async () => {
+  it('does not render the Swagger UI — that lives in its own sibling tab', async () => {
     mockedGetDoc.mockResolvedValue({ doc_id: 'api-threat-hunting', content: '# Ref' })
     renderTab()
 
     await screen.findByRole('heading', { name: 'Ref', level: 1 })
-    const iframe = screen.getByTitle('OpenTARS API Swagger UI')
-    expect(iframe.tagName).toBe('IFRAME')
-    expect(iframe).toHaveAttribute('src', 'docs')
-
-    const openLink = screen.getByRole('link', { name: /open in a new tab/i })
-    expect(openLink).toHaveAttribute('href', 'docs')
-    expect(openLink).toHaveAttribute('target', '_blank')
-  })
-
-  it('waits for content before rendering the Swagger card is not required — both sections render independently', async () => {
-    // The Swagger card (static content, no fetch) should be present even
-    // while the Markdown doc query is still pending.
-    mockedGetDoc.mockReturnValue(new Promise(() => {}))
-    renderTab()
-    expect(screen.getByRole('heading', { name: 'API Swagger' })).toBeInTheDocument()
+    expect(screen.queryByTitle('OpenTARS API Swagger UI')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'API Swagger' })).not.toBeInTheDocument()
   })
 })

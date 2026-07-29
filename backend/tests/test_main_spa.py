@@ -120,3 +120,55 @@ def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
         out = _render_index_html("")
         assert '<base href="./">' in out
         assert 'name="app-base-prefix"' not in out
+
+
+# ── API docs pages under a reverse-proxy alias (issue-local-030) ──────────────
+#
+# The deployment pattern that motivated these: nginx serves the app under an
+# alias with `location /ALIAS/ { proxy_pass http://host:port/; }` — the
+# TRAILING SLASH makes nginx strip `/ALIAS` before forwarding, so the backend
+# only ever sees `/docs` and cannot learn its external mount point from the
+# path. FastAPI's stock docs pages hardcode a ROOT-ANCHORED `/openapi.json`,
+# which the browser then resolves against the proxy ROOT — landing on whatever
+# other application is mounted there (in the real deployment, the parent app's
+# schema was rendered instead of this app's).
+#
+# The fix is the same document-relative strategy the SPA already uses (see the
+# <base href="./"> tests above): reference `openapi.json` relatively so it
+# always resolves inside the alias, with or without app_base_prefix set.
+
+
+def test_swagger_references_openapi_relatively(client_empty_prefix):
+    """Swagger must NOT reference a root-anchored /openapi.json."""
+    body = client_empty_prefix.get("/docs").text
+    assert "url: 'openapi.json'" in body
+    assert "'/openapi.json'" not in body
+
+
+def test_redoc_references_openapi_relatively(client_empty_prefix):
+    """ReDoc must NOT reference a root-anchored /openapi.json."""
+    body = client_empty_prefix.get("/redoc").text
+    assert 'spec-url="openapi.json"' in body
+    assert '"/openapi.json"' not in body
+
+
+def test_docs_pages_stay_relative_even_with_a_configured_prefix(client_with_prefix):
+    """A configured app_base_prefix must not reintroduce a root-anchored URL.
+
+    Relative resolution is correct in BOTH cases: the browser is at
+    <origin><alias>/docs either way, so `openapi.json` resolves to
+    <origin><alias>/openapi.json, which the proxy routes back to this app.
+    """
+    body = client_with_prefix.get("/docs").text
+    assert "url: 'openapi.json'" in body
+    assert "'/openapi.json'" not in body
+
+
+def test_openapi_schema_route_still_served_and_is_this_app(client_empty_prefix):
+    """The relative URL must still resolve to a real, correct schema route."""
+    resp = client_empty_prefix.get("/openapi.json")
+    assert resp.status_code == 200
+    schema = resp.json()
+    assert schema["info"]["title"] == "OpenTARS"
+    # A route unique to this application, proving it isn't another app's schema.
+    assert "/api/threat-hunting/packages" in schema["paths"]

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -136,6 +137,13 @@ app = FastAPI(
     # the OpenAPI docs / schema URLs reflect the external mount point.
     # Empty string == mounted at root (default).
     root_path=load_app_base_prefix(),
+    # issue-local-030: the stock docs pages are replaced by the relative-URL
+    # versions defined below (see _swagger_ui / _redoc). Disabling them here
+    # frees /docs and /redoc for those custom routes; /openapi.json is left
+    # auto-registered (openapi_url is untouched) — only the URL the HTML
+    # *references* changes, not where the schema is actually served.
+    docs_url=None,
+    redoc_url=None,
 )
 if app.root_path:
     logger.info("Application mounted under base prefix: %s", app.root_path)
@@ -414,6 +422,53 @@ async def auth_enforcement(request, call_next):
 
     request.state.user = user
     return await call_next(request)
+
+
+# ── Interactive API docs (issue-local-030) ────────────────────────────────────
+#
+# FastAPI's stock /docs and /redoc hardcode a ROOT-ANCHORED schema URL
+# ("/openapi.json"). That breaks whenever the app is served under a
+# reverse-proxy alias whose location block strips the prefix before
+# forwarding, e.g.
+#
+#     location /opentars/ { proxy_pass http://host:8003/; }   # note the slash
+#
+# The backend then only ever sees "/docs" and cannot learn its external mount
+# point from the path, so the page it returns still points at "/openapi.json".
+# The browser resolves that against the proxy ROOT — not the alias — and loads
+# whatever *other* application is mounted there. Observed in the real
+# deployment: the docs page rendered the parent app-manager's endpoints
+# instead of this application's.
+#
+# Fix: reference the schema RELATIVELY, which is the same document-relative
+# strategy the SPA already relies on (see _render_index_html's <base href="./">
+# and the API client's relative "api" BASE). The browser is at
+# <origin><alias>/docs, so "openapi.json" resolves to
+# <origin><alias>/openapi.json and is routed straight back to this app. This
+# is correct with OR without app_base_prefix configured, and needs no
+# cooperation from the proxy (the X-Script-Name header it sends is
+# deliberately NOT trusted — it is client-controllable, and relative URLs make
+# it unnecessary).
+#
+# Note the docs route is exactly "/docs" ("/docs/" 404s), so the relative
+# reference is unambiguous.
+_OPENAPI_RELATIVE_URL = "openapi.json"
+
+
+@app.get("/docs", include_in_schema=False)
+async def _swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=_OPENAPI_RELATIVE_URL,
+        title=f"{app.title} — Swagger UI",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def _redoc() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url=_OPENAPI_RELATIVE_URL,
+        title=f"{app.title} — ReDoc",
+    )
 
 
 @app.get("/api/health")

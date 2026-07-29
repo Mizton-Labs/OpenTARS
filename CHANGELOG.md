@@ -12,13 +12,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
 
 - **New: a tab bar on the About page** — General (the existing version/license content, now topped by
-  a prominent, medium-sized OpenTARS logo header) and a new API Docs tab.
+  a prominent, medium-sized OpenTARS logo header), API Docs, and API Swagger.
 - **New: API Docs tab.** Renders the Threat Hunting API reference
   (`docs/api-threat-hunting.md`) as real formatted HTML — headings, tables, code blocks — styled with
   the app's own theme tokens rather than a generic typography plugin, so it matches every theme
-  (Classic/Energy/Light/Ocean) instead of a mismatched hardcoded palette. Below it, FastAPI's own
-  interactive Swagger UI is embedded via an iframe (plus an "open in a new tab" link), generated
-  live from the running server's OpenAPI schema.
+  (Classic/Energy/Light/Ocean) instead of a mismatched hardcoded palette.
+- **New: API Swagger tab.** FastAPI's own interactive Swagger UI, embedded via an iframe (plus an
+  "open in a new tab" link), generated live from the running server's OpenAPI schema. Both API tabs
+  use the full page width, so the reference's endpoint tables and the Swagger schemas are readable
+  without horizontal scrolling; General keeps its narrower reading column.
+- **Fixed: the embedded Swagger showed a *different application's* endpoints** when OpenTARS ran
+  behind a reverse-proxy alias. FastAPI's stock docs pages hardcode a root-anchored
+  `/openapi.json`, and the usual alias block (`location /alias/ { proxy_pass http://host:port/; }` —
+  the trailing slash strips the prefix) leaves the backend unable to learn its external mount point
+  from the path. The browser therefore resolved the schema URL against the proxy *root* and loaded
+  whatever application was mounted there — in the observed deployment, the parent app manager's
+  schema. `/docs` and `/redoc` are now served with a document-relative `openapi.json`, the same
+  strategy the SPA already uses (`<base href="./">` and a relative `api` base), so the schema always
+  resolves inside the alias. Correct with or without `app_base_prefix` set, and with no cooperation
+  required from the proxy — the `X-Script-Name` header it sends is deliberately not trusted, since
+  it is client-controllable and relative URLs make it unnecessary.
 - **Fixed (security): FastAPI's `/docs`, `/redoc`, and `/openapi.json` were completely
   unauthenticated**, even with auth enabled — they're auto-registered outside `/api/`, so the
   existing "only guard `/api/`" bypass left the entire route/schema surface (including admin,

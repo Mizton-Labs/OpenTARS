@@ -1,23 +1,21 @@
 /**
  * About -> API Docs tab (issue-local-030).
  *
- * Two pieces:
- *   - The Threat Hunting API reference (docs/api-threat-hunting.md), fetched
- *     via GET /api/app/docs/api-threat-hunting and rendered as real HTML —
- *     no @tailwindcss/typography plugin (its default palette wouldn't follow
- *     this app's per-theme CSS-variable color system), so headings/tables/
- *     code blocks are styled directly via ReactMarkdown's `components` prop
- *     using the same gray and brand color tokens as the rest of the app.
- *   - FastAPI's own interactive Swagger UI, embedded via <iframe> pointing at
- *     swaggerUiSrc() (same-origin, so the session cookie authenticates it
- *     exactly like any other page — see backend/main.py's _DOCS_PATHS gate).
+ * Renders the Threat Hunting API reference (docs/api-threat-hunting.md),
+ * fetched via GET /api/app/docs/api-threat-hunting, as real HTML — no
+ * @tailwindcss/typography plugin (its default palette wouldn't follow this
+ * app's per-theme CSS-variable color system), so headings/tables/code blocks
+ * are styled directly via ReactMarkdown's `components` prop using the same
+ * gray and brand color tokens as the rest of the app.
+ *
+ * The interactive Swagger UI lives in its own sibling tab (ApiSwaggerTab).
  */
 import type { ComponentPropsWithoutRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ExternalLink, FileText, Code2 } from 'lucide-react'
-import { api, swaggerUiSrc } from '../../api/client'
+import { FileText } from 'lucide-react'
+import { api } from '../../api/client'
 
 const markdownComponents = {
   h1: (p: ComponentPropsWithoutRef<'h1'>) => (
@@ -72,50 +70,22 @@ export default function ApiDocsTab() {
   })
 
   return (
-    <div className="space-y-6">
-      <div className="card">
-        <div className="flex items-center gap-2 mb-4">
-          <FileText className="w-4 h-4 text-brand-400 shrink-0" />
-          <h2 className="text-sm font-semibold text-gray-200">Threat Hunting API Reference</h2>
-        </div>
-        {isLoading && <p className="text-sm text-gray-500">Loading…</p>}
-        {isError && (
-          <p role="alert" className="text-sm text-red-400">
-            Could not load the API documentation: {error instanceof Error ? error.message : String(error)}
-          </p>
-        )}
-        {data && (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {data.content}
-          </ReactMarkdown>
-        )}
+    <div className="card">
+      <div className="flex items-center gap-2 mb-4">
+        <FileText className="w-4 h-4 text-brand-400 shrink-0" />
+        <h2 className="text-sm font-semibold text-gray-200">Threat Hunting API Reference</h2>
       </div>
-
-      <div className="card space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Code2 className="w-4 h-4 text-brand-400 shrink-0" />
-            <h2 className="text-sm font-semibold text-gray-200">API Swagger</h2>
-          </div>
-          <a
-            href={swaggerUiSrc()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300"
-          >
-            Open in a new tab <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </div>
-        <p className="text-xs text-gray-500">
-          Interactive documentation for every available endpoint, generated directly from the running
-          server's OpenAPI schema.
+      {isLoading && <p className="text-sm text-gray-500">Loading…</p>}
+      {isError && (
+        <p role="alert" className="text-sm text-red-400">
+          Could not load the API documentation: {error instanceof Error ? error.message : String(error)}
         </p>
-        <iframe
-          title="OpenTARS API Swagger UI"
-          src={swaggerUiSrc()}
-          className="w-full h-[80vh] rounded-lg border border-gray-800 bg-white"
-        />
-      </div>
+      )}
+      {data && (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {data.content}
+        </ReactMarkdown>
+      )}
     </div>
   )
 }
