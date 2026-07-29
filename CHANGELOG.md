@@ -11,8 +11,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — Global search and SmartSearch chatbot (issue-local-031)
 
-- **New: a search button at the top right of the Threat Hunting module**, opening a right-hand
-  drawer that stays fully collapsed until you ask for it. Search spans the whole application —
+- **New: a search button flush in the top-right corner of every page**, opening a right-hand
+  drawer that stays fully collapsed until you ask for it. The shell reserves a gutter for it, so it
+  never covers a page's own controls. Search spans the whole application —
   hunt packages, ingested threat intel, watchers, pages, settings and documentation — and each hit
   names the section it was found in with a short context snippet, so a result is one click from the
   place it lives.
@@ -30,7 +31,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   values, so no credential is reachable in the first place. Hunt evidence is adversary-authored by
   definition (fetched pages, uploaded threat reports), so retrieved text is fenced and the model is
   told it is data and never instructions. Question length, history depth, snippet count, output
-  tokens and timeout are all bounded, and the reply is rendered as text, never HTML.
+  tokens and timeout are all bounded. Answers are formatted as Markdown — lists, tables, `code`
+  for indicators and queries — rendered with no raw HTML, no images, and no clickable links: a URL
+  in this product is frequently the malicious indicator under investigation, so it is shown as code
+  rather than as something to click.
 - Search results are stripped of invisible and directional characters before display. A
   right-to-left override inside an attacker-supplied hostname would otherwise make a result read
   differently from the indicator it actually matched — the wrong failure mode for a tool whose

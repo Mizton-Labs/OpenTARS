@@ -1,9 +1,10 @@
 /**
  * Global search / SmartSearch drawer (issue-local-031).
  *
- * A search-icon button sits at the top right while the Threat Hunting module is
- * open; pressing it expands a right-hand drawer that is fully collapsed (zero
- * width, nothing visible) until then.
+ * A search-icon button sits flush in the top-right corner on every page —
+ * search spans the whole application, so the entry point should not depend on
+ * where the user happens to be. Pressing it expands a right-hand drawer that is
+ * fully collapsed (zero width, nothing visible) until then.
  *
  * Two modes behind an always-visible switch:
  *   - Search — the deterministic global search. Hits are grouped by the section
@@ -13,17 +14,24 @@
  *     switch is always rendered; when no LLM provider is configured it is
  *     disabled and its tooltip names the setting that enables it.
  *
- * The assistant's reply is inserted as text (React escapes it) and never as
- * HTML, so neither the model nor an injected document can put markup on the
- * page. Everything here is read-only — there is no action the drawer can take
- * on the user's behalf.
+ * The assistant's reply is rendered as Markdown by MarkdownMessage, which
+ * renders no raw HTML, no images and no clickable links — the answer is shaped
+ * by threat reports an attacker may have authored, and in this product a URL is
+ * often the malicious indicator itself. Everything here is read-only; there is
+ * no action the drawer can take on the user's behalf.
  */
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { Search, X, Sparkles, Loader2, CornerDownLeft, AlertTriangle } from 'lucide-react'
 import { api, type SearchHit, type SearchResults, type SmartTurn } from '../api/client'
+
+// Lazy: pulls in react-markdown/remark-gfm, which is only needed once an
+// answer arrives. The drawer mounts on every Threat Hunting page, so a static
+// import would put the whole Markdown stack in the bundle those pages load
+// even for users who never open Smart mode.
+const MarkdownMessage = lazy(() => import('./MarkdownMessage'))
 
 type Mode = 'normal' | 'smart'
 
@@ -149,7 +157,12 @@ export default function SmartSearchDrawer() {
           onClick={() => setOpen(true)}
           title="Search OpenTARS"
           aria-label="Search OpenTARS"
-          className="fixed top-4 right-4 z-30 rounded-full border border-gray-700 bg-gray-900/90 p-2 text-gray-300 shadow-lg backdrop-blur hover:border-brand-600 hover:text-brand-300 transition-colors"
+          // Flush into the top-right corner so it reads as application chrome
+          // rather than something floating over the page. ProtectedLayout
+          // reserves a matching right-hand gutter on <main>, so it can never
+          // cover a page's own header controls (the Threat Hunting header, for
+          // one, puts "New Package" exactly here).
+          className="fixed top-0 right-0 z-30 rounded-bl-lg border-b border-l border-gray-700 bg-gray-900/95 p-2.5 text-gray-300 shadow-lg backdrop-blur hover:border-brand-600 hover:text-brand-300 transition-colors"
         >
           <Search className="w-4 h-4" />
         </button>
@@ -381,8 +394,19 @@ function SmartMode({
                 <AlertTriangle className="w-3.5 h-3.5" /> Could not answer
               </span>
             )}
-            {/* Plain text — never dangerouslySetInnerHTML. */}
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            {/* The user's own question and error text are shown verbatim; only
+                the assistant's answer is Markdown. MarkdownMessage renders no
+                raw HTML, no images and no clickable links — see its module
+                comment for why that last one matters here. */}
+            {message.role === 'assistant' && !message.failed ? (
+              // Falls back to the same text unformatted, so the answer is
+              // readable immediately rather than blank while the chunk loads.
+              <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}>
+                <MarkdownMessage>{message.content}</MarkdownMessage>
+              </Suspense>
+            ) : (
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            )}
 
             {message.sources && message.sources.length > 0 && (
               <div className="mt-2 border-t border-gray-800 pt-1.5">

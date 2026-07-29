@@ -339,3 +339,81 @@ describe('SmartSearchDrawer — stale results', () => {
     expect(screen.queryByText('TH01 Lazarus sweep')).not.toBeInTheDocument()
   })
 })
+
+describe('SmartSearchDrawer — Markdown answers', () => {
+  async function ask(answer: string) {
+    const user = userEvent.setup()
+    mocked.smart.mockResolvedValue({ answer, sources: [], used_context: 0 })
+    renderDrawer()
+    await user.click(openButton())
+    await waitFor(() => expect(smartTab()).toBeEnabled())
+    await user.click(smartTab())
+    await user.type(screen.getByLabelText('Ask Smart Search'), 'q{Enter}')
+    return user
+  }
+
+  it('renders formatting rather than printing the markup', async () => {
+    await ask('You have **two** hunts:\n\n- TH01\n- TH02\n\nRun `generate` to start.')
+
+    const bold = await screen.findByText('two')
+    expect(bold.tagName).toBe('STRONG')
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByText('generate').tagName).toBe('CODE')
+    // The source markup itself must not be visible.
+    expect(screen.queryByText(/\*\*two\*\*/)).not.toBeInTheDocument()
+  })
+
+  it('renders GFM tables', async () => {
+    await ask('| Hunt | Status |\n|---|---|\n| TH01 | completed |')
+
+    expect(await screen.findByRole('columnheader', { name: 'Hunt' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'completed' })).toBeInTheDocument()
+  })
+
+  it('renders fenced code blocks', async () => {
+    await ask('Try:\n\n```\nindex=main sourcetype=dns\n```')
+
+    const code = await screen.findByText(/index=main sourcetype=dns/)
+    expect(code.closest('pre')).not.toBeNull()
+  })
+
+  it('never renders a clickable link, even when the model emits one', async () => {
+    // URLs here are frequently the malicious indicator under investigation, so
+    // an anchor in an analyst's chat window is a footgun.
+    await ask('The indicator was [evil-host.example](http://evil-host.example/payload).')
+
+    expect(await screen.findByText('evil-host.example')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('never renders an image, so nothing is fetched from the answer', async () => {
+    // An image URL is an outbound request the moment it renders, which would
+    // both confirm the answer was read and let the path carry data out.
+    await ask('![tracker](http://attacker.example/pixel.png)')
+
+    expect(await screen.findByText('tracker')).toBeInTheDocument()
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+  })
+
+  it('escapes raw HTML instead of rendering it', async () => {
+    const hostile = '<img src=x onerror="alert(1)"><b>bold</b>'
+    await ask(hostile)
+
+    expect(await screen.findByText(hostile)).toBeInTheDocument()
+    expect(document.querySelectorAll('img')).toHaveLength(0)
+  })
+
+  it('shows the user question and error text verbatim, not as Markdown', async () => {
+    const user = userEvent.setup()
+    mocked.smart.mockRejectedValue(new Error('failed: **not bold**'))
+    renderDrawer()
+    await user.click(openButton())
+    await waitFor(() => expect(smartTab()).toBeEnabled())
+    await user.click(smartTab())
+    await user.type(screen.getByLabelText('Ask Smart Search'), '**my question**{Enter}')
+
+    // Both are shown literally — only the assistant's answer is Markdown.
+    expect(await screen.findByText('**my question**')).toBeInTheDocument()
+    expect(screen.getByText(/failed: \*\*not bold\*\*/)).toBeInTheDocument()
+  })
+})

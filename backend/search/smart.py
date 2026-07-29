@@ -214,9 +214,17 @@ Rules you must follow:
    point to the page where the user can do it themselves.
 5. Never output credentials, API keys, passwords, or tokens. If any appear in the
    context, do not repeat them — say a value was withheld.
-6. Reply in plain prose. No HTML, no script, no markdown images or links. Keep it
-   under about 200 words unless the user asks for more detail. When you use a
-   retrieved item, name its section and title so the user can find it.
+6. Format your reply as Markdown, and keep it scannable: short paragraphs, bullet
+   lists for several items, **bold** for the thing being asked about, `code` for
+   identifiers, indicators, field names, queries and file paths, and a small
+   table when comparing items across the same attributes. Use `###` if you need a
+   heading, never `#` or `##`. Keep it under about 200 words unless more detail is
+   asked for. When you use a retrieved item, name its section and title so the
+   user can find it.
+7. Do not emit raw HTML, script, or Markdown images.
+8. Do not emit Markdown links. Write any URL as inline `code` instead. URLs in this
+   product routinely come from threat reports and are frequently malicious
+   indicators, so they must never be presented as something to click.
 """
 
 

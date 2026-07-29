@@ -20,13 +20,6 @@ import ConfigDriftBanner from './ConfigDriftBanner'
 import SmartSearchDrawer from './SmartSearchDrawer'
 import { useAuth } from '../auth/useAuth'
 
-/** issue-local-031: the search drawer is offered while the Threat Hunting
- *  module is open. Matching here rather than inside each page gives the list,
- *  detail, new-hunt and tracking views the same entry point from one mount. */
-function isThreatHuntingRoute(pathname: string): boolean {
-  return /(^|\/)threat-hunting(\/|$)/.test(pathname)
-}
-
 export default function ProtectedLayout() {
   const { loading, authEnabled, user, refresh, logout } = useAuth()
   const location = useLocation()
@@ -82,10 +75,15 @@ export default function ProtectedLayout() {
       <ConfigDriftBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto">
+        {/* issue-local-031: the right-hand gutter is the search button's slot.
+            Reserving it here — rather than letting the button float over the
+            page — is what keeps it from covering page header controls such as
+            Threat Hunting's "New Package". */}
+        <main className="flex-1 overflow-auto pr-11">
           <Outlet />
         </main>
-        {isThreatHuntingRoute(location.pathname) && <SmartSearchDrawer />}
+        {/* Search is global, so the entry point is available from every page. */}
+        <SmartSearchDrawer />
       </div>
     </div>
   )
