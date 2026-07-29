@@ -65,6 +65,9 @@ _CONTROL_CHARS_RE = re.compile(
     "]"
 )
 _WHITESPACE_RE = re.compile(r"\s+")
+#: Three or more newlines collapse to a paragraph break in the multiline
+#: sanitiser, so a model cannot pad an answer into a wall of empty space.
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,26 @@ def sanitize_text(text: Any, limit: int | None = None) -> str:
     if text is None:
         return ""
     cleaned = _WHITESPACE_RE.sub(" ", _CONTROL_CHARS_RE.sub(" ", str(text))).strip()
+    return cleaned[:limit] if limit is not None else cleaned
+
+
+def sanitize_multiline(text: Any, limit: int | None = None) -> str:
+    """Like :func:`sanitize_text`, but preserves line structure.
+
+    SmartSearch answers are Markdown, and Markdown is newline-significant —
+    running them through the single-line sanitiser collapses every table, list
+    and fenced block onto one line, which then renders as an unreadable
+    paragraph. Line breaks and leading indentation are therefore kept (nested
+    lists and code blocks depend on the latter), while the same control,
+    invisible and bidi characters are still removed, runs of blank lines are
+    capped, and trailing whitespace is trimmed.
+    """
+    if text is None:
+        return ""
+    cleaned = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _CONTROL_CHARS_RE.sub(" ", cleaned)
+    cleaned = "\n".join(line.rstrip() for line in cleaned.split("\n"))
+    cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned).strip()
     return cleaned[:limit] if limit is not None else cleaned
 
 

@@ -423,3 +423,49 @@ def test_gather_context_gives_every_term_a_share(monkeypatch):
     # Every salient term contributed, not just the first search.
     for term in ("emotet", "beaconing", "infrastructure"):
         assert term in titles
+
+
+# ── Markdown answers keep their structure (issue-local-031) ──────────────────
+
+
+def test_sanitize_multiline_preserves_markdown_structure():
+    """Markdown is newline-significant: the single-line sanitiser would collapse
+    a table or list onto one line, which then renders as a paragraph."""
+    from backend.search.service import sanitize_multiline
+
+    md = "### Hunts\n\n| Hunt | Status |\n|---|---|\n| TH01 | done |\n\n- one\n  - nested\n"
+    out = sanitize_multiline(md)
+    assert "\n" in out
+    assert "| Hunt | Status |" in out.splitlines()
+    assert "|---|---|" in out.splitlines()
+    # Nested-list indentation must survive, or the nesting is lost.
+    assert any(line.startswith("  - nested") for line in out.splitlines())
+
+
+def test_sanitize_multiline_still_strips_dangerous_characters():
+    from backend.search.service import sanitize_multiline
+
+    out = sanitize_multiline("a\x00b\x1b]0;x\x07c‮d﻿e")
+    assert all(ord(ch) < 0x7F for ch in out if ch != "\n")
+
+
+def test_sanitize_multiline_caps_blank_line_padding():
+    from backend.search.service import sanitize_multiline
+
+    assert sanitize_multiline("a\n\n\n\n\n\nb") == "a\n\nb"
+
+
+def test_smart_answer_returns_markdown_unflattened(monkeypatch):
+    """End to end: a Markdown answer must reach the caller with its lines."""
+    monkeypatch.setattr(smart, "smart_search_status", lambda: {"available": True, "reason": None})
+
+    class FakeClient:
+        name = "fake"
+
+        def complete(self, *_a, **_k):
+            return "### Hunts\n\n- TH01\n- TH02\n"
+
+    monkeypatch.setattr(smart, "get_client", lambda *_a, **_k: FakeClient())
+    result = asyncio.run(smart.smart_answer("hunts", role="admin"))
+    assert result["answer"].splitlines()[0] == "### Hunts"
+    assert "- TH01" in result["answer"].splitlines()

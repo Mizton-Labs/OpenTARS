@@ -39,7 +39,12 @@ from backend.llm.errors import (
     LLMTransportError,
 )
 from backend.llm.registry import get_client
-from backend.search.service import MAX_TOTAL_RESULTS, global_search, sanitize_text
+from backend.search.service import (
+    MAX_TOTAL_RESULTS,
+    global_search,
+    sanitize_multiline,
+    sanitize_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -324,11 +329,13 @@ async def smart_answer(
         logger.warning("SmartSearch LLM call failed: %s", exc)
         raise
 
-    # The model is instructed to return prose, but the response is still
-    # untrusted output: strip control characters and cap it before it reaches a
-    # browser. The UI renders it as text, never HTML.
+    # The response is untrusted output — it is shaped by the documents the model
+    # just read — so control, invisible and bidi characters are stripped and the
+    # length capped before it reaches a browser. The multiline variant is
+    # required here: the answer is Markdown, and the single-line sanitiser would
+    # collapse every table and list onto one unrenderable line.
     return {
-        "answer": sanitize_text(answer, 8000),
+        "answer": sanitize_multiline(answer, 8000),
         "sources": context_hits,
         "used_context": len(context_hits),
     }
