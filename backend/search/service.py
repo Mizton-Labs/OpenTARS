@@ -72,6 +72,16 @@ _WHITESPACE_RE = re.compile(r"\s+")
 #: sanitiser, so a model cannot pad an answer into a wall of empty space.
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
+# Words that name a Threat Intel Tracking *category* rather than an entry.
+# Asking "which malware families show up?" should list the families, even
+# though none of them is called "malware". Kept narrow on purpose: a term
+# broad enough to appear in ordinary prose would make every query dump the
+# whole category.
+_ACTOR_TERMS = ("threat actor", "actors", "actor", "adversary", "adversaries", "apt group")
+_CAMPAIGN_TERMS = ("campaign", "campaigns")
+_MALWARE_TERMS = ("malware", "malware family", "malware families")
+_TECHNIQUE_TERMS = ("ttp", "ttps", "technique", "techniques", "mitre", "att&ck")
+
 
 @dataclass(frozen=True)
 class SearchHit:
@@ -355,16 +365,25 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
     # of IOC URLs — filled the section before the malware-family and
     # threat-actor aggregates were ever reached.
     grouped: list[list[SearchHit]] = [ioc_hits]
-    for label, records in (
-        ("threat actor", await th_db.aggregate_threat_actors()),
-        ("campaign", await th_db.aggregate_campaigns()),
-        ("malware family", await th_db.aggregate_malware_families()),
-        ("technique", await th_db.aggregate_ttps()),
+    needle = query.lower()
+    for label, keywords, records in (
+        ("threat actor", _ACTOR_TERMS, await th_db.aggregate_threat_actors()),
+        ("campaign", _CAMPAIGN_TERMS, await th_db.aggregate_campaigns()),
+        ("malware family", _MALWARE_TERMS, await th_db.aggregate_malware_families()),
+        ("technique", _TECHNIQUE_TERMS, await th_db.aggregate_ttps()),
     ):
+        # "which malware families show up across my hunts?" asks for the
+        # category, not for an entry whose *name* contains "malware" — the
+        # families here are called msaRAT and Chaos ransomware, so a substring
+        # match returns nothing. When the query names the category, list its
+        # entries; otherwise fall back to matching individual names.
+        wants_category = any(word in needle for word in keywords)
         matched: list[SearchHit] = []
         for record in records:
             name = sanitize_text(record.get("name") or record.get("technique_id"))
-            if not name or not _matches(query, name, record.get("description")):
+            if not name:
+                continue
+            if not wants_category and not _matches(query, name, record.get("description")):
                 continue
             matched.append(_hit(f"{name} ({label})", record, name))
             if len(matched) >= MAX_PER_SECTION:

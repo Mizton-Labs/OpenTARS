@@ -129,6 +129,11 @@ def isolated_sources(monkeypatch):
     monkeypatch.setattr(th_db, "aggregate_ttps", fake_empty)
 
 
+async def _aio(value):
+    """Tiny async wrapper so a lambda can stand in for an async DB call."""
+    return value
+
+
 def _sections(result) -> dict[str, list[dict]]:
     return {s["section"]: s["hits"] for s in result["sections"]}
 
@@ -738,3 +743,44 @@ def test_interleave_gives_every_sequence_a_share():
 
     assert list(interleave([[1, 2, 3], ["a"], []])) == [1, "a", 2, 3]
     assert list(interleave([])) == []
+
+
+@pytest.mark.parametrize(
+    "question,expected_label",
+    [
+        ("which malware families show up across my hunts?", "malware family"),
+        ("what threat actors have we seen?", "threat actor"),
+        ("list the campaigns", "campaign"),
+        ("which MITRE techniques appear?", "technique"),
+    ],
+)
+def test_naming_a_tracking_category_lists_its_entries(question, expected_label, monkeypatch):
+    """The aggregates are named msaRAT, Chaos ransomware, Lazarus Group — none
+    contains the word "malware" or "actor", so a substring match returned
+    nothing for the obvious way of asking."""
+    import backend.threat_hunting.db as th_db
+
+    monkeypatch.setattr(
+        th_db, "aggregate_malware_families", lambda: _aio([{"name": "Chaos ransomware"}])
+    )
+    monkeypatch.setattr(th_db, "aggregate_campaigns", lambda: _aio([{"name": "BoryptGrab op"}]))
+    monkeypatch.setattr(th_db, "aggregate_ttps", lambda: _aio([{"technique_id": "T1071.001"}]))
+
+    found = _sections(asyncio.run(global_search(question, role="admin")))
+    titles = " ".join(h["title"] for h in found.get("Threat Intel Tracking", []))
+    assert expected_label in titles
+
+
+def test_a_category_word_does_not_dump_unrelated_categories(monkeypatch):
+    """Naming one category must not list all of them."""
+    import backend.threat_hunting.db as th_db
+
+    monkeypatch.setattr(
+        th_db, "aggregate_malware_families", lambda: _aio([{"name": "Chaos ransomware"}])
+    )
+    monkeypatch.setattr(th_db, "aggregate_campaigns", lambda: _aio([{"name": "BoryptGrab op"}]))
+
+    found = _sections(asyncio.run(global_search("malware", role="admin")))
+    titles = " ".join(h["title"] for h in found.get("Threat Intel Tracking", []))
+    assert "malware family" in titles
+    assert "campaign" not in titles
