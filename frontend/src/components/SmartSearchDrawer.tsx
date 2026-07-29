@@ -27,7 +27,8 @@ import { clsx } from 'clsx'
 import { Search, X, Sparkles, Loader2 } from 'lucide-react'
 import { api, type SearchHit, type SearchResults } from '../api/client'
 import { SmartChatPanel } from './SmartChatPanel'
-import { useSmartChat } from '../hooks/useSmartChat'
+import { useAssistantSessionContext } from '../hooks/useAssistantSessionContext'
+import AssistantSessionBar from './AssistantSessionBar'
 
 type Mode = 'normal' | 'smart'
 
@@ -39,9 +40,11 @@ export default function SmartSearchDrawer() {
   const [term, setTerm] = useState('')
   const [debounced, setDebounced] = useState('')
 
-  // Chat state — shared with the full-page Assistant view.
+  // Chat + session state — shared with the full-page Assistant view via
+  // AssistantSessionProvider (issue-local-032), so this is the SAME
+  // conversation, not an independent copy of it.
   const { status, smartAvailable, question, setQuestion, messages, thinking, transcriptRef, ask } =
-    useSmartChat()
+    useAssistantSessionContext()
 
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -180,16 +183,30 @@ export default function SmartSearchDrawer() {
                 onPick={goTo}
               />
             ) : (
-              <SmartChatPanel
-                inputRef={inputRef}
-                question={question}
-                onQuestion={setQuestion}
-                messages={messages}
-                thinking={thinking}
-                transcriptRef={transcriptRef}
-                onAsk={() => void ask()}
-                onPick={goTo}
-              />
+              <>
+                <div className="border-b border-gray-800 px-3 py-2 overflow-x-auto">
+                  <AssistantSessionBar
+                    onOpenInAssistant={() => {
+                      setOpen(false)
+                      // Absolute path: the drawer mounts at every depth of
+                      // the route tree, where a relative "assistant" would
+                      // resolve inconsistently depending on how deep the
+                      // current page is nested (e.g. /threat-hunting/:id).
+                      navigate('/assistant')
+                    }}
+                  />
+                </div>
+                <SmartChatPanel
+                  inputRef={inputRef}
+                  question={question}
+                  onQuestion={setQuestion}
+                  messages={messages}
+                  thinking={thinking}
+                  transcriptRef={transcriptRef}
+                  onAsk={() => void ask()}
+                  onPick={goTo}
+                />
+              </>
             )}
           </>
         )}

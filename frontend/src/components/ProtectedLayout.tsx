@@ -18,6 +18,7 @@ import Sidebar from './Sidebar'
 import ChangePasswordCard from './ChangePasswordCard'
 import ConfigDriftBanner from './ConfigDriftBanner'
 import SmartSearchDrawer from './SmartSearchDrawer'
+import { AssistantSessionProvider } from './AssistantSessionProvider'
 import { useAuth } from '../auth/useAuth'
 
 export default function ProtectedLayout() {
@@ -71,20 +72,26 @@ export default function ProtectedLayout() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-gray-950">
-      <ConfigDriftBanner />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        {/* issue-local-031: the right-hand gutter is the search button's slot.
-            Reserving it here — rather than letting the button float over the
-            page — is what keeps it from covering page header controls such as
-            Threat Hunting's "New Package". */}
-        <main className="flex-1 overflow-auto pr-11">
-          <Outlet />
-        </main>
-        {/* Search is global, so the entry point is available from every page. */}
-        <SmartSearchDrawer />
+    // issue-local-032: one shared Assistant session/chat instance for the
+    // whole shell, so the search drawer's Smart tab and the full-page
+    // Assistant view are the same conversation rather than two independent
+    // ones that happen to share code.
+    <AssistantSessionProvider>
+      <div className="flex flex-col h-screen overflow-hidden bg-gray-950">
+        <ConfigDriftBanner />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar />
+          {/* issue-local-031: the right-hand gutter is the search button's slot.
+              Reserving it here — rather than letting the button float over the
+              page — is what keeps it from covering page header controls such as
+              Threat Hunting's "New Package". */}
+          <main className="flex-1 overflow-auto pr-11">
+            <Outlet />
+          </main>
+          {/* Search is global, so the entry point is available from every page. */}
+          <SmartSearchDrawer />
+        </div>
       </div>
-    </div>
+    </AssistantSessionProvider>
   )
 }

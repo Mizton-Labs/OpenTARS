@@ -59,6 +59,7 @@ from backend.normalizer.mappings import (
 )
 from backend.normalizer.proposals import init_proposals_db
 from backend.normalizer.run_history import init_run_history_db
+from backend.search.sessions import init_sessions_db
 from backend.threat_hunting.db import init_threat_hunting_db
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
@@ -116,6 +117,13 @@ async def lifespan(app: FastAPI):
         await init_threat_hunting_db()
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("Threat hunting DB init failed: %s", exc)
+    # issue-local-032: init the Assistant session store (its own DB file,
+    # never wiped by a normalized.db schema bump). Safe to re-run on every
+    # startup.
+    try:
+        await init_sessions_db()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Assistant sessions DB init failed: %s", exc)
     # prompts-045: when authentication is enabled, ensure the users/sessions
     # store exists and bootstrap a first-run admin account. When auth is
     # disabled the app stays fully open and this is skipped entirely.
@@ -274,6 +282,15 @@ _VIEWER_GET_PREFIXES = (
 # deliberately NOT granted this.
 _VIEWER_POST_PATHS = ("/api/query/nl", "/api/search/smart")
 
+# POST/PUT/DELETE prefix a 'threat-viewer' may reach for their OWN Assistant
+# chat sessions (issue-local-032). Unlike every other write surface, this is
+# not a privileged mutation — it's the same personal, read-scoped SmartSearch
+# capability a viewer already has via /api/search/smart, just persisted.
+# backend.search.sessions enforces ownership at the query level (a caller
+# can never read/modify another owner's session), so opening write access
+# here cannot cross that boundary.
+_VIEWER_WRITE_PREFIXES = ("/api/search/sessions",)
+
 # GET prefixes a 'threat-researcher' may read (everything viewer can + more).
 # Researchers can also mutate Threat Hunting resources; those mutations are
 # gated per-route via require_researcher_or_admin (added in Phase 1f routes).
@@ -301,6 +318,10 @@ def _viewer_role_allowed(method: str, path: str) -> bool:
         return True
     if method == "POST" and path in _VIEWER_POST_PATHS:
         return True
+    if method in ("POST", "PUT", "DELETE") and any(
+        path.startswith(p) for p in _VIEWER_WRITE_PREFIXES
+    ):
+        return True
     return False
 
 
@@ -312,6 +333,11 @@ def _researcher_role_allowed(method: str, path: str) -> bool:
         return True
     # Read-only TI Viewer POST (NL query)
     if method == "POST" and path in _VIEWER_POST_PATHS:
+        return True
+    # Same personal Assistant-session write access a viewer has.
+    if method in ("POST", "PUT", "DELETE") and any(
+        path.startswith(p) for p in _VIEWER_WRITE_PREFIXES
+    ):
         return True
     # Full Threat Hunting write access
     if method in ("GET", "POST", "PUT", "DELETE", "PATCH") and any(

@@ -39,6 +39,15 @@ vi.mock('../api/client', async () => {
         status: vi.fn().mockResolvedValue({ available: false, reason: 'off', provider: null }),
         query: vi.fn().mockResolvedValue({ query: '', total: 0, sections: [] }),
         smart: vi.fn(),
+        sessions: {
+          list: vi.fn().mockResolvedValue([]),
+          create: vi.fn(),
+          get: vi.fn(),
+          update: vi.fn(),
+          delete: vi.fn(),
+          downloadMarkdownUrl: vi.fn(),
+          downloadPdfUrl: vi.fn(),
+        },
       },
     },
   }

@@ -31,6 +31,17 @@ vi.mock('../api/client', async () => {
         status: vi.fn().mockResolvedValue({ available: false, reason: null, provider: null }),
         query: vi.fn().mockResolvedValue({ query: '', total: 0, sections: [] }),
         smart: vi.fn(),
+        // issue-local-032: AssistantSessionProvider (also part of the shell)
+        // lists the caller's sessions as soon as ProtectedLayout mounts.
+        sessions: {
+          list: vi.fn().mockResolvedValue([]),
+          create: vi.fn(),
+          get: vi.fn(),
+          update: vi.fn(),
+          delete: vi.fn(),
+          downloadMarkdownUrl: vi.fn(),
+          downloadPdfUrl: vi.fn(),
+        },
       },
     },
   }

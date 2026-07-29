@@ -9,6 +9,31 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Assistant chat sessions (issue-local-032)
+
+- **The Assistant/SmartSearch chatbot now remembers conversations.** Every conversation is a
+  session, auto-created under a timestamped name (`TARS-assistant-YYYYMMDD-HHMMSS`) the first time
+  you ask a question, and auto-saved after every completed turn — nothing to remember to do
+  yourself. A top bar (New session, Save session — set a name, Export, Delete, and a picker over
+  your saved sessions) is available in **both** places the chat lives: the full-page Assistant view
+  and the search drawer's Smart tab. They are the same top bar and, more importantly, the same
+  live conversation — asking a question in one and switching to the other continues it, rather than
+  finding two independent chats that happen to share code.
+- **A new session starts whenever you navigate to a different section of the app** (e.g. Viewer →
+  Threat Hunting, or Assistant → Configuration) — the conversation you were having is not lost, it
+  was already saved turn-by-turn and stays in your session list. Moving between pages *within* the
+  same section (e.g. the Threat Hunting Dashboard → Hunt Packages) does not start a new one.
+- **Export as Markdown, JSON, or PDF.** Markdown and PDF download directly from the server; JSON is
+  built client-side from the already-fetched session, the same pattern the Threat Hunting report
+  downloads already use. The PDF export reuses the report renderer's print-friendly palette.
+- **New: an emphasized "Open in Assistant" button in the search drawer's Smart tab** — jumps to the
+  full-page Assistant view without losing the conversation (it's the same session, not a handoff).
+- Sessions are private to the signed-in user (or, in open/no-auth mode, shared the same way
+  everything else is when there's no signed-in identity to separate them) — every read, update, and
+  delete is filtered by owner at the database level, so a session id alone is never enough to reach
+  someone else's conversation. Session content is sanitized the same way a live answer already is,
+  and every field (name, message count, per-message length, sessions kept per person) is bounded.
+
 ### Added — Threat Hunting Dashboard (issue-local-032)
 
 - **New: a "Dashboard" section in the Threat Hunting sidebar group, now the module's default

@@ -10,18 +10,16 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type SearchHit, type SmartTurn } from '../api/client'
+import { api, type AssistantChatMessage, type SmartTurn } from '../api/client'
 
 /** Mirrors MAX_HISTORY_TURNS in backend/search/smart.py — the server keeps this
  *  many prior turns, so sending more is wasted payload that can trip its bound. */
 const MAX_HISTORY_TURNS = 6
 
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  sources?: SearchHit[]
-  failed?: boolean
-}
+/** Same shape the session-storage API uses (client.ts) — a live transcript
+ *  and a saved session's messages are the same thing at different points in
+ *  their lifecycle, so there is one type for both. */
+export type ChatMessage = AssistantChatMessage
 
 export function useSmartChat() {
   const [question, setQuestion] = useState('')
@@ -91,6 +89,7 @@ export function useSmartChat() {
     question,
     setQuestion,
     messages,
+    setMessages,
     thinking,
     transcriptRef,
     ask,

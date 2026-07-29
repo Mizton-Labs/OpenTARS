@@ -471,6 +471,32 @@ export interface SmartAnswer {
   used_context: number
 }
 
+// ── Assistant chat sessions (issue-local-032) ───────────────────────────────
+
+export interface AssistantChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  sources?: SearchHit[]
+  failed?: boolean
+}
+
+/** List-view shape — no `messages`, kept light for a session picker. */
+export interface AssistantSessionSummary {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
+export interface AssistantSession {
+  id: string
+  name: string
+  messages: AssistantChatMessage[]
+  created_at: string
+  updated_at: string
+}
+
 /**
  * Password policy published by GET /api/auth/status (prompts-046).
  * The backend (_validate_password) is the source of truth; the SPA mirrors
@@ -835,6 +861,27 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ question, history }),
       }),
+    // Assistant chat sessions (issue-local-032) — save/rename/delete/export a
+    // saved SmartSearch/Assistant conversation. Scoped server-side to the
+    // caller's own identity.
+    sessions: {
+      list: () => request<AssistantSessionSummary[]>('/search/sessions'),
+      create: (body: { name?: string; messages?: AssistantChatMessage[] } = {}) =>
+        request<AssistantSession>('/search/sessions', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      get: (id: string) => request<AssistantSession>(`/search/sessions/${encodeURIComponent(id)}`),
+      update: (id: string, body: { name?: string; messages?: AssistantChatMessage[] }) =>
+        request<AssistantSession>(`/search/sessions/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        }),
+      delete: (id: string) =>
+        request<void>(`/search/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      downloadMarkdownUrl: (id: string) => `${BASE}/search/sessions/${encodeURIComponent(id)}/markdown`,
+      downloadPdfUrl: (id: string) => `${BASE}/search/sessions/${encodeURIComponent(id)}/pdf`,
+    },
   },
 
   // Application — instance-wide default UI theme (issue-local-016). Public
