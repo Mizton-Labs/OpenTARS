@@ -20,6 +20,7 @@ import Toggle from '../components/Toggle'
 import ThreatIntelCatalog from '../components/ThreatIntelCatalog'
 import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
+import ApiAccessTab from './configuration/ApiAccessTab'
 import LLMProvidersTab from './configuration/LLMProvidersTab'
 import SiemConnectorsTab from './configuration/SiemConnectorsTab'
 import AgentsConfigTab from './configuration/AgentsConfigTab'
@@ -45,6 +46,7 @@ type Tab =
   | 'global-fields'
   | 'llm-providers'
   | 'user-management'
+  | 'api-access'
   | 'general-ti'
   | 'siem-connectors'
   | 'agents-config'
@@ -91,20 +93,27 @@ const THREAT_HUNTING_TABS: { id: Tab; label: string }[] = [
 
 export default function Configuration() {
   const { authEnabled, isAdmin } = useAuth()
-  const [activeGroup, setActiveGroup] = useState<Group>('threat-intel')
-  const [activeTab, setActiveTab] = useState<Tab>('threat-intel')
+  // issue-local-029: General configuration is now the default landing view
+  // (was Threat Intel's Open Threat Feeds tab).
+  const [activeGroup, setActiveGroup] = useState<Group>('general')
+  const [activeTab, setActiveTab] = useState<Tab>('application')
 
   // Build the tab list for the current group.
   // Auth-gated tabs:
   //   - User Management is admin-only (prompts-045), lives in the General group
   //     (issue-local-016 — moved out of Threat Intel, it's an instance-wide
   //     administration concern, not TI-specific).
+  //   - API Access is admin-only (issue-local-029), same gating as User
+  //     Management — programmatic access keys are an administration concern.
   // Self-service account management moved to its own top-level Account page
   // (prompts-046), so there is no longer an Account tab here.
   const generalTabs: { id: Tab; label: string }[] = [
     ...GENERAL_TABS,
     ...(authEnabled && isAdmin
-      ? [{ id: 'user-management' as Tab, label: 'User Management' }]
+      ? [
+          { id: 'user-management' as Tab, label: 'User Management' },
+          { id: 'api-access' as Tab, label: 'API Access' },
+        ]
       : []),
   ]
 
@@ -181,6 +190,7 @@ export default function Configuration() {
         {activeTab === 'global-fields'   && <GlobalFieldsTab />}
         {activeTab === 'llm-providers'    && <div className="max-w-3xl"><LLMProvidersTab /></div>}
         {activeTab === 'user-management'  && <UserManagementTab />}
+        {activeTab === 'api-access'       && <ApiAccessTab />}
         {activeTab === 'general-ti'       && <GeneralTISettingsTab />}
         {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}
         {activeTab === 'agents-config'    && <AgentsConfigTab />}

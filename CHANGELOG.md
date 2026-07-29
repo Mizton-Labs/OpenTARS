@@ -9,6 +9,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Programmatic API access with scoped keys (issue-local-029)
+
+- **New: API access keys**, configurable from Configuration → General → API Access. A master
+  "Programmatic API access" toggle (`api_access_enabled`, off by default) controls whether keys are
+  accepted at all — independent of the existing session-cookie auth, and off by default so it never
+  changes behavior for deployments that don't opt in.
+- **New: a guided create wizard.** Enter a name, choose which capabilities the key can use from a
+  curated list of named scopes (or apply the "Create hunt package / add evidence / download
+  report+IOCs+threat-intel / query threat-intel tracking" default profile, or select every scope at
+  once), and a client ID + secret are generated. The combined `Authorization: Bearer <client_id>.
+  <secret>` value, client ID, and endpoint are shown exactly once in a copyable, downloadable
+  summary card — the secret is never retrievable again afterward, only its hash is stored.
+  Existing keys can be enabled/disabled, deleted, or test-probed from the same tab.
+- **Scoped by design, not by convention**: every scope resolves to an explicit, hardcoded
+  `(HTTP method, path pattern)` allowlist confined to `/api/threat-hunting/*`. A request-level hard
+  cap in the auth middleware independently rejects any API-key request outside that prefix, so a
+  key — even one granted every scope — can never reach configuration, user-management, or LLM
+  provider endpoints. The management routes for creating/listing/editing keys are session-auth-only
+  and structurally cannot be reached by an API key at all.
+
+### Changed — Configuration section now lands on General, not Threat Intel (issue-local-029)
+
+Opening Configuration from the sidebar now defaults to the General tab group (previously Threat
+Intel's Open Threat Feeds tab), matching where the most commonly changed settings — including the
+new API Access tab — live.
+
 ### Fixed / Added — Azure AI Foundry Claude provider, manual model entry (issue-local-027)
 
 - **Fixed: "Discover Models" showed a scary, crash-looking error for Azure AI Foundry's Anthropic

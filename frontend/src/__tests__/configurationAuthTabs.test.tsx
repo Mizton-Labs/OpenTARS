@@ -265,7 +265,12 @@ describe('Configuration tab groups (issue-local-016)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
 
-    // Default landing group is Threat Intel — User Management must not be there.
+    // issue-local-029: General is now the default landing group, so User
+    // Management is already visible on first paint — confirm it's absent
+    // under Threat Intel instead, then confirm it's present back in General.
+    expect(await screen.findByRole('button', { name: /user management/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^threat intel$/i }))
     expect(screen.queryByRole('button', { name: /user management/i })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /^general$/i }))
@@ -355,7 +360,11 @@ describe('Configuration tab groups (issue-local-016)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
 
-    // Default landing group is Threat Intel — the tab should already be there.
+    // issue-local-029: General is now the default landing group, so Global
+    // Field Defaults is not present until Threat Intel is selected.
+    expect(screen.queryByRole('button', { name: /global field defaults/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^threat intel$/i }))
     expect(await screen.findByRole('button', { name: /global field defaults/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /^general$/i }))

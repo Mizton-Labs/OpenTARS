@@ -877,6 +877,29 @@ def save_auth_enabled(value: bool) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Programmatic API access toggle (issue-local-029) ──────────────────────────
+# Deliberately separate from auth_enabled: this only controls whether an
+# Authorization: Bearer <client_id>.<secret> API key is ALSO accepted as a
+# credential alongside the session cookie — it never widens access when
+# auth_enabled=False, since that already means "app fully open" and the
+# auth_enforcement middleware short-circuits before ever inspecting either
+# credential type.
+
+
+def load_api_access_enabled() -> bool:
+    """Return whether API-key authentication is enabled (default False)."""
+    return bool(load_app_config().get("api_access_enabled", False))
+
+
+def save_api_access_enabled(value: bool) -> None:
+    """Persist the api_access_enabled flag to application.yaml."""
+    if not isinstance(value, bool):
+        raise ValueError("api_access_enabled must be a boolean")
+    data = load_app_config()
+    data["api_access_enabled"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 _COOKIE_SECURE_ENV = "OPENTARS_COOKIE_SECURE"
 _COOKIE_SECURE_ENV_LEGACY = "MIZTON_THREATBOX_COOKIE_SECURE"
 _FALSEY = frozenset({"0", "false", "no", "off"})

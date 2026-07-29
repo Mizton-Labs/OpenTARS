@@ -114,6 +114,102 @@ async def destroy_session(token: str) -> None:
         await db.delete_session(hash_token(token))
 
 
+# ── API access keys (issue-local-029) ─────────────────────────────────────────
+
+# client_id is public (sent in the clear, logged, shown in the UI list) — only
+# the secret half is sensitive. Prefixed so it's recognizable at a glance
+# (e.g. in server logs) as an API key rather than a username.
+_CLIENT_ID_PREFIX = "ak_"
+
+
+def generate_client_id() -> str:
+    """Return a new, unique-enough public client id (``ak_<12 hex>``)."""
+    return f"{_CLIENT_ID_PREFIX}{secrets.token_hex(6)}"
+
+
+def generate_api_secret() -> str:
+    """Return a new opaque API secret (~256 bits) — same generator as session
+    tokens; shown to the operator exactly once and never persisted raw."""
+    return secrets.token_urlsafe(32)
+
+
+def _combined_api_key(client_id: str, secret: str) -> str:
+    """The single opaque string an API client sends: ``Authorization: Bearer
+    <client_id>.<secret>``. client_id is hex, secret is URL-safe base64 —
+    neither alphabet contains ``.``, so splitting on the first one is safe."""
+    return f"{client_id}.{secret}"
+
+
+async def create_api_key(
+    name: str,
+    scopes: list[str],
+    *,
+    created_by: str | None = None,
+) -> dict:
+    """Create a new API key. Returns a dict including the raw ``secret`` and
+    the combined ``api_key`` bearer value — the ONLY time either is available;
+    only the hash is persisted. Retries client_id generation on the
+    (astronomically unlikely) chance of a collision."""
+    import sqlite3
+
+    from backend.auth.api_scopes import valid_scope_ids
+
+    clean_scopes = valid_scope_ids(scopes)
+    secret = generate_api_secret()
+    secret_hash = hash_token(secret)
+    for _ in range(5):
+        client_id = generate_client_id()
+        try:
+            await db.create_api_key(
+                client_id, secret_hash, name, clean_scopes, created_by=created_by
+            )
+            break
+        except sqlite3.IntegrityError:
+            continue  # client_id collision — regenerate and retry
+    else:
+        raise RuntimeError("could not generate a unique API client id after 5 attempts")
+
+    return {
+        "client_id": client_id,
+        "secret": secret,
+        "api_key": _combined_api_key(client_id, secret),
+        "name": name,
+        "scopes": clean_scopes,
+    }
+
+
+async def resolve_api_key(bearer_value: str) -> dict | None:
+    """Return a synthetic "user" dict for a valid, enabled API key, else None.
+
+    *bearer_value* is the raw ``<client_id>.<secret>`` string (already
+    stripped of the ``Bearer `` prefix by the caller). Mirrors
+    :func:`resolve_session`'s shape closely enough that
+    ``auth_enforcement`` can treat both uniformly, but carries
+    ``is_api_key=True`` and ``scopes`` instead of a ``role`` — callers must
+    branch on that before doing role-based authorization.
+    """
+    if not bearer_value or "." not in bearer_value:
+        return None
+    client_id, _, secret = bearer_value.partition(".")
+    if not client_id or not secret:
+        return None
+    record = await db.get_api_key_by_client_id(client_id)
+    if record is None or not record["enabled"]:
+        return None
+    if not secrets.compare_digest(hash_token(secret), record["secret_hash"]):
+        return None
+    await db.touch_api_key_last_used(client_id)
+    return {
+        "username": f"apikey:{record['name']}",
+        "is_api_key": True,
+        "client_id": client_id,
+        "scopes": record["scopes"],
+        "enabled": True,
+        "must_change_password": False,
+        "idp": None,
+    }
+
+
 # ── Login throttle ───────────────────────────────────────────────────────────
 
 

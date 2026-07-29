@@ -46,6 +46,30 @@ oidc_flows
   * next_path     — safe redirect destination after login (same-origin validated)
   * expires_at    — UTC ISO8601; entries older than this are rejected
 
+api_keys (issue-local-029)
+  Machine-credential registry for the programmatic API access feature — a
+  parallel authentication path alongside the session cookie, scoped to a
+  curated set of Threat Hunting API capabilities (see
+  ``backend.auth.api_scopes``) rather than the role model above.
+  * id            — autoincrement PK
+  * client_id     — public, unique identifier (``ak_<12 hex>``); sent by the
+                    client alongside the secret, never treated as sensitive
+                    on its own
+  * secret_hash   — SHA-256 hex of the opaque secret (same hashing helper as
+                    session tokens); the raw secret is shown to the operator
+                    exactly once at creation time and never persisted
+  * name          — operator-supplied label (e.g. "CI pipeline")
+  * scopes        — JSON array of scope ids (``backend.auth.api_scopes``);
+                    the explicit resolved set at creation/edit time, not a
+                    wildcard — a newly-added scope never silently applies to
+                    an existing key
+  * enabled       — 1 active, 0 revoked (a disabled key authenticates as
+                    invalid, same as a disabled user)
+  * created_by    — username of the admin who created it, for audit
+  * created_at    — UTC ISO8601
+  * last_used_at  — UTC ISO8601, updated (best-effort) on each successful
+                    authentication; NULL until first use
+
 Security note: this module deals only in *hashes*. Plaintext passwords and raw
 session tokens never touch disk. Hashing/token generation live in
 ``backend.auth.service``.
@@ -53,6 +77,7 @@ session tokens never touch disk. Hashing/token generation live in
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,7 +90,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 5
+_USERS_SCHEMA_VERSION = 6
 
 # Canonical role set (issue-local-002): expanded for the Threat Hunting module.
 # Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
@@ -120,6 +145,21 @@ CREATE TABLE IF NOT EXISTS oidc_flows (
 );
 """
 
+# issue-local-029: API access keys (see module docstring)
+CREATE_API_KEYS_TABLE = """
+CREATE TABLE IF NOT EXISTS api_keys (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id     TEXT    NOT NULL UNIQUE,
+    secret_hash   TEXT    NOT NULL,
+    name          TEXT    NOT NULL,
+    scopes        TEXT    NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    created_by    TEXT,
+    created_at    TEXT    NOT NULL,
+    last_used_at  TEXT
+);
+"""
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -138,6 +178,7 @@ async def init_users_db() -> None:
         await db.execute(CREATE_SESSIONS_IDX_USER)
         await db.execute(CREATE_SCHEMA_VERSION_TABLE)
         await db.execute(CREATE_OIDC_FLOWS_TABLE)
+        await db.execute(CREATE_API_KEYS_TABLE)
         await _migrate_users_schema(db)
         cur = await db.execute("SELECT version FROM schema_version LIMIT 1")
         row = await cur.fetchone()
@@ -177,6 +218,13 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
         (one of VALID_THEMES) is an explicit per-user override. Valid values
         are enforced at the API layer, not via a SQL CHECK constraint — same
         approach already used for ``role``/VALID_ROLES.
+
+    v5 -> v6 (issue-local-029): API access keys.
+      - Ensure the ``api_keys`` table exists (handled by CREATE_API_KEYS_TABLE
+        in init_users_db, a whole new table rather than a column addition, so
+        `CREATE TABLE IF NOT EXISTS` alone is idempotent for both fresh and
+        upgrading databases; listed here for documentation completeness, same
+        as the v3->v4 oidc_flows entry above).
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -542,3 +590,115 @@ async def purge_expired_oidc_flows() -> int:
         cur = await db.execute("DELETE FROM oidc_flows WHERE expires_at < ?", (now,))
         await db.commit()
         return cur.rowcount
+
+
+# ── API access keys (issue-local-029) ─────────────────────────────────────────
+
+
+def _api_key_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "client_id": row[1],
+        "secret_hash": row[2],
+        "name": row[3],
+        "scopes": json.loads(row[4]) if row[4] else [],
+        "enabled": bool(row[5]),
+        "created_by": row[6],
+        "created_at": row[7],
+        "last_used_at": row[8],
+    }
+
+
+_API_KEY_COLS = (
+    "id, client_id, secret_hash, name, scopes, enabled, created_by, created_at, last_used_at"
+)
+
+
+async def create_api_key(
+    client_id: str,
+    secret_hash: str,
+    name: str,
+    scopes: list[str],
+    *,
+    created_by: str | None = None,
+) -> int:
+    """Insert a new API key record; return its id. Raises on duplicate client_id."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO api_keys (client_id, secret_hash, name, scopes, enabled, "
+            "created_by, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (client_id, secret_hash, name, json.dumps(scopes), created_by, _utc_now_iso()),
+        )
+        await db.commit()
+        return int(cur.lastrowid)
+
+
+async def get_api_key_by_client_id(client_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            f"SELECT {_API_KEY_COLS} FROM api_keys WHERE client_id = ?", (client_id,)
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    return _api_key_row_to_dict(row) if row else None
+
+
+async def list_api_keys() -> list[dict[str, Any]]:
+    """Return all API keys (including the secret hash — callers that expose
+    this to the frontend must redact it themselves, same convention as
+    ``list_users`` popping ``password_hash``)."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(f"SELECT {_API_KEY_COLS} FROM api_keys ORDER BY id")
+        rows = await cur.fetchall()
+        await cur.close()
+    return [_api_key_row_to_dict(row) for row in rows]
+
+
+async def set_api_key_scopes(client_id: str, scopes: list[str]) -> bool:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET scopes = ? WHERE client_id = ?",
+            (json.dumps(scopes), client_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_api_key_name(client_id: str, name: str) -> bool:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET name = ? WHERE client_id = ?", (name, client_id)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_api_key_enabled(client_id: str, enabled: bool) -> bool:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET enabled = ? WHERE client_id = ?",
+            (1 if enabled else 0, client_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def touch_api_key_last_used(client_id: str) -> None:
+    """Best-effort timestamp update on successful authentication. Never
+    raises — a failure here must not break the request it's authenticating."""
+    try:
+        async with aiosqlite.connect(_USERS_DB_PATH) as db:
+            await db.execute(
+                "UPDATE api_keys SET last_used_at = ? WHERE client_id = ?",
+                (_utc_now_iso(), client_id),
+            )
+            await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.debug("touch_api_key_last_used: failed to update %r (non-fatal)", client_id)
+
+
+async def delete_api_key(client_id: str) -> bool:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM api_keys WHERE client_id = ?", (client_id,))
+        await db.commit()
+        return cur.rowcount > 0

@@ -17,6 +17,16 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/enabled
   PUT    /api/auth/users/{user_id}/password
   DELETE /api/auth/users/{user_id}
+
+Admin only (API access keys — issue-local-029):
+  GET    /api/auth/api-keys/config
+  PUT    /api/auth/api-keys/config
+  GET    /api/auth/api-keys/scopes
+  GET    /api/auth/api-keys
+  POST   /api/auth/api-keys
+  PUT    /api/auth/api-keys/{client_id}
+  DELETE /api/auth/api-keys/{client_id}
+  POST   /api/auth/api-keys/{client_id}/test
 """
 
 from __future__ import annotations
@@ -29,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from backend.auth import db
+from backend.auth.api_scopes import DEFAULT_PROFILE_SCOPES, list_scopes, valid_scope_ids
 from backend.auth.dependencies import (
     clear_session_cookie,
     get_current_user,
@@ -40,13 +51,20 @@ from backend.auth.service import (
     SESSION_COOKIE_NAME,
     SESSION_TTL,
     authenticate,
+    create_api_key,
     create_session_for_user,
     destroy_session,
     hash_password,
     hash_token,
     verify_password,
 )
-from backend.config.loader import load_auth_enabled, load_password_policy
+from backend.config.loader import (
+    load_api_access_enabled,
+    load_app_base_prefix,
+    load_auth_enabled,
+    load_password_policy,
+    save_api_access_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -501,3 +519,124 @@ async def _require_user(user_id: int) -> dict:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+# ── API access keys (issue-local-029) ─────────────────────────────────────────
+#
+# Admin-only, session-only (require_admin resolves the SESSION cookie
+# directly, never request.state.user — an API key can never authenticate its
+# own management routes, by construction).
+
+
+class ApiAccessConfigBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/api-keys/config")
+async def get_api_access_config(admin: dict = Depends(require_admin)) -> dict:
+    return {"enabled": load_api_access_enabled()}
+
+
+@router.put("/api-keys/config")
+async def set_api_access_config(
+    body: ApiAccessConfigBody, admin: dict = Depends(require_admin)
+) -> dict:
+    save_api_access_enabled(body.enabled)
+    return {"enabled": body.enabled}
+
+
+class CreateApiKeyBody(BaseModel):
+    name: str
+    scopes: list[str] = []
+
+
+class UpdateApiKeyBody(BaseModel):
+    name: str | None = None
+    scopes: list[str] | None = None
+    enabled: bool | None = None
+
+
+def _public_api_key(record: dict) -> dict:
+    """Redact secret_hash — never sent to the frontend after creation."""
+    return {k: v for k, v in record.items() if k != "secret_hash"}
+
+
+@router.get("/api-keys/scopes")
+async def list_api_key_scopes(admin: dict = Depends(require_admin)) -> dict:
+    """The wizard's toggle list + default-profile quick-pick source."""
+    return {
+        "scopes": list_scopes(),
+        "default_profile": list(DEFAULT_PROFILE_SCOPES),
+    }
+
+
+@router.get("/api-keys")
+async def list_api_keys_route(admin: dict = Depends(require_admin)) -> list[dict]:
+    return [_public_api_key(k) for k in await db.list_api_keys()]
+
+
+@router.post("/api-keys", status_code=201)
+async def create_api_key_route(
+    body: CreateApiKeyBody, request: Request, admin: dict = Depends(require_admin)
+) -> dict:
+    """Create a new API key. The response's ``secret``/``api_key`` fields are
+    the ONLY time either value is available — only a hash is persisted."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    created = await create_api_key(name, body.scopes, created_by=admin["username"])
+    prefix = load_app_base_prefix()
+    endpoint = f"{str(request.base_url).rstrip('/')}{prefix}/api/threat-hunting"
+    return {**created, "endpoint": endpoint}
+
+
+@router.put("/api-keys/{client_id}")
+async def update_api_key_route(
+    client_id: str, body: UpdateApiKeyBody, admin: dict = Depends(require_admin)
+) -> dict:
+    existing = await db.get_api_key_by_client_id(client_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name must not be empty")
+        await db.set_api_key_name(client_id, name)
+    if body.scopes is not None:
+        await db.set_api_key_scopes(client_id, valid_scope_ids(body.scopes))
+    if body.enabled is not None:
+        await db.set_api_key_enabled(client_id, body.enabled)
+    return _public_api_key(await db.get_api_key_by_client_id(client_id))
+
+
+@router.delete("/api-keys/{client_id}")
+async def delete_api_key_route(client_id: str, admin: dict = Depends(require_admin)) -> dict:
+    if await db.get_api_key_by_client_id(client_id) is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    await db.delete_api_key(client_id)
+    return {"status": "deleted", "client_id": client_id}
+
+
+@router.post("/api-keys/{client_id}/test")
+async def test_api_key_route(client_id: str, admin: dict = Depends(require_admin)) -> dict:
+    """Confirm a key resolves and report what it's actually granted — does
+    NOT need (or ever see) the secret; it validates the stored record through
+    the exact same lookup/enabled logic ``resolve_api_key`` uses, so a "pass"
+    here means "this key will work" without regenerating or exposing it."""
+    record = await db.get_api_key_by_client_id(client_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if not load_api_access_enabled():
+        return {
+            "status": "warning",
+            "detail": "API access is currently disabled — enable it in General configuration "
+            "for this key to actually authenticate requests.",
+            "scopes": record["scopes"],
+        }
+    if not record["enabled"]:
+        return {"status": "error", "detail": "This key is disabled.", "scopes": record["scopes"]}
+    return {
+        "status": "ok",
+        "detail": f"Key resolves and is enabled, granting {len(record['scopes'])} scope(s).",
+        "scopes": record["scopes"],
+    }
