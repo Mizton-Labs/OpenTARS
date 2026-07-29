@@ -9,6 +9,35 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Threat Hunting Dashboard (issue-local-032)
+
+- **New: a "Dashboard" section in the Threat Hunting sidebar group, now the module's default
+  view.** The bare Threat Hunting entry point (`/threat-hunting`) now shows a metrics overview
+  instead of the hunt-package list: hunt package / run counts (with a status breakdown), evidence
+  items (by type), hypotheses, hunting leads, queries drafted, IOCs extracted (and how many were
+  kept after sanitization), SIEM searches executed and events retrieved, runs and hunts broken
+  down by model, and a Threat Intel summary (threat actors, campaigns, malware families, MITRE
+  techniques, feed sources processed) aggregated across every hunt.
+- The hunt-package list itself is unchanged — it moved to its own sidebar entry, "Hunt Packages"
+  (`/threat-hunting/packages`), and gained no new behavior. The Dashboard shares its search box and
+  time-range filter (same debounce, same `HuntTimeFilter` component), so the hunt-scoped figures
+  always describe the same set that filter would show in the list.
+- The Threat Intel summary panel is deliberately **not** filtered by the search/date controls —
+  it's a cross-hunt aggregate keyed by deduplicated entity name, the same global-scope convention
+  the Threat Intel Tracking dashboard already uses, not a per-package figure a date range could
+  meaningfully narrow.
+- No new charting dependency: the breakdowns are proportional-width bar rows built from the app's
+  own card/theme tokens, consistent with how every other dashboard-style page in this app already
+  renders without one.
+
+### Fixed — Search drawer contrast in dark themes (issue-local-032)
+
+- The search/SmartSearch drawer's surface (`bg-gray-950`) matched the page background exactly in
+  every dark theme (Classic, Energy, Ocean), so the panel barely read as its own layer over
+  whatever page it was overlaying. Its base surface is now one step lighter in those three themes
+  specifically; Light is unchanged, since its inverted color ramp already separates the two
+  surfaces.
+
 ### Added — Global search and SmartSearch chatbot (issue-local-031)
 
 - **New: a search button flush in the top-right corner of every page**, opening a right-hand

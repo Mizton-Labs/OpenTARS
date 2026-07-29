@@ -106,9 +106,12 @@ export default function SmartSearchDrawer() {
         // darker base, behind a brand accent edge. The panel overlays whatever
         // page you were on, so it should read as a distinct layer instead of
         // blending into the content underneath it. Both tints come from the
-        // theme tokens, so this re-skins with the rest of the app.
+        // theme tokens, so this re-skins with the rest of the app. The
+        // `search-drawer` class hook (issue-local-032) lifts the base surface
+        // a step lighter than the page in dark themes specifically (index.css)
+        // — bg-gray-950 alone matched the page background almost exactly.
         className={clsx(
-          'fixed inset-y-0 right-0 z-40 flex flex-col overflow-hidden bg-gray-950 bg-gradient-to-b from-brand-900/30 via-gray-950/0 to-gray-950/0 shadow-2xl transition-[width] duration-200 ease-out',
+          'search-drawer fixed inset-y-0 right-0 z-40 flex flex-col overflow-hidden bg-gray-950 bg-gradient-to-b from-brand-900/30 via-gray-950/0 to-gray-950/0 shadow-2xl transition-[width] duration-200 ease-out',
           open ? 'w-full border-l-2 border-brand-700/50 sm:w-[420px]' : 'w-0',
         )}
       >

@@ -53,10 +53,12 @@ API_SCOPES: dict[str, ApiScope] = {
         _scope(
             "hunts:read",
             "List / view hunt packages",
-            "List hunt packages and view a single package's details.",
+            "List hunt packages, view a single package's details, and read the "
+            "Dashboard's aggregate stats (issue-local-032).",
             [
                 ("GET", r"^/api/threat-hunting/packages$"),
                 ("GET", rf"^{_PKG}$"),
+                ("GET", r"^/api/threat-hunting/dashboard$"),
             ],
         ),
         _scope(

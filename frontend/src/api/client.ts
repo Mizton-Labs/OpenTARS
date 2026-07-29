@@ -1199,6 +1199,17 @@ export const api = {
       const qs = q.toString()
       return request<THuntPackage[]>(`/threat-hunting/packages${qs ? `?${qs}` : ''}`)
     },
+    // issue-local-032: Threat Hunting Dashboard aggregate stats — same
+    // search/date-range filter shape as listPackages, applied to the same
+    // filtered set of packages.
+    getDashboard: (params: { search?: string; date_from?: string; date_to?: string } = {}) => {
+      const q = new URLSearchParams()
+      if (params.search) q.set('search', params.search)
+      if (params.date_from) q.set('date_from', params.date_from)
+      if (params.date_to) q.set('date_to', params.date_to)
+      const qs = q.toString()
+      return request<THDashboardStats>(`/threat-hunting/dashboard${qs ? `?${qs}` : ''}`)
+    },
     createPackage: (body: { name: string; description?: string }) =>
       request<THuntPackage>('/threat-hunting/packages', {
         method: 'POST',
@@ -2541,6 +2552,30 @@ export interface THTrackingDashboard {
   campaigns: THTrackingCampaign[]
   malware_families: THTrackingMalwareFamily[]
   ttps: THTrackingTtp[]
+}
+
+// issue-local-032: Threat Hunting Dashboard aggregate stats.
+export interface THDashboardStats {
+  packages_total: number
+  packages_by_status: Record<string, number>
+  runs_total: number
+  runs_by_model: Record<string, number>
+  hunts_by_model: Record<string, number>
+  evidence_total: number
+  evidence_by_type: Record<string, number>
+  hypotheses_total: number
+  hunting_leads_total: number
+  queries_total: number
+  iocs_extracted_total: number
+  iocs_kept_total: number
+  siem_searches_total: number
+  siem_searches_completed: number
+  siem_events_total: number
+  threat_actors_total: number
+  campaigns_total: number
+  malware_families_total: number
+  ttps_total: number
+  sources_processed: number
 }
 
 export interface THTrackingHunt {

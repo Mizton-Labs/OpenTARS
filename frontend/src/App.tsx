@@ -7,6 +7,7 @@ import Configuration from './pages/Configuration'
 import Normalizer from './pages/Normalizer'
 import Watchers from './pages/Watchers'
 import ThreatHunting from './pages/ThreatHunting'
+import HuntDashboard from './pages/threat-hunting/HuntDashboard'
 import Account from './pages/Account'
 import About from './pages/About'
 import Assistant from './pages/Assistant'
@@ -41,7 +42,10 @@ const PAGE_COMPONENTS: Record<ShellRoute, React.ComponentType> = {
   configuration: Configuration,
   normalizer: Normalizer,
   watchers: Watchers,
-  'threat-hunting': ThreatHunting,
+  // issue-local-032: the Dashboard is the module's default view; the
+  // package list moved to its own nested route (threat-hunting/packages,
+  // registered below alongside /new, /tracking, /:id).
+  'threat-hunting': HuntDashboard,
   assistant: Assistant,
   account: Account,
   about: About,
@@ -109,7 +113,8 @@ export default function App() {
         })}
         {/* Nested TH routes (issue-local-011 Part 5) — must come AFTER the
             generic SHELL_ROUTES map so they take precedence over the flat
-            threat-hunting entry which handles the list view. */}
+            threat-hunting entry (now the Dashboard, issue-local-032). */}
+        <Route path="threat-hunting/packages" element={<ThreatHunting />} />
         <Route path="threat-hunting/new" element={<ThreatHuntingNew />} />
         {/* issue-local-021: cross-hunt Threat Intel Tracking dashboard — a
             static segment, so React Router's route ranking already prefers

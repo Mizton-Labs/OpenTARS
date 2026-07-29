@@ -257,6 +257,8 @@ _VIEWER_GET_PREFIXES = (
     "/api/smart-mappings/active",
     # Threat Hunting read-only access (issue-local-002, Phase 1)
     "/api/threat-hunting/packages",
+    # Threat Hunting Dashboard aggregate stats (issue-local-032) — read-only.
+    "/api/threat-hunting/dashboard",
     # Project docs (About page's API Docs tab, issue-local-030) — read-only,
     # allowlisted content (see routes_app.get_doc).
     "/api/app/docs",

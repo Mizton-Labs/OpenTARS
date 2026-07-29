@@ -16,6 +16,7 @@ import {
   Network,
   Home as HomeIcon,
   Bot,
+  Gauge,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -41,6 +42,12 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>
   adminOnly: boolean
   authOnly: boolean
+  // issue-local-032: Dashboard (to='threat-hunting') and Hunt Packages
+  // (to='threat-hunting/packages') are now sibling items sharing a prefix —
+  // NavLink's default active-match is prefix-based, so without `end` both
+  // would highlight simultaneously while on the packages route. Defaults to
+  // false (unchanged behaviour) everywhere else.
+  end?: boolean
 }
 
 type NavSection = {
@@ -73,7 +80,11 @@ const navSections: NavSection[] = [
     label: 'Threat Hunting',
     icon: Crosshair,
     items: [
-      { to: 'threat-hunting', label: 'Threat Hunting', icon: Crosshair, adminOnly: false, authOnly: false },
+      // issue-local-032: Dashboard is the module's default view — the bare
+      // threat-hunting route now renders it; the package list moved to its
+      // own nested route below.
+      { to: 'threat-hunting', label: 'Dashboard', icon: Gauge, adminOnly: false, authOnly: false, end: true },
+      { to: 'threat-hunting/packages', label: 'Hunt Packages', icon: Crosshair, adminOnly: false, authOnly: false },
       // issue-local-021: cross-hunt correlation dashboard — nested under
       // threat-hunting/ like the existing new/:id routes (App.tsx).
       { to: 'threat-hunting/tracking', label: 'Threat Intel Tracking', icon: Network, adminOnly: false, authOnly: false },
@@ -173,6 +184,7 @@ export default function Sidebar() {
       <NavLink
         key={item.to}
         to={item.to}
+        end={item.end}
         title={collapsed ? item.label : undefined}
         className={({ isActive }) =>
           clsx(

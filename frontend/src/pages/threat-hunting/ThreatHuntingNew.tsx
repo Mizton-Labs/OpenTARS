@@ -35,8 +35,10 @@ export default function ThreatHuntingNew() {
 
   return (
     <div className="p-6">
+      {/* issue-local-032: '..' now resolves to the Dashboard, not the package
+          list — go back to where "New Hunt Package" is actually launched from. */}
       <HuntPackageWizard
-        onClose={() => navigate('..', { relative: 'path' })}
+        onClose={() => navigate('../packages', { relative: 'path' })}
         onCreated={(id) => navigate(`../${id}`, { relative: 'path' })}
       />
     </div>

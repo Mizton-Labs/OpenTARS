@@ -890,6 +890,181 @@ async def list_hunt_packages(
     return result
 
 
+async def get_hunt_dashboard_stats(
+    *,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate counts for the Threat Hunting Dashboard (issue-local-032).
+
+    *search*/*date_from*/*date_to* filter which hunt packages count toward
+    every hunt-scoped figure below (packages, runs, evidence, hypotheses,
+    hunting leads, queries, extracted IOCs, SIEM execution activity) —
+    exactly the same matching rules as ``list_hunt_packages``'s deep search
+    and date-range filter, so the numbers here always describe the same set
+    a user would see by applying the same filter to the package list.
+
+    The Threat Intel summary (threat actors / campaigns / malware families /
+    TTPs / feed sources) is deliberately NOT filtered by search/date — it is
+    a cross-hunt aggregate keyed by deduplicated entity name, the same
+    global-scope convention already used by the Threat Intel Tracking
+    dashboard (``get_tracking_dashboard`` in routes_threat_hunting.py), not a
+    per-package figure a date range could meaningfully narrow.
+    """
+    import json as _json
+
+    where_clauses = ["hp.status != 'archived'"]
+    params: list[Any] = []
+    if date_from:
+        where_clauses.append("hp.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_clauses.append("hp.created_at <= ?")
+        params.append(date_to)
+    if search:
+        like_term = f"%{_escape_like(search)}%"
+        where_clauses.append(
+            "("
+            "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
+            "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
+            "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
+            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
+            "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
+            "AND x.ioc LIKE ? ESCAPE '\\')"
+            ")"
+        )
+        params.extend([like_term] * 7)
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        cur = await db.execute(
+            f"SELECT hp.id, hp.status FROM hunt_packages hp WHERE {' AND '.join(where_clauses)}",  # noqa: S608
+            params,
+        )
+        pkg_rows = await cur.fetchall()
+        await cur.close()
+        pkg_ids = tuple(r["id"] for r in pkg_rows)
+
+        packages_by_status: dict[str, int] = {}
+        for r in pkg_rows:
+            packages_by_status[r["status"]] = packages_by_status.get(r["status"], 0) + 1
+
+        stats: dict[str, Any] = {
+            "packages_total": len(pkg_ids),
+            "packages_by_status": packages_by_status,
+            "runs_total": 0,
+            "runs_by_model": {},
+            "hunts_by_model": {},
+            "evidence_total": 0,
+            "evidence_by_type": {},
+            "hypotheses_total": 0,
+            "hunting_leads_total": 0,
+            "queries_total": 0,
+            "iocs_extracted_total": 0,
+            "iocs_kept_total": 0,
+            "siem_searches_total": 0,
+            "siem_searches_completed": 0,
+            "siem_events_total": 0,
+        }
+
+        if not pkg_ids:
+            return await _add_global_threat_intel_summary(stats)
+
+        placeholders = ",".join("?" for _ in pkg_ids)
+
+        # ── Runs (hunting_packages) — model breakdown + per-run JSON counts ──
+        cur = await db.execute(
+            "SELECT hunt_package_id, llm_model, hypotheses, hunting_leads, "
+            "       query_drafts, step_logs "
+            f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders})",
+            pkg_ids,
+        )
+        run_rows = await cur.fetchall()
+        await cur.close()
+
+        hunts_by_model: dict[str, set[str]] = {}
+        for r in run_rows:
+            model = r["llm_model"] or "unknown"
+            stats["runs_by_model"][model] = stats["runs_by_model"].get(model, 0) + 1
+            hunts_by_model.setdefault(model, set()).add(r["hunt_package_id"])
+            for field, key in (
+                ("hypotheses", "hypotheses_total"),
+                ("hunting_leads", "hunting_leads_total"),
+                ("query_drafts", "queries_total"),
+            ):
+                try:
+                    items = _json.loads(r[field] or "[]")
+                except Exception:  # noqa: BLE001
+                    items = []
+                stats[key] += len(items) if isinstance(items, list) else 0
+
+            phases, _elapsed = _parse_step_logs(r["step_logs"])
+            for phase in phases or []:
+                if phase.get("step") == "siem_fetch" and phase.get("item_count") is not None:
+                    stats["siem_events_total"] += int(phase["item_count"])
+
+        stats["runs_total"] = len(run_rows)
+        stats["hunts_by_model"] = {m: len(ids) for m, ids in hunts_by_model.items()}
+
+        # ── Evidence, by type ────────────────────────────────────────────────
+        cur = await db.execute(
+            "SELECT item_type, COUNT(*) AS n FROM evidence_items "
+            f"WHERE hunt_package_id IN ({placeholders}) GROUP BY item_type",
+            pkg_ids,
+        )
+        for r in await cur.fetchall():
+            stats["evidence_by_type"][r["item_type"]] = r["n"]
+            stats["evidence_total"] += r["n"]
+        await cur.close()
+
+        # ── Extracted IOCs ───────────────────────────────────────────────────
+        cur = await db.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN action = 'remove' THEN 1 ELSE 0 END) AS removed "
+            f"FROM extracted_iocs WHERE hunt_package_id IN ({placeholders})",
+            pkg_ids,
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        total_iocs = row["total"] or 0
+        removed_iocs = row["removed"] or 0
+        stats["iocs_extracted_total"] = total_iocs
+        stats["iocs_kept_total"] = total_iocs - removed_iocs
+
+        # ── SIEM execution activity (task_results) ──────────────────────────
+        cur = await db.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed "
+            f"FROM task_results WHERE hunt_package_id IN ({placeholders})",
+            pkg_ids,
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        stats["siem_searches_total"] = row["total"] or 0
+        stats["siem_searches_completed"] = row["completed"] or 0
+
+    return await _add_global_threat_intel_summary(stats)
+
+
+async def _add_global_threat_intel_summary(stats: dict[str, Any]) -> dict[str, Any]:
+    """Attach the cross-hunt Threat Intel summary (global, unfiltered) to a
+    dashboard stats dict. Split out so the empty-``pkg_ids`` early return in
+    ``get_hunt_dashboard_stats`` still gets this section rather than omitting
+    it entirely."""
+    from backend.db.manager import get_summary
+
+    stats["threat_actors_total"] = len(await aggregate_threat_actors())
+    stats["campaigns_total"] = len(await aggregate_campaigns())
+    stats["malware_families_total"] = len(await aggregate_malware_families())
+    stats["ttps_total"] = len(await aggregate_ttps())
+    stats["sources_processed"] = sum(
+        1 for row in await get_summary() if row.get("source") != "__total__"
+    )
+    return stats
+
+
 async def update_hunt_package(
     pkg_id: str, name: str | None = None, description: str | None = None, status: str | None = None
 ) -> dict[str, Any] | None:

@@ -102,6 +102,21 @@ async def list_packages(
     return await th_db.list_hunt_packages(search=search, date_from=date_from, date_to=date_to)
 
 
+@router.get("/dashboard")
+async def get_dashboard(
+    search: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+) -> dict:
+    """Aggregate stats for the Threat Hunting Dashboard (issue-local-032) —
+    the default view of the Threat Hunting module. *search*/*date_from*/
+    *date_to* use the same deep-search and date-range rules as GET
+    /packages, so the counts always reflect the same filtered set the
+    package list would show for the same query.
+    """
+    return await th_db.get_hunt_dashboard_stats(search=search, date_from=date_from, date_to=date_to)
+
+
 @router.post("/packages", response_model=HuntPackageOut, status_code=201)
 async def create_package(body: HuntPackageCreate, request: Request) -> dict:
     """Create a new hunt package in draft status."""
