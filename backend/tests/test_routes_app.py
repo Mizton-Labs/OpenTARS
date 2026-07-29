@@ -422,3 +422,47 @@ def test_delete_logo(client):
     assert resp.status_code == 200
     assert resp.json() == {"has_logo": False}
     assert client.get("/api/app/logo").status_code == 404
+
+
+# ── Project docs (issue-local-030) ────────────────────────────────────────────
+
+
+def test_get_doc_returns_real_file_content(client):
+    """Reads the real repo docs/ tree (routes_app._DOCS_DIR is independent of
+    the client fixture's _PROJECT_ROOT redirect — same pre-existing pattern as
+    resolve_logo_file() having its own module-level path, see the client
+    fixture's docstring above)."""
+    resp = client.get("/api/app/docs/api-threat-hunting")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["doc_id"] == "api-threat-hunting"
+    assert "# Threat Hunting API Reference" in body["content"]
+
+
+def test_get_doc_unknown_id_is_404(client):
+    resp = client.get("/api/app/docs/unknown-doc")
+    assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "doc_id",
+    [
+        # %2F-encoded so httpx sends it verbatim rather than collapsing the
+        # traversal client-side before the request is even made.
+        "..%2F..%2F..%2F..%2Fetc%2Fpasswd",
+        "application.yaml",
+        "main",
+    ],
+)
+def test_get_doc_rejects_non_allowlisted_ids(client, doc_id):
+    """doc_id is only ever used as a dict-lookup key, never concatenated into
+    a filesystem path — confirms path-traversal-shaped or otherwise-real-
+    looking-but-unlisted ids can't read anything outside the allowlist."""
+    resp = client.get(f"/api/app/docs/{doc_id}")
+    assert resp.status_code == 404
+
+
+def test_get_doc_allowlisted_id_missing_on_disk_is_404(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(routes_app, "_DOCS_DIR", tmp_path / "nonexistent-docs-dir")
+    resp = client.get("/api/app/docs/api-threat-hunting")
+    assert resp.status_code == 404

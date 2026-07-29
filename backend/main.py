@@ -185,7 +185,10 @@ app.include_router(feed_router)
 #   - 'feed-sender' (listener-only machine): POST /api/ingest/listener only
 #     (issue-local-002: replaces old 'normal'/'sender' roles).
 # Non-API paths (the SPA shell + static assets) are always served so the login
-# page can load; the SPA itself redirects to /login when unauthenticated.
+# page can load; the SPA itself redirects to /login when unauthenticated. The
+# one exception is FastAPI's own docs/redoc/openapi.json (issue-local-030,
+# see _DOCS_PATHS below), which — despite living outside /api/ — are gated
+# the same as everything else once auth is enabled.
 
 # Exact public API paths (method-checked below).
 _PUBLIC_API_PATHS = frozenset(
@@ -231,6 +234,9 @@ _VIEWER_GET_PREFIXES = (
     "/api/smart-mappings/active",
     # Threat Hunting read-only access (issue-local-002, Phase 1)
     "/api/threat-hunting/packages",
+    # Project docs (About page's API Docs tab, issue-local-030) — read-only,
+    # allowlisted content (see routes_app.get_doc).
+    "/api/app/docs",
 )
 
 # POST endpoints a 'threat-viewer' (read-only) account may reach. The
@@ -310,6 +316,17 @@ def _role_allowed(role: str, method: str, path: str) -> bool:
     return False
 
 
+# FastAPI auto-registers its interactive docs (Swagger UI), ReDoc, and the raw
+# OpenAPI schema OUTSIDE /api/ — the "only guard /api/" bypass below would
+# otherwise leave them fully public regardless of auth_enabled, exposing the
+# entire route/schema surface (including admin/config/user-management routes,
+# not just Threat Hunting) to anyone who requests the URL directly, even
+# though the About page that links to them (issue-local-030) is itself behind
+# the authenticated SPA shell. Require a valid session for these three exact
+# paths, same as everything else once auth is on.
+_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
+
+
 @app.middleware("http")
 async def auth_enforcement(request, call_next):
     if not load_auth_enabled():
@@ -317,6 +334,15 @@ async def auth_enforcement(request, call_next):
 
     method = request.method
     path = request.url.path
+
+    if path in _DOCS_PATHS:
+        if method != "GET":
+            return await call_next(request)
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        user = await resolve_session(token or "")
+        if user is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        return await call_next(request)
 
     # Only guard the API surface; serve the SPA/static unconditionally.
     if not path.startswith("/api/"):

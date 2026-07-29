@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
+
+- **New: a tab bar on the About page** — General (the existing version/license content, now topped by
+  a prominent, medium-sized OpenTARS logo header) and a new API Docs tab.
+- **New: API Docs tab.** Renders the Threat Hunting API reference
+  (`docs/api-threat-hunting.md`) as real formatted HTML — headings, tables, code blocks — styled with
+  the app's own theme tokens rather than a generic typography plugin, so it matches every theme
+  (Classic/Energy/Light/Ocean) instead of a mismatched hardcoded palette. Below it, FastAPI's own
+  interactive Swagger UI is embedded via an iframe (plus an "open in a new tab" link), generated
+  live from the running server's OpenAPI schema.
+- **Fixed (security): FastAPI's `/docs`, `/redoc`, and `/openapi.json` were completely
+  unauthenticated**, even with auth enabled — they're auto-registered outside `/api/`, so the
+  existing "only guard `/api/`" bypass left the entire route/schema surface (including admin,
+  configuration, and user-management routes, not just Threat Hunting) reachable by anyone who
+  requested the URL directly. They now require the same valid session as everything else once auth
+  is enabled — any authenticated role, matching the About page's own accessibility.
+- Both the Swagger UI and the new `GET /api/app/docs/{doc_id}` endpoint that feeds the rendered
+  reference resolve correctly under a configured reverse-proxy base prefix, same as the existing
+  branding-logo/base-prefix handling. `doc_id` is allowlisted server-side (a fixed dict lookup, never
+  concatenated into a filesystem path), so it can't become an arbitrary-file-read primitive.
+
 ### Added — Programmatic API access with scoped keys (issue-local-029)
 
 - **New: API access keys**, configurable from Configuration → General → API Access. A master

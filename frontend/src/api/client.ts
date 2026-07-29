@@ -39,6 +39,16 @@ export function logoSrc(cacheBust?: number | string): string {
   return `${BASE}/app/logo${suffix}`
 }
 
+/**
+ * URL for FastAPI's own interactive Swagger UI (issue-local-030's About ->
+ * API Docs tab). Lives OUTSIDE /api/ (auto-registered by FastAPI), so it
+ * can't reuse BASE — same relative-vs-prefixed resolution as logoSrc above,
+ * just rooted at the bare prefix instead of "<prefix>/api".
+ */
+export function swaggerUiSrc(): string {
+  return _prefix ? `${_prefix}/docs` : 'docs'
+}
+
 // prompts-045: global 401 handler. The AuthProvider registers a callback so a
 // 401 from ANY request (e.g. an expired session) drops the cached user and
 // bounces the SPA to /login. Kept module-level so the plain `request` helper
@@ -761,6 +771,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ app_title: value }),
     }),
+
+  // Application — allowlisted project docs (About page's API Docs tab, issue-local-030)
+  getDoc: (docId: string) =>
+    request<{ doc_id: string; content: string }>(`/app/docs/${encodeURIComponent(docId)}`),
 
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.

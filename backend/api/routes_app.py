@@ -1,7 +1,8 @@
 """
 Application-config routes — read and update application.yaml.
 
-Exposes app_base_prefix, pagination cap, and the branding logo. Lives behind
+Exposes app_base_prefix, pagination cap, the branding logo, and allowlisted
+project docs (About page's API Docs tab, issue-local-030). Lives behind
 /api/app/.
 """
 
@@ -59,6 +60,7 @@ router = APIRouter(prefix="/api/app", tags=["app"])
 # sniffed into an executable type.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _BRANDING_DIR = _PROJECT_ROOT / "data" / "branding"
+_DOCS_DIR = _PROJECT_ROOT / "docs"
 _LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2 MiB
 _LOGO_ALLOWED: dict[str, str] = {
     "image/png": ".png",
@@ -628,6 +630,29 @@ async def delete_logo(
         old.unlink(missing_ok=True)
     save_logo_path("")
     return {"has_logo": False}
+
+
+# ── Project documentation (issue-local-030) ──────────────────────────────────
+#
+# Serves an allowlisted project doc's raw Markdown for in-app rendering (the
+# About page's API Docs tab). doc_id is only ever used as a dict lookup key —
+# never concatenated into a filesystem path — so this can't become an
+# arbitrary-file-read primitive regardless of what a caller passes.
+_DOC_ALLOWLIST: dict[str, str] = {
+    "api-threat-hunting": "api-threat-hunting.md",
+}
+
+
+@router.get("/docs/{doc_id}")
+async def get_doc(doc_id: str) -> dict[str, str]:
+    """Return an allowlisted project doc's raw Markdown content."""
+    filename = _DOC_ALLOWLIST.get(doc_id)
+    if filename is None:
+        raise HTTPException(status_code=404, detail="Unknown document")
+    path = _DOCS_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"doc_id": doc_id, "content": path.read_text(encoding="utf-8")}
 
 
 # ── Config drift (issue-local-024 follow-up) ─────────────────────────────────
