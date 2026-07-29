@@ -1,13 +1,24 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import SummaryTable from '../components/SummaryTable'
 import EntryTable from '../components/EntryTable'
 import NormalizedTable from '../components/NormalizedTable'
+import { useLocation } from 'react-router-dom'
 import { clsx } from 'clsx'
 
 type Tab = 'summary' | 'raw' | 'normalized'
 
+const TABS: Tab[] = ['summary', 'raw', 'normalized']
+
 export default function Viewer() {
   const [activeTab, setActiveTab] = useState<Tab>('summary')
+
+  // issue-local-031: open a specific tab from ?tab=<id>, so a global-search hit
+  // in the raw or normalized store lands on the store it actually matched —
+  // the two are independent, and landing on Summary would hide the match.
+  const requestedTab = new URLSearchParams(useLocation().search).get('tab')
+  useEffect(() => {
+    if (TABS.includes(requestedTab as Tab)) setActiveTab(requestedTab as Tab)
+  }, [requestedTab])
 
   return (
     <div className="p-6 space-y-6">

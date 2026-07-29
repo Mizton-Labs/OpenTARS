@@ -179,15 +179,22 @@ _APP_PRIMER = """\
 OpenTARS (Threat Agentic Research System) is a self-hosted Threat Intelligence and
 Threat Hunting platform. Its main areas are:
 
-- Viewer — browse ingested threat intel in a raw table and a normalized table, with
-  full-text search and a natural-language query box.
+- Threat Intel / Viewer — ingested threat intel lives in two independent stores: a
+  raw table holding entries as they arrived from each feed, and a normalized table
+  holding the same data mapped onto the canonical schema. The same term can match
+  one and not the other. Both are browsable with full-text search and a
+  natural-language query box. Feeds are the configured sources entries arrive from
+  (open threat feeds, local and external feeds, RSS, external API pulls, and a push
+  listener endpoint).
 - Threat Hunting — hunt packages hold evidence (files, URLs, pasted text, watcher
   feeds). Running generation starts an LLM agent pipeline that parses the evidence,
   extracts IOCs, forms hypotheses and drafts SIEM queries. A run can then be
   approved and executed against a configured SIEM, after which reports (Markdown/PDF),
   a Threat Intelligence analysis, and run comparisons become available.
-- Threat Intel Tracking — cross-hunt aggregation of IOCs, CVEs, threat actors,
-  campaigns, malware families and TTPs.
+- Threat Intel Tracking — cross-hunt aggregation built from every hunt's latest
+  Threat Intelligence analysis: IOCs, CVEs, threat actors, campaigns, malware
+  families and MITRE ATT&CK techniques, each linked back to the hunts it was seen
+  in. A hunt can be excluded from the aggregation without deleting it.
 - Watchers — standing rules over incoming intel; each publishes its own feed.
 - Normalizer — maps source fields onto the canonical schema.
 - Configuration — feeds and ingestion, LLM providers, SIEM connectors, users and

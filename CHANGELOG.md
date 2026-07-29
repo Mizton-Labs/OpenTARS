@@ -13,10 +13,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **New: a search button flush in the top-right corner of every page**, opening a right-hand
   drawer that stays fully collapsed until you ask for it. The shell reserves a gutter for it, so it
-  never covers a page's own controls. Search spans the whole application —
-  hunt packages, ingested threat intel, watchers, pages, settings and documentation — and each hit
-  names the section it was found in with a short context snippet, so a result is one click from the
-  place it lives.
+  never covers a page's own controls. Search spans the whole application — hunt packages; the
+  Threat Intel module (both the raw and normalized stores, which are independent, plus the
+  configured feeds); the Threat Intel Tracking submodule (correlated IOCs and CVEs, and the threat
+  actors, campaigns, malware families and MITRE techniques aggregated across hunts, each linked
+  back to the hunts it was seen in); watchers; pages; settings; and documentation. Each hit names
+  the section it was found in with a short context snippet, and opens the exact place it lives —
+  including the right Viewer store, since a raw match and a normalized match are different things.
 - **New: SmartSearch**, a chatbot over the same results, behind a switch that is always visible.
   When no LLM provider is configured the Smart side is greyed out and its tooltip names the setting
   that enables it (Configuration → General → LLM Providers) rather than failing silently.

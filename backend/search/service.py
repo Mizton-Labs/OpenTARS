@@ -212,15 +212,135 @@ async def _search_threat_intel(query: str, role: str | None) -> list[SearchHit]:
         hits.append(
             SearchHit(
                 section="Threat Intel",
-                title=title,
+                title=f"{title} (raw)",
                 snippet=_snippet(body, query),
-                route="/viewer",
+                route="/viewer?tab=raw",
                 # The raw store's feed column is "source" (backend/db/schema.py);
                 # "source_name" is the normalized store's spelling and would
                 # silently be absent from every row here.
                 ref=sanitize_text(row.get("source")) or None,
             )
         )
+    return hits
+
+
+async def _search_normalized(query: str, role: str | None) -> list[SearchHit]:
+    """The normalized threat-intel store.
+
+    Raw and normalized are independent stores — the same term can match rows in
+    one and not the other — so searching only the raw table missed half of the
+    Threat Intel module.
+    """
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.normalizer.db import query_normalized
+
+    rows = await query_normalized(search=query, limit=MAX_PER_SECTION)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        title = sanitize_text(row.get("title")) or sanitize_text(row.get("indicator")) or "(entry)"
+        body = row.get("description") or row.get("tags") or row.get("indicator")
+        hits.append(
+            SearchHit(
+                section="Threat Intel",
+                title=f"{title} (normalized)",
+                snippet=_snippet(body, query),
+                route="/viewer?tab=normalized",
+                ref=sanitize_text(row.get("source_name")) or None,
+            )
+        )
+    return hits
+
+
+async def _search_feeds(query: str, role: str | None) -> list[SearchHit]:
+    """Configured threat-intel feeds, by name and entry count.
+
+    Only the per-source counts are read — never the source *definitions*, which
+    carry request headers and API tokens and stay admin-only elsewhere.
+    """
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.db.manager import get_summary
+
+    hits: list[SearchHit] = []
+    for row in await get_summary():
+        name = sanitize_text(row.get("source"))
+        if not name or name == "__total__" or not _matches(query, name):
+            continue
+        hits.append(
+            SearchHit(
+                section="Feeds",
+                title=name,
+                snippet=f"{row.get('count', 0)} ingested entries",
+                route="/viewer",
+                ref=name,
+            )
+        )
+        if len(hits) >= MAX_PER_SECTION:
+            break
+    return hits
+
+
+async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
+    """The Threat Intel Tracking submodule: correlated IOCs and CVEs, plus the
+    threat actors, campaigns, malware families and MITRE techniques aggregated
+    across every hunt's latest Threat Intelligence analysis.
+
+    Researcher and above, matching the Tracking pages themselves — the tracking
+    routes sit outside the viewer's ``/api/threat-hunting/packages`` allowlist.
+    """
+    if not role_allows(role, "threat-researcher"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    def _hunts_of(record: dict[str, Any]) -> str:
+        names = [
+            sanitize_text(s.get("hunt_id_display") or s.get("name"))
+            for s in (record.get("sources") or [])
+        ]
+        seen = [n for n in names if n]
+        return ", ".join(seen[:4]) if seen else "no linked hunt"
+
+    hits: list[SearchHit] = []
+
+    # IOCs and CVEs share one aggregation; the store already filters by substring.
+    for row in await th_db.list_correlated_iocs(search=query, limit=MAX_PER_SECTION):
+        ioc = sanitize_text(row.get("ioc"))
+        kind = sanitize_text(row.get("ioc_type")) or "ioc"
+        hits.append(
+            SearchHit(
+                section="Threat Intel Tracking",
+                title=f"{ioc} ({kind})",
+                snippet=f"Seen in: {_hunts_of(row)}",
+                route="/threat-hunting/tracking",
+                ref=ioc or None,
+            )
+        )
+        if len(hits) >= MAX_PER_SECTION:
+            return hits
+
+    labelled: list[tuple[str, list[dict[str, Any]]]] = [
+        ("threat actor", await th_db.aggregate_threat_actors()),
+        ("campaign", await th_db.aggregate_campaigns()),
+        ("malware family", await th_db.aggregate_malware_families()),
+        ("technique", await th_db.aggregate_ttps()),
+    ]
+    for label, records in labelled:
+        for record in records:
+            name = sanitize_text(record.get("name") or record.get("technique_id"))
+            if not name or not _matches(query, name, record.get("description")):
+                continue
+            hits.append(
+                SearchHit(
+                    section="Threat Intel Tracking",
+                    title=f"{name} ({label})",
+                    snippet=f"Seen in: {_hunts_of(record)}",
+                    route="/threat-hunting/tracking",
+                    ref=name,
+                )
+            )
+            if len(hits) >= MAX_PER_SECTION:
+                return hits
     return hits
 
 
@@ -314,6 +434,9 @@ async def global_search(query: str, *, role: str | None, limit: int = MAX_TOTAL_
     collected: list[SearchHit] = [
         *await _search_hunts(cleaned, role),
         *await _search_threat_intel(cleaned, role),
+        *await _search_normalized(cleaned, role),
+        *await _search_tracking(cleaned, role),
+        *await _search_feeds(cleaned, role),
         *await _search_watchers(cleaned, role),
         # The catalogue spans several sections (Navigation, Settings, Docs), so
         # hits are grouped by their own section below rather than by source.
@@ -333,7 +456,16 @@ async def global_search(query: str, *, role: str | None, limit: int = MAX_TOTAL_
 
     # Stable, most-actionable-first ordering; any section not listed (a future
     # source) still appears, after the known ones.
-    order = ["Threat Hunting", "Threat Intel", "Watchers", "Navigation", "Settings", "Docs"]
+    order = [
+        "Threat Hunting",
+        "Threat Intel",
+        "Threat Intel Tracking",
+        "Feeds",
+        "Watchers",
+        "Navigation",
+        "Settings",
+        "Docs",
+    ]
     ranked = sorted(buckets, key=lambda s: (order.index(s) if s in order else len(order), s))
 
     # Spend the overall limit round-robin across sections, so trimming thins

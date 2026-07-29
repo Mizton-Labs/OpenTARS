@@ -60,13 +60,60 @@ def isolated_sources(monkeypatch):
             }
         ]
 
+    async def fake_normalized(*, search=None, limit=10, **_kw):
+        rows = [
+            {
+                "title": "Lazarus normalized entry",
+                "description": "Normalized view of the Lazarus beacon",
+                "indicator": "203.0.113.10",
+                "source_name": "vendor_feed",
+            }
+        ]
+        return [r for r in rows if not search or search.lower() in str(r).lower()][:limit]
+
+    async def fake_summary():
+        return [
+            {"source": "vendor_feed", "count": 42},
+            {"source": "otx_pulses", "count": 7},
+            {"source": "__total__", "count": 49},
+        ]
+
+    async def fake_correlated_iocs(*, search=None, limit=10, **_kw):
+        rows = [
+            {
+                "ioc": "203.0.113.10",
+                "ioc_type": "ip",
+                "sources": [{"id": "pkg-1", "hunt_id_display": "TH01", "name": "Lazarus sweep"}],
+            }
+        ]
+        return [r for r in rows if not search or search.lower() in str(r).lower()][:limit]
+
+    async def fake_actors():
+        return [
+            {
+                "name": "Lazarus Group",
+                "sources": [{"id": "pkg-1", "hunt_id_display": "TH01", "name": "Lazarus sweep"}],
+            }
+        ]
+
+    async def fake_empty():
+        return []
+
     import backend.db.manager as manager
     import backend.db.watchers as watchers_db
+    import backend.normalizer.db as norm_db
     import backend.threat_hunting.db as th_db
 
     monkeypatch.setattr(th_db, "list_hunt_packages", fake_packages)
     monkeypatch.setattr(manager, "query_entries", fake_entries)
+    monkeypatch.setattr(manager, "get_summary", fake_summary)
+    monkeypatch.setattr(norm_db, "query_normalized", fake_normalized)
     monkeypatch.setattr(watchers_db, "list_watchers", fake_watchers)
+    monkeypatch.setattr(th_db, "list_correlated_iocs", fake_correlated_iocs)
+    monkeypatch.setattr(th_db, "aggregate_threat_actors", fake_actors)
+    monkeypatch.setattr(th_db, "aggregate_campaigns", fake_empty)
+    monkeypatch.setattr(th_db, "aggregate_malware_families", fake_empty)
+    monkeypatch.setattr(th_db, "aggregate_ttps", fake_empty)
 
 
 def _sections(result) -> dict[str, list[dict]]:
@@ -350,13 +397,19 @@ def test_catalog_hits_are_not_truncated_before_grouping():
     assert len(found.get("Settings", [])) > 2
 
 
-def test_no_section_is_dropped_wholesale_when_the_limit_bites():
-    """Trimming to the overall limit thins sections evenly instead of
-    truncating the last ones out of the response entirely."""
+def test_the_limit_is_spent_round_robin_not_in_source_order():
+    """Trimming to the overall limit thins sections evenly instead of spending
+    the whole budget on the first source and dropping the later sections."""
     generous = _sections(asyncio.run(global_search("e", role="admin", limit=50)))
-    squeezed = _sections(asyncio.run(global_search("e", role="admin", limit=6)))
-    assert len(squeezed) == len(generous), "a whole section disappeared under a tight limit"
-    assert sum(len(h) for h in squeezed.values()) <= 6
+    section_count = len(generous)
+    assert section_count > 1, "fixture should match several sections"
+
+    # Exactly enough budget for one hit each: every section must get its one,
+    # rather than the first section taking them all.
+    squeezed = _sections(asyncio.run(global_search("e", role="admin", limit=section_count)))
+    assert set(squeezed) == set(generous), "a whole section disappeared under a tight limit"
+    assert all(len(hits) == 1 for hits in squeezed.values())
+    assert sum(len(h) for h in squeezed.values()) == section_count
 
 
 def test_threat_intel_hits_carry_the_feed_name():
@@ -469,3 +522,71 @@ def test_smart_answer_returns_markdown_unflattened(monkeypatch):
     result = asyncio.run(smart.smart_answer("hunts", role="admin"))
     assert result["answer"].splitlines()[0] == "### Hunts"
     assert "- TH01" in result["answer"].splitlines()
+
+
+# ── Threat Intelligence coverage (module + Tracking submodule) ────────────────
+
+
+def test_normalized_store_is_searched_not_just_raw():
+    """Raw and normalized are independent stores, so a term can match one and
+    not the other — searching only raw missed half the Threat Intel module."""
+    hits = _sections(asyncio.run(global_search("lazarus", role="admin")))["Threat Intel"]
+    titles = [h["title"] for h in hits]
+    assert any("(raw)" in t for t in titles)
+    assert any("(normalized)" in t for t in titles)
+
+
+def test_threat_intel_hits_deep_link_to_the_store_they_matched():
+    hits = _sections(asyncio.run(global_search("lazarus", role="admin")))["Threat Intel"]
+    routes = {h["title"]: h["route"] for h in hits}
+    assert any(r == "/viewer?tab=raw" for r in routes.values())
+    assert any(r == "/viewer?tab=normalized" for r in routes.values())
+
+
+def test_configured_feeds_are_searchable_by_name():
+    found = _sections(asyncio.run(global_search("otx", role="admin")))
+    assert "Feeds" in found
+    assert found["Feeds"][0]["title"] == "otx_pulses"
+    # The synthetic total row is not a feed.
+    assert all(h["title"] != "__total__" for h in found["Feeds"])
+
+
+def test_tracking_submodule_iocs_and_entities_are_searchable():
+    found = _sections(asyncio.run(global_search("lazarus", role="admin")))
+    tracking = found["Threat Intel Tracking"]
+    titles = " ".join(h["title"] for h in tracking)
+    assert "Lazarus Group (threat actor)" in titles
+    assert all(h["route"] == "/threat-hunting/tracking" for h in tracking)
+
+
+def test_tracking_results_name_the_hunts_they_came_from():
+    """The Tracking dashboard's whole point is the link back to source hunts."""
+    tracking = _sections(asyncio.run(global_search("203.0.113.10", role="admin")))[
+        "Threat Intel Tracking"
+    ]
+    assert any("TH01" in h["snippet"] for h in tracking)
+
+
+def test_tracking_submodule_is_researcher_and_above():
+    """The Tracking routes sit outside the viewer's packages allowlist, so
+    search must not expose the aggregation to a viewer either."""
+    researcher = _sections(asyncio.run(global_search("lazarus", role="threat-researcher")))
+    viewer = _sections(asyncio.run(global_search("lazarus", role="threat-viewer")))
+    assert "Threat Intel Tracking" in researcher
+    assert "Threat Intel Tracking" not in viewer
+
+
+def test_viewer_still_reaches_the_threat_intel_module_itself():
+    """Narrowing Tracking must not have narrowed ordinary Threat Intel."""
+    viewer = _sections(asyncio.run(global_search("lazarus", role="threat-viewer")))
+    assert "Threat Intel" in viewer
+    assert "Feeds" in _sections(asyncio.run(global_search("otx", role="threat-viewer")))
+
+
+def test_smart_search_context_includes_threat_intelligence(monkeypatch):
+    """SmartSearch retrieves through the same search, so the new sources reach
+    the chatbot without any separate wiring."""
+    hits = asyncio.run(smart.gather_context("lazarus", role="admin"))
+    sections = {h["section"] for h in hits}
+    assert "Threat Intel" in sections
+    assert "Threat Intel Tracking" in sections
