@@ -221,7 +221,10 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
     expect(moduleGroup).not.toBeNull()
     // The two module sections' links live inside the group...
     expect(moduleGroup?.contains(screen.getByRole('link', { name: /^viewer$/i }))).toBe(true)
-    expect(moduleGroup?.contains(screen.getByRole('link', { name: /threat hunting/i }))).toBe(true)
+    // issue-local-032: "Threat Hunting" the nav item became "Dashboard" +
+    // "Hunt Packages"; either one landing inside the module group proves the
+    // same thing this test checks — use Dashboard, the module's first item.
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /^dashboard$/i }))).toBe(true)
     // ...while Home and the utility items do not.
     expect(moduleGroup?.contains(screen.getByRole('link', { name: /^home$/i }))).toBe(false)
     expect(moduleGroup?.contains(screen.getByRole('link', { name: /configuration/i }))).toBe(false)
@@ -233,7 +236,10 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
     fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }))
     const moduleGroup = document.querySelector('.nav-module-group')
     expect(moduleGroup).not.toBeNull()
-    expect(moduleGroup?.contains(screen.getByRole('link', { name: /threat hunting/i }))).toBe(true)
+    // issue-local-032: "Threat Hunting" the nav item became "Dashboard" +
+    // "Hunt Packages"; either one landing inside the module group proves the
+    // same thing this test checks — use Dashboard, the module's first item.
+    expect(moduleGroup?.contains(screen.getByRole('link', { name: /^dashboard$/i }))).toBe(true)
   })
 })
 

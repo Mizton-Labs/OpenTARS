@@ -9,6 +9,90 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Dashboard charts, pagination (issue-local-034)
+
+- **New: two timeline charts lead the Dashboard** — Hunts per Day and IOCs per Day, both respecting
+  the page's search/time-range filter the same way every other hunt-scoped figure does.
+- **Evidence by Type and Packages by Status are now pie charts** instead of bar breakdowns, each
+  slice labeled with its count and share; still link through to their Data Explorer category.
+- **Runs by Model and Hunt Packages by Model are now paginated at 10 rows per page** — an
+  installation with many models no longer turns those two panels into a very long scroll.
+- **New: pagination in the Data Explorer**, with a page-size dropdown (25/50/100/200, default 25).
+- **The Data Explorer's category tabs now wrap onto a second row** instead of scrolling
+  horizontally — 13 categories never fit one row at any reasonable width.
+- No new charting dependency: the timeline charts are hand-rolled SVG and the pie charts are a CSS
+  `conic-gradient`, consistent with the rest of the app's no-charting-library approach.
+
+### Added — Data Explorer, and Dashboard fixes/reordering (issue-local-033)
+
+- **New: "Data Explorer" sidebar entry**, below Threat Intel Tracking — the row-level data behind
+  every Dashboard panel/stat card, one tab per category (Hunt Packages, Runs, Evidence, Hypotheses,
+  Hunting Leads, Queries Drafted, IOCs Extracted, SIEM Searches, and the five Threat Intel
+  categories), with its own search box. Every panel and stat card on the Dashboard now links here
+  with the matching tab pre-selected, so "what does this number actually consist of" is always one
+  click away.
+- **Dashboard reordering**: the Threat Intel summary now leads the page (previously last), and
+  within the remaining breakdown panels, Evidence by Type and Packages by Status now come before
+  the two model breakdowns (Runs by Model, Hunt Packages by Model).
+- **Fixed: "View Hunt Packages" on the Dashboard led to a blank page.** The Dashboard is mounted at
+  the bare `threat-hunting` route (a single path segment); a relative `../packages` navigation from
+  a single-segment route resolves by climbing to the root and appending "packages" — landing on the
+  nonexistent `/packages`, not `/threat-hunting/packages`. Fixed by navigating to the absolute path.
+
+### Added — Assistant chat sessions (issue-local-032)
+
+- **The Assistant/SmartSearch chatbot now remembers conversations.** Every conversation is a
+  session, auto-created under a timestamped name (`TARS-assistant-YYYYMMDD-HHMMSS`) the first time
+  you ask a question, and auto-saved after every completed turn — nothing to remember to do
+  yourself. A top bar (New session, Save session — set a name, Export, Delete, and a picker over
+  your saved sessions) is available in **both** places the chat lives: the full-page Assistant view
+  and the search drawer's Smart tab. They are the same top bar and, more importantly, the same
+  live conversation — asking a question in one and switching to the other continues it, rather than
+  finding two independent chats that happen to share code.
+- **A new session starts whenever you navigate to a different section of the app** (e.g. Viewer →
+  Threat Hunting, or Assistant → Configuration) — the conversation you were having is not lost, it
+  was already saved turn-by-turn and stays in your session list. Moving between pages *within* the
+  same section (e.g. the Threat Hunting Dashboard → Hunt Packages) does not start a new one.
+- **Export as Markdown, JSON, or PDF.** Markdown and PDF download directly from the server; JSON is
+  built client-side from the already-fetched session, the same pattern the Threat Hunting report
+  downloads already use. The PDF export reuses the report renderer's print-friendly palette.
+- **New: an emphasized "Open in Assistant" button in the search drawer's Smart tab** — jumps to the
+  full-page Assistant view without losing the conversation (it's the same session, not a handoff).
+- Sessions are private to the signed-in user (or, in open/no-auth mode, shared the same way
+  everything else is when there's no signed-in identity to separate them) — every read, update, and
+  delete is filtered by owner at the database level, so a session id alone is never enough to reach
+  someone else's conversation. Session content is sanitized the same way a live answer already is,
+  and every field (name, message count, per-message length, sessions kept per person) is bounded.
+
+### Added — Threat Hunting Dashboard (issue-local-032)
+
+- **New: a "Dashboard" section in the Threat Hunting sidebar group, now the module's default
+  view.** The bare Threat Hunting entry point (`/threat-hunting`) now shows a metrics overview
+  instead of the hunt-package list: hunt package / run counts (with a status breakdown), evidence
+  items (by type), hypotheses, hunting leads, queries drafted, IOCs extracted (and how many were
+  kept after sanitization), SIEM searches executed and events retrieved, runs and hunts broken
+  down by model, and a Threat Intel summary (threat actors, campaigns, malware families, MITRE
+  techniques, feed sources processed) aggregated across every hunt.
+- The hunt-package list itself is unchanged — it moved to its own sidebar entry, "Hunt Packages"
+  (`/threat-hunting/packages`), and gained no new behavior. The Dashboard shares its search box and
+  time-range filter (same debounce, same `HuntTimeFilter` component), so the hunt-scoped figures
+  always describe the same set that filter would show in the list.
+- The Threat Intel summary panel is deliberately **not** filtered by the search/date controls —
+  it's a cross-hunt aggregate keyed by deduplicated entity name, the same global-scope convention
+  the Threat Intel Tracking dashboard already uses, not a per-package figure a date range could
+  meaningfully narrow.
+- No new charting dependency: the breakdowns are proportional-width bar rows built from the app's
+  own card/theme tokens, consistent with how every other dashboard-style page in this app already
+  renders without one.
+
+### Fixed — Search drawer contrast in dark themes (issue-local-032)
+
+- The search/SmartSearch drawer's surface (`bg-gray-950`) matched the page background exactly in
+  every dark theme (Classic, Energy, Ocean), so the panel barely read as its own layer over
+  whatever page it was overlaying. Its base surface is now one step lighter in those three themes
+  specifically; Light is unchanged, since its inverted color ramp already separates the two
+  surfaces.
+
 ### Added — Global search and SmartSearch chatbot (issue-local-031)
 
 - **New: a search button flush in the top-right corner of every page**, opening a right-hand

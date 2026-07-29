@@ -27,18 +27,41 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       ...actual.api,
-      search: { query: vi.fn(), status: vi.fn(), smart: vi.fn() },
+      search: {
+        query: vi.fn(),
+        status: vi.fn(),
+        smart: vi.fn(),
+        // issue-local-032: AssistantSessionProvider lists/auto-saves sessions
+        // alongside the chat itself.
+        sessions: {
+          list: vi.fn().mockResolvedValue([]),
+          create: vi.fn(),
+          get: vi.fn(),
+          update: vi.fn(),
+          delete: vi.fn(),
+          downloadMarkdownUrl: vi.fn(),
+          downloadPdfUrl: vi.fn(),
+        },
+      },
     },
   }
 })
 
 import { api } from '../api/client'
 import Assistant from '../pages/Assistant'
+import { AssistantSessionProvider } from '../components/AssistantSessionProvider'
 
 const mocked = api.search as unknown as {
   query: ReturnType<typeof vi.fn>
   status: ReturnType<typeof vi.fn>
   smart: ReturnType<typeof vi.fn>
+  sessions: {
+    list: ReturnType<typeof vi.fn>
+    create: ReturnType<typeof vi.fn>
+    get: ReturnType<typeof vi.fn>
+    update: ReturnType<typeof vi.fn>
+    delete: ReturnType<typeof vi.fn>
+  }
 }
 
 function renderPage() {
@@ -46,7 +69,9 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <Assistant />
+        <AssistantSessionProvider>
+          <Assistant />
+        </AssistantSessionProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )

@@ -97,11 +97,20 @@ _PAGES: list[CatalogEntry] = [
         keywords=("entries", "raw", "normalized", "browse", "events"),
     ),
     _e(
+        "page:th-dashboard",
+        "Navigation",
+        "Threat Hunting Dashboard",
+        "Metrics overview: hunt packages, runs, evidence, IOCs, hypotheses, "
+        "hunting leads, queries, and threat intel identified across hunts.",
+        "/threat-hunting",
+        keywords=("dashboard", "metrics", "stats", "kpi", "overview", "hunts"),
+    ),
+    _e(
         "page:threat-hunting",
         "Navigation",
-        "Threat Hunting",
+        "Hunt Packages",
         "Create hunt packages, add evidence, run the agent pipeline, and read reports.",
-        "/threat-hunting",
+        "/threat-hunting/packages",
         keywords=("hunts", "hunt packages", "investigations"),
     ),
     _e(
@@ -113,6 +122,15 @@ _PAGES: list[CatalogEntry] = [
         "/threat-hunting/tracking",
         min_role="threat-researcher",
         keywords=("correlation", "aggregate", "actors", "campaigns", "ttp", "cve"),
+    ),
+    _e(
+        "page:th-explorer",
+        "Navigation",
+        "Data Explorer",
+        "Row-level data behind each Dashboard panel — hunt packages, runs, evidence, "
+        "hypotheses, hunting leads, queries, IOCs, SIEM searches, and threat intel.",
+        "/threat-hunting/explorer",
+        keywords=("explorer", "data", "list", "rows", "drill down"),
     ),
     _e(
         "page:normalizer",

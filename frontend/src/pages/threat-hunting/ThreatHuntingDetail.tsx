@@ -15,7 +15,10 @@ export default function ThreatHuntingDetail() {
   return (
     <HuntDetail
       pkgId={id}
-      onBack={() => navigate('..', { relative: 'path' })}
+      // issue-local-032: '..' now resolves to the Dashboard, not the package
+      // list — this page is only reached FROM the package list (or a direct
+      // link), so "back" should return there, not to the Dashboard.
+      onBack={() => navigate('../packages', { relative: 'path' })}
     />
   )
 }

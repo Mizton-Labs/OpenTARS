@@ -471,6 +471,32 @@ export interface SmartAnswer {
   used_context: number
 }
 
+// ── Assistant chat sessions (issue-local-032) ───────────────────────────────
+
+export interface AssistantChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  sources?: SearchHit[]
+  failed?: boolean
+}
+
+/** List-view shape — no `messages`, kept light for a session picker. */
+export interface AssistantSessionSummary {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
+export interface AssistantSession {
+  id: string
+  name: string
+  messages: AssistantChatMessage[]
+  created_at: string
+  updated_at: string
+}
+
 /**
  * Password policy published by GET /api/auth/status (prompts-046).
  * The backend (_validate_password) is the source of truth; the SPA mirrors
@@ -835,6 +861,27 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ question, history }),
       }),
+    // Assistant chat sessions (issue-local-032) — save/rename/delete/export a
+    // saved SmartSearch/Assistant conversation. Scoped server-side to the
+    // caller's own identity.
+    sessions: {
+      list: () => request<AssistantSessionSummary[]>('/search/sessions'),
+      create: (body: { name?: string; messages?: AssistantChatMessage[] } = {}) =>
+        request<AssistantSession>('/search/sessions', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      get: (id: string) => request<AssistantSession>(`/search/sessions/${encodeURIComponent(id)}`),
+      update: (id: string, body: { name?: string; messages?: AssistantChatMessage[] }) =>
+        request<AssistantSession>(`/search/sessions/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        }),
+      delete: (id: string) =>
+        request<void>(`/search/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      downloadMarkdownUrl: (id: string) => `${BASE}/search/sessions/${encodeURIComponent(id)}/markdown`,
+      downloadPdfUrl: (id: string) => `${BASE}/search/sessions/${encodeURIComponent(id)}/pdf`,
+    },
   },
 
   // Application — instance-wide default UI theme (issue-local-016). Public
@@ -1198,6 +1245,33 @@ export const api = {
       if (params.date_to) q.set('date_to', params.date_to)
       const qs = q.toString()
       return request<THuntPackage[]>(`/threat-hunting/packages${qs ? `?${qs}` : ''}`)
+    },
+    // issue-local-032: Threat Hunting Dashboard aggregate stats — same
+    // search/date-range filter shape as listPackages, applied to the same
+    // filtered set of packages.
+    getDashboard: (params: { search?: string; date_from?: string; date_to?: string } = {}) => {
+      const q = new URLSearchParams()
+      if (params.search) q.set('search', params.search)
+      if (params.date_from) q.set('date_from', params.date_from)
+      if (params.date_to) q.set('date_to', params.date_to)
+      const qs = q.toString()
+      return request<THDashboardStats>(`/threat-hunting/dashboard${qs ? `?${qs}` : ''}`)
+    },
+    // issue-local-033: Data Explorer — row-level data behind one Dashboard
+    // panel/stat card. Same search/date-range filter shape; date_from/
+    // date_to are ignored server-side for the five Threat Intel categories.
+    getExplorerRows: (
+      category: string,
+      params: { search?: string; date_from?: string; date_to?: string } = {},
+    ) => {
+      const q = new URLSearchParams()
+      if (params.search) q.set('search', params.search)
+      if (params.date_from) q.set('date_from', params.date_from)
+      if (params.date_to) q.set('date_to', params.date_to)
+      const qs = q.toString()
+      return request<ExplorerRow[]>(
+        `/threat-hunting/explorer/${encodeURIComponent(category)}${qs ? `?${qs}` : ''}`,
+      )
     },
     createPackage: (body: { name: string; description?: string }) =>
       request<THuntPackage>('/threat-hunting/packages', {
@@ -2541,6 +2615,79 @@ export interface THTrackingDashboard {
   campaigns: THTrackingCampaign[]
   malware_families: THTrackingMalwareFamily[]
   ttps: THTrackingTtp[]
+}
+
+// issue-local-032: Threat Hunting Dashboard aggregate stats.
+/** issue-local-034: one point of a Dashboard timeline chart. */
+export interface THTimelinePoint {
+  date: string
+  count: number
+}
+
+export interface THDashboardStats {
+  packages_total: number
+  packages_by_status: Record<string, number>
+  hunts_per_day: THTimelinePoint[]
+  runs_total: number
+  runs_by_model: Record<string, number>
+  hunts_by_model: Record<string, number>
+  evidence_total: number
+  evidence_by_type: Record<string, number>
+  hypotheses_total: number
+  hunting_leads_total: number
+  queries_total: number
+  iocs_extracted_total: number
+  iocs_kept_total: number
+  iocs_per_day: THTimelinePoint[]
+  siem_searches_total: number
+  siem_searches_completed: number
+  siem_events_total: number
+  threat_actors_total: number
+  campaigns_total: number
+  malware_families_total: number
+  ttps_total: number
+  sources_processed: number
+}
+
+// issue-local-033: Data Explorer row shape — a superset of every category's
+// fields (each category only ever populates the subset relevant to it).
+export interface ExplorerRow {
+  id?: string
+  hunt_package_id?: string
+  hunt_id_display?: string
+  run_id_display?: string
+  hunt_name?: string
+  name?: string
+  status?: string
+  llm_model?: string
+  generation_status?: string | null
+  research_effort?: string | null
+  item_type?: string
+  label?: string
+  ioc?: string
+  ioc_type?: string
+  action?: string
+  noise_score?: number
+  task_type?: string
+  siem_connector?: string
+  query_text?: string
+  title?: string
+  relevance?: string
+  confidence?: number | string
+  priority?: string
+  language?: string
+  query?: string
+  discarded?: boolean
+  created_at?: string
+  completed_at?: string | null
+  source?: string
+  count?: number
+  technique_id?: string
+  technique_name?: string
+  tactic?: string
+  description?: string
+  rationale?: string
+  sources?: { id: string; name: string; hunt_id_display: string }[]
 }
 
 export interface THTrackingHunt {
