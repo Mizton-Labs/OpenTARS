@@ -20,31 +20,16 @@
  * often the malicious indicator itself. Everything here is read-only; there is
  * no action the drawer can take on the user's behalf.
  */
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Search, X, Sparkles, Loader2, CornerDownLeft, AlertTriangle } from 'lucide-react'
-import { api, type SearchHit, type SearchResults, type SmartTurn } from '../api/client'
-
-// Lazy: pulls in react-markdown/remark-gfm, which is only needed once an
-// answer arrives. The drawer mounts on every Threat Hunting page, so a static
-// import would put the whole Markdown stack in the bundle those pages load
-// even for users who never open Smart mode.
-const MarkdownMessage = lazy(() => import('./MarkdownMessage'))
+import { Search, X, Sparkles, Loader2 } from 'lucide-react'
+import { api, type SearchHit, type SearchResults } from '../api/client'
+import { SmartChatPanel } from './SmartChatPanel'
+import { useSmartChat } from '../hooks/useSmartChat'
 
 type Mode = 'normal' | 'smart'
-
-/** Mirrors MAX_HISTORY_TURNS in backend/search/smart.py — the server keeps this
- *  many prior turns, so sending more is wasted payload that can trip its bound. */
-const MAX_HISTORY_TURNS = 6
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  sources?: SearchHit[]
-  failed?: boolean
-}
 
 export default function SmartSearchDrawer() {
   const [open, setOpen] = useState(false)
@@ -54,21 +39,12 @@ export default function SmartSearchDrawer() {
   const [term, setTerm] = useState('')
   const [debounced, setDebounced] = useState('')
 
-  // Chat state
-  const [question, setQuestion] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [thinking, setThinking] = useState(false)
+  // Chat state — shared with the full-page Assistant view.
+  const { status, smartAvailable, question, setQuestion, messages, thinking, transcriptRef, ask } =
+    useSmartChat()
 
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
-  const transcriptRef = useRef<HTMLDivElement>(null)
-
-  const { data: status } = useQuery({
-    queryKey: ['smart-search-status'],
-    queryFn: api.search.status,
-    staleTime: 60_000,
-  })
-  const smartAvailable = status?.available ?? false
 
   // Debounce so typing doesn't fan out a search request per keystroke.
   useEffect(() => {
@@ -96,57 +72,9 @@ export default function SmartSearchDrawer() {
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  // Keep the newest turn in view. scrollTo is not available everywhere (jsdom
-  // among others), so fall back to the universally supported scrollTop.
-  useEffect(() => {
-    const el = transcriptRef.current
-    if (!el) return
-    if (typeof el.scrollTo === 'function') el.scrollTo({ top: el.scrollHeight })
-    else el.scrollTop = el.scrollHeight
-  }, [messages, thinking])
-
   function goTo(hit: SearchHit) {
     setOpen(false)
     navigate(hit.route)
-  }
-
-  async function ask() {
-    const asked = question.trim()
-    if (!asked || thinking) return
-
-    // Only the text of prior turns is replayed — never sources or metadata.
-    // Two things matter here:
-    //   - failed bubbles hold an error string, not an answer; replaying them
-    //     would feed "502 Bad Gateway: {...}" back as if the assistant said it;
-    //   - the server keeps only the last few turns anyway and rejects an
-    //     oversized list outright, so an unbounded transcript would start
-    //     failing mid-conversation and, because each failure is appended, never
-    //     recover. Trim to the same window the server keeps.
-    const history: SmartTurn[] = messages
-      .filter((m) => !m.failed)
-      .slice(-MAX_HISTORY_TURNS)
-      .map((m) => ({ role: m.role, content: m.content }))
-    setMessages((prev) => [...prev, { role: 'user', content: asked }])
-    setQuestion('')
-    setThinking(true)
-    try {
-      const reply = await api.search.smart(asked, history)
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: reply.answer, sources: reply.sources },
-      ])
-    } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: e instanceof Error ? e.message : String(e),
-          failed: true,
-        },
-      ])
-    } finally {
-      setThinking(false)
-    }
   }
 
   return (
@@ -249,7 +177,7 @@ export default function SmartSearchDrawer() {
                 onPick={goTo}
               />
             ) : (
-              <SmartMode
+              <SmartChatPanel
                 inputRef={inputRef}
                 question={question}
                 onQuestion={setQuestion}
@@ -344,131 +272,6 @@ function NormalMode({
             </ul>
           </div>
         ))}
-      </div>
-    </>
-  )
-}
-
-// ── Smart search (chat) ──────────────────────────────────────────────────────
-
-function SmartMode({
-  inputRef,
-  question,
-  onQuestion,
-  messages,
-  thinking,
-  transcriptRef,
-  onAsk,
-  onPick,
-}: {
-  inputRef: React.RefObject<HTMLInputElement>
-  question: string
-  onQuestion: (v: string) => void
-  messages: ChatMessage[]
-  thinking: boolean
-  transcriptRef: React.RefObject<HTMLDivElement>
-  onAsk: () => void
-  onPick: (hit: SearchHit) => void
-}) {
-  return (
-    <>
-      <div ref={transcriptRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-        {messages.length === 0 && !thinking && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">
-              Ask about this installation — your hunts, the threat intel you have ingested,
-              or how a part of the product works.
-            </p>
-            <p className="text-[11px] text-gray-600">
-              Answers come only from what you already have access to, and the assistant
-              cannot change anything.
-            </p>
-          </div>
-        )}
-
-        {messages.map((message, i) => (
-          <div
-            key={i}
-            className={clsx(
-              'rounded-lg px-2.5 py-2 text-xs leading-relaxed',
-              message.role === 'user'
-                ? 'ml-6 bg-brand-900/20 border border-brand-800/40 text-gray-200'
-                : 'mr-2 bg-gray-800/50 border border-gray-800 text-gray-300',
-              message.failed && 'border-red-800/50 text-red-400',
-            )}
-          >
-            {message.failed && (
-              <span className="mb-1 flex items-center gap-1.5 font-medium">
-                <AlertTriangle className="w-3.5 h-3.5" /> Could not answer
-              </span>
-            )}
-            {/* The user's own question and error text are shown verbatim; only
-                the assistant's answer is Markdown. MarkdownMessage renders no
-                raw HTML, no images and no clickable links — see its module
-                comment for why that last one matters here. */}
-            {message.role === 'assistant' && !message.failed ? (
-              // Falls back to the same text unformatted, so the answer is
-              // readable immediately rather than blank while the chunk loads.
-              <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}>
-                <MarkdownMessage>{message.content}</MarkdownMessage>
-              </Suspense>
-            ) : (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            )}
-
-            {message.sources && message.sources.length > 0 && (
-              <div className="mt-2 border-t border-gray-800 pt-1.5">
-                <p className="mb-1 text-[10px] uppercase tracking-wide text-gray-600">Sources</p>
-                <div className="flex flex-wrap gap-1">
-                  {message.sources.slice(0, 8).map((hit, j) => (
-                    <button
-                      key={`${hit.route}-${j}`}
-                      type="button"
-                      onClick={() => onPick(hit)}
-                      className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400 hover:border-brand-600 hover:text-brand-300 transition-colors"
-                    >
-                      {hit.section}: {hit.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {thinking && (
-          <p className="flex items-center gap-2 text-xs text-gray-500">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking…
-          </p>
-        )}
-      </div>
-
-      <div className="border-t border-gray-800 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <input
-            ref={inputRef}
-            className="input flex-1"
-            placeholder="Ask a question…"
-            value={question}
-            onChange={(e) => onQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                onAsk()
-              }
-            }}
-            aria-label="Ask Smart Search"
-          />
-          <button
-            type="button"
-            onClick={onAsk}
-            disabled={thinking || question.trim() === ''}
-            className="btn-primary p-2"
-            aria-label="Send question"
-          >
-            <CornerDownLeft className="w-3.5 h-3.5" />
-          </button>
-        </div>
       </div>
     </>
   )

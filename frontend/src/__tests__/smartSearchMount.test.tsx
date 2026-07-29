@@ -76,6 +76,7 @@ describe('search drawer mounting', () => {
     '/configuration',
     '/normalizer',
     '/watchers',
+    '/assistant',
     '/account',
     '/about',
     '/feeds/threat-hunting',

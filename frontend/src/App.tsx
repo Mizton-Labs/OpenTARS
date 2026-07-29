@@ -9,6 +9,7 @@ import Watchers from './pages/Watchers'
 import ThreatHunting from './pages/ThreatHunting'
 import Account from './pages/Account'
 import About from './pages/About'
+import Assistant from './pages/Assistant'
 import Login from './pages/Login'
 import Home from './pages/Home'
 import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
@@ -41,6 +42,7 @@ const PAGE_COMPONENTS: Record<ShellRoute, React.ComponentType> = {
   normalizer: Normalizer,
   watchers: Watchers,
   'threat-hunting': ThreatHunting,
+  assistant: Assistant,
   account: Account,
   about: About,
 }

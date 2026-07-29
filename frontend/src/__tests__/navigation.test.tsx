@@ -120,7 +120,7 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
     localStorage.clear()
   })
 
-  it('restricts a normal user to Viewer, Account and About (prompts-046)', () => {
+  it('restricts a normal user to Viewer, Assistant, Account and About (prompts-046)', () => {
     authState = {
       authEnabled: true,
       isAdmin: false,
@@ -132,10 +132,30 @@ describe('Sidebar behaviour (prompts-045: auth + collapse + logo)', () => {
     // Admin-only entries are hidden from a normal user.
     expect(screen.queryByRole('link', { name: /normalizer/i })).toBeNull()
     expect(screen.queryByRole('link', { name: /configuration/i })).toBeNull()
-    // Viewer, Account and About remain.
+    // Viewer, Assistant, Account and About remain — none of these are admin-only.
     expect(screen.getByRole('link', { name: /viewer/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /assistant/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /account/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /about/i })).toBeInTheDocument()
+  })
+
+  it('places the Assistant entry above Account, pointing at the assistant page', () => {
+    authState = {
+      authEnabled: true,
+      isAdmin: true,
+      isAuthenticated: true,
+      user: { username: 'admin', role: 'admin' },
+      logout: logoutSpy,
+    }
+    renderSidebar(undefined, '/')
+    const link = screen.getByRole('link', { name: /assistant/i }) as HTMLAnchorElement
+    expect(link).toHaveAttribute('href', '/assistant')
+    const utility = link.closest('nav')
+    const links = utility ? Array.from(utility.querySelectorAll('a')) : []
+    const assistantIdx = links.indexOf(link)
+    const accountIdx = links.findIndex((a) => a.getAttribute('href') === '/account')
+    expect(assistantIdx).toBeGreaterThanOrEqual(0)
+    expect(accountIdx).toBeGreaterThan(assistantIdx)
   })
 
   it('shows admin-only entries and Account for an admin user (prompts-046)', () => {
@@ -298,7 +318,7 @@ describe('getAppBasePrefix() three-tier precedence (prompts-020)', () => {
   })
 
   it('exposes the known top-level routes as a single source of truth', () => {
-    expect(KNOWN_ROUTES).toEqual(['home', 'viewer', 'configuration', 'normalizer', 'watchers', 'threat-hunting', 'account', 'about', 'login'])  // issue-local-012: 'home' added
+    expect(KNOWN_ROUTES).toEqual(['home', 'viewer', 'configuration', 'normalizer', 'watchers', 'threat-hunting', 'assistant', 'account', 'about', 'login'])  // issue-local-012: 'home' added
   })
 
   it('returns "" at root with no meta tag', () => {

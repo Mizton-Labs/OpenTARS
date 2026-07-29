@@ -48,6 +48,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   right-to-left override inside an attacker-supplied hostname would otherwise make a result read
   differently from the indicator it actually matched — the wrong failure mode for a tool whose
   output analysts act on.
+- **New: an "Assistant" section in the sidebar**, above Account, giving SmartSearch a permanent,
+  full-height home instead of only living behind the drawer. It is the same chat — same request,
+  history and Markdown-rendering logic as the drawer's Smart tab — both are built on one shared
+  `useSmartChat`/`SmartChatPanel` implementation, so there is a single place that logic can drift.
 
 ### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
 
