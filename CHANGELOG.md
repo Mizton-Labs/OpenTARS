@@ -9,6 +9,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Global search and SmartSearch chatbot (issue-local-031)
+
+- **New: a search button at the top right of the Threat Hunting module**, opening a right-hand
+  drawer that stays fully collapsed until you ask for it. Search spans the whole application —
+  hunt packages, ingested threat intel, watchers, pages, settings and documentation — and each hit
+  names the section it was found in with a short context snippet, so a result is one click from the
+  place it lives.
+- **New: SmartSearch**, a chatbot over the same results, behind a switch that is always visible.
+  When no LLM provider is configured the Smart side is greyed out and its tooltip names the setting
+  that enables it (Configuration → General → LLM Providers) rather than failing silently.
+- **Answers are grounded in this installation.** SmartSearch is retrieval-augmented rather than a
+  model with tools: the question is reduced to search terms, the ordinary search retrieves matching
+  snippets, and the model answers from those plus a short description of the product. It cites the
+  sections it used, and says so when it does not know instead of inventing hunts or indicators.
+- **The guardrails are structural, not prompt-deep.** Retrieval runs as the calling user's role, so
+  the model is only ever shown content that user could already fetch themselves — no phrasing of a
+  question can widen it. There is no tool calling, no query generation and no write path, so no
+  input can execute code or change data. Settings are indexed as names and locations only, never
+  values, so no credential is reachable in the first place. Hunt evidence is adversary-authored by
+  definition (fetched pages, uploaded threat reports), so retrieved text is fenced and the model is
+  told it is data and never instructions. Question length, history depth, snippet count, output
+  tokens and timeout are all bounded, and the reply is rendered as text, never HTML.
+- Search results are stripped of invisible and directional characters before display. A
+  right-to-left override inside an attacker-supplied hostname would otherwise make a result read
+  differently from the indicator it actually matched — the wrong failure mode for a tool whose
+  output analysts act on.
+
 ### Added — About page tabs, in-app API documentation, Swagger UI (issue-local-030)
 
 - **New: a tab bar on the About page** — General (the existing version/license content, now topped by

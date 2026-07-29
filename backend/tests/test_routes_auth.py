@@ -755,3 +755,46 @@ async def test_require_admin_when_enabled_requires_admin(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await deps.require_admin_when_enabled(_Req())
     assert exc.value.status_code == 401
+
+
+# ── Global search / SmartSearch route gating (issue-local-031) ────────────────
+
+
+def test_search_requires_authentication(auth_env):
+    assert _client().get("/api/search?q=hunt").status_code == 401
+    assert _client().get("/api/search/status").status_code == 401
+    assert _client().post("/api/search/smart", json={"question": "hi"}).status_code == 401
+
+
+def test_search_is_reachable_by_every_reading_role(auth_env):
+    """Viewers and researchers may search; results are scoped inside the
+    service, so opening the route does not widen what they can see."""
+    for username, role in (("viewer1", "threat-viewer"), ("res1", "threat-researcher")):
+        asyncio.run(auth_db.create_user(username, service.hash_password("Passw0rd1"), role=role))
+        c = _login(username, "Passw0rd1")
+        assert c.get("/api/search?q=hunt").status_code == 200
+        assert c.get("/api/search/status").status_code == 200
+
+
+def test_search_is_closed_to_the_push_only_role(auth_env):
+    """feed-sender is a machine account with no read access anywhere."""
+    asyncio.run(
+        auth_db.create_user("pusher", service.hash_password("Passw0rd1"), role="feed-sender")
+    )
+    c = _login("pusher", "Passw0rd1")
+    assert c.get("/api/search?q=hunt").status_code == 403
+    assert c.post("/api/search/smart", json={"question": "hi"}).status_code == 403
+
+
+def test_search_results_are_scoped_to_the_callers_role(auth_env):
+    """The same query must not reveal admin-only destinations to a viewer."""
+    asyncio.run(
+        auth_db.create_user("viewer2", service.hash_password("Passw0rd1"), role="threat-viewer")
+    )
+
+    def sections_for(client):
+        body = client.get("/api/search?q=providers").json()
+        return {s["section"] for s in body["sections"]}
+
+    assert "Settings" in sections_for(_login("admin", "Adminpass1"))
+    assert "Settings" not in sections_for(_login("viewer2", "Passw0rd1"))

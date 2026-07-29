@@ -8,6 +8,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import type { AuthUser } from '../api/client'
 
 vi.mock('../api/client', async () => {
@@ -56,7 +57,13 @@ function mockAuth(user: AuthUser) {
 
 function renderWithClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  // Configuration reads ?tab= to deep-link a tab (issue-local-031), so it
+  // needs a router context — it always has one in the app.
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 beforeEach(() => {
@@ -263,7 +270,13 @@ describe('Configuration tab groups (issue-local-016)', () => {
     const { default: Configuration } = await import('../pages/Configuration')
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Configuration />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
 
     // issue-local-029: General is now the default landing group, so User
     // Management is already visible on first paint — confirm it's absent
@@ -313,7 +326,13 @@ describe('Configuration tab groups (issue-local-016)', () => {
     const { default: Configuration } = await import('../pages/Configuration')
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Configuration />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
 
     await user.click(screen.getByRole('button', { name: /^general$/i }))
     expect(await screen.findByText('Default Theme')).toBeInTheDocument()
@@ -358,7 +377,13 @@ describe('Configuration tab groups (issue-local-016)', () => {
     const { default: Configuration } = await import('../pages/Configuration')
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={qc}>{<Configuration />}</QueryClientProvider>)
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Configuration />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
 
     // issue-local-029: General is now the default landing group, so Global
     // Field Defaults is not present until Threat Intel is selected.

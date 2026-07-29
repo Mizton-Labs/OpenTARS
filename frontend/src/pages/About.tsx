@@ -1,5 +1,6 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
 import { GitCommit, GitBranch, Calendar, Tag, Activity, Users, Github, Scale, Loader2 } from 'lucide-react'
@@ -26,6 +27,13 @@ const TABS: { id: AboutTab; label: string }[] = [
 
 export default function About() {
   const [tab, setTab] = useState<AboutTab>('general')
+
+  // issue-local-031: open a specific tab from ?tab=<id>, so a global-search hit
+  // for the API reference or Swagger lands on it rather than on General.
+  const requestedTab = new URLSearchParams(useLocation().search).get('tab')
+  useEffect(() => {
+    if (TABS.some((t) => t.id === requestedTab)) setTab(requestedTab as AboutTab)
+  }, [requestedTab])
 
   // Full-width root (matching the other content-heavy pages); each tab then
   // constrains itself — General stays a narrow reading column, while the API

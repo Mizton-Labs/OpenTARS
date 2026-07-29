@@ -17,7 +17,15 @@ import { Loader2 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import ChangePasswordCard from './ChangePasswordCard'
 import ConfigDriftBanner from './ConfigDriftBanner'
+import SmartSearchDrawer from './SmartSearchDrawer'
 import { useAuth } from '../auth/useAuth'
+
+/** issue-local-031: the search drawer is offered while the Threat Hunting
+ *  module is open. Matching here rather than inside each page gives the list,
+ *  detail, new-hunt and tracking views the same entry point from one mount. */
+function isThreatHuntingRoute(pathname: string): boolean {
+  return /(^|\/)threat-hunting(\/|$)/.test(pathname)
+}
 
 export default function ProtectedLayout() {
   const { loading, authEnabled, user, refresh, logout } = useAuth()
@@ -77,6 +85,7 @@ export default function ProtectedLayout() {
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
+        {isThreatHuntingRoute(location.pathname) && <SmartSearchDrawer />}
       </div>
     </div>
   )

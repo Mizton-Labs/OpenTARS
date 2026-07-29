@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
+from backend import docs_registry
 from backend.auth.dependencies import require_admin_when_enabled
 from backend.config.drift import apply_config_drift_fix, compute_config_drift
 from backend.config.loader import (
@@ -638,20 +639,17 @@ async def delete_logo(
 # About page's API Docs tab). doc_id is only ever used as a dict lookup key —
 # never concatenated into a filesystem path — so this can't become an
 # arbitrary-file-read primitive regardless of what a caller passes.
-_DOC_ALLOWLIST: dict[str, str] = {
-    "api-threat-hunting": "api-threat-hunting.md",
-}
+# The allowlist itself lives in backend/docs_registry.py so this route and
+# global search (issue-local-031) share one copy — a drifted path allowlist is
+# a security bug, not just an inconsistency.
 
 
 @router.get("/docs/{doc_id}")
 async def get_doc(doc_id: str) -> dict[str, str]:
     """Return an allowlisted project doc's raw Markdown content."""
-    filename = _DOC_ALLOWLIST.get(doc_id)
-    if filename is None:
+    path = docs_registry.resolve(doc_id)
+    if path is None:
         raise HTTPException(status_code=404, detail="Unknown document")
-    path = _DOCS_DIR / filename
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Document not found")
     return {"doc_id": doc_id, "content": path.read_text(encoding="utf-8")}
 
 

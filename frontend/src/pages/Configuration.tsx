@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import {
   api,
   ListenerConfig,
@@ -124,6 +125,29 @@ export default function Configuration() {
   }
 
   const currentTabs = tabsForGroup[activeGroup]
+
+  // issue-local-031: open a specific tab from ?tab=<id>, so a global-search hit
+  // that names a setting ("SSO / OIDC") actually lands on it instead of the
+  // default tab. Runs once per ?tab= value; the group is derived from whichever
+  // group owns the tab, and an unknown or role-gated id is ignored.
+  const requestedTab = new URLSearchParams(useLocation().search).get('tab')
+  useEffect(() => {
+    if (!requestedTab) return
+    for (const [group, tabs] of Object.entries(tabsForGroup) as [
+      Group,
+      { id: Tab; label: string }[],
+    ][]) {
+      if (tabs.some((t) => t.id === requestedTab)) {
+        setActiveGroup(group)
+        setActiveTab(requestedTab as Tab)
+        return
+      }
+    }
+    // tabsForGroup is rebuilt on every render, so listing it here would re-run
+    // this effect constantly and fight the user's own tab clicks. The values it
+    // actually derives from (authEnabled/isAdmin) are listed instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedTab, authEnabled, isAdmin])
 
   const handleGroupChange = (g: Group) => {
     setActiveGroup(g)

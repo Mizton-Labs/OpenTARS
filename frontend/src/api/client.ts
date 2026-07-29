@@ -427,6 +427,50 @@ export interface CreatedApiKey extends ApiKey {
   endpoint: string
 }
 
+// ── Global search + SmartSearch (issue-local-031) ────────────────────────────
+
+/** One match, in the section of the app it was found in. */
+export interface SearchHit {
+  section: string
+  title: string
+  snippet: string
+  /** SPA route that opens the match. */
+  route: string
+  ref: string | null
+}
+
+export interface SearchSection {
+  section: string
+  hits: SearchHit[]
+}
+
+export interface SearchResults {
+  query: string
+  total: number
+  sections: SearchSection[]
+}
+
+/** Drives the always-visible Normal/Smart switch: when `available` is false the
+ *  Smart side is disabled and `reason` is shown on hover, naming the setting
+ *  that turns it on. */
+export interface SmartSearchStatus {
+  available: boolean
+  reason: string | null
+  provider: string | null
+}
+
+export interface SmartTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface SmartAnswer {
+  /** Plain prose. Rendered as text, never HTML. */
+  answer: string
+  sources: SearchHit[]
+  used_context: number
+}
+
 /**
  * Password policy published by GET /api/auth/status (prompts-046).
  * The backend (_validate_password) is the source of truth; the SPA mirrors
@@ -780,6 +824,18 @@ export const api = {
   // Application — allowlisted project docs (About page's API Docs tab, issue-local-030)
   getDoc: (docId: string) =>
     request<{ doc_id: string; content: string }>(`/app/docs/${encodeURIComponent(docId)}`),
+
+  // Global search + SmartSearch (issue-local-031). All read-only; the server
+  // scopes every result to the caller's role.
+  search: {
+    query: (q: string) => request<SearchResults>(`/search?q=${encodeURIComponent(q)}`),
+    status: () => request<SmartSearchStatus>('/search/status'),
+    smart: (question: string, history: SmartTurn[] = []) =>
+      request<SmartAnswer>('/search/smart', {
+        method: 'POST',
+        body: JSON.stringify({ question, history }),
+      }),
+  },
 
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
