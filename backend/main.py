@@ -5,6 +5,7 @@ Mounts all API routers; the APScheduler instance lives in backend.scheduler.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import __version__
 from backend import scheduler as scheduler_mod
 from backend.api.routes_app import router as app_config_router
+from backend.api.routes_audit import router as audit_router
 from backend.api.routes_auth import router as auth_router
 from backend.api.routes_control import router as control_router
 from backend.api.routes_feed import router as feed_router
@@ -36,6 +38,8 @@ from backend.api.routes_sources import router as sources_router
 from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
+from backend.audit.db import init_audit_db, record_event
+from backend.audit.interpret import classify_and_interpret
 from backend.auth.api_scopes import API_SCOPES, scope_allows
 from backend.auth.db import init_users_db
 from backend.auth.service import (
@@ -65,6 +69,9 @@ from backend.threat_hunting.db import init_threat_hunting_db
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 setup_logging(_LOG_DIR)
 logger = logging.getLogger(__name__)
+# issue-local-033: lifecycle milestones for the Audit section's "System" tab
+# (see logging_config.py — this logger also gets its own logs/system.log).
+_system_logger = logging.getLogger("backend.system")
 
 
 @asynccontextmanager
@@ -133,9 +140,17 @@ async def lifespan(app: FastAPI):
             await bootstrap_admin_if_empty()
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Auth init/bootstrap failed: %s", exc)
+    # issue-local-033: init the Audit event store (its own DB file, never
+    # wiped by a normalized.db schema bump). Safe to re-run on every startup.
+    try:
+        await init_audit_db()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Audit DB init failed: %s", exc)
     scheduler_mod.reload()
     scheduler_mod.start()
+    _system_logger.info("OpenTARS startup complete (version %s)", __version__)
     yield
+    _system_logger.info("OpenTARS shutting down")
     scheduler_mod.stop()
 
 
@@ -194,6 +209,7 @@ app.include_router(llm_router)
 app.include_router(smart_router)
 app.include_router(mappings_router)
 app.include_router(auth_router)
+app.include_router(audit_router)
 app.include_router(watchers_router)
 app.include_router(threat_hunting_router)
 # Public per-watcher feed (issue_local_006). Registered before the SPA
@@ -276,6 +292,11 @@ _VIEWER_GET_PREFIXES = (
     # by the caller's own role inside backend.search.service, so a viewer
     # reaching it can still only ever see viewer-visible content.
     "/api/search",
+    # Audit events (issue-local-033) — read-only. routes_audit.py restricts a
+    # non-admin caller to the "user"/"agent" categories and to their own
+    # username server-side, so a viewer reaching this can still only ever
+    # see their own activity.
+    "/api/audit",
 )
 
 # POST endpoints a 'threat-viewer' (read-only) account may reach. The
@@ -477,6 +498,64 @@ async def auth_enforcement(request, call_next):
 
     request.state.user = user
     return await call_next(request)
+
+
+# issue-local-033 (follow-up): generic "user"/"application" audit-event
+# capture. Registered AFTER auth_enforcement (making it the outer layer —
+# Starlette wraps middleware in registration order, last-added = outermost),
+# so by the time execution returns here from `call_next`, the inner
+# auth_enforcement layer has already fully run and `request.state.user` is
+# populated for any authenticated request. This gives blanket,
+# zero-per-route-code audit coverage of every successful mutating API call
+# instead of hand-instrumenting each route — consistent by construction, and
+# new routes are covered automatically (with a readable label even before
+# anyone adds one to interpret.py's curated table).
+#
+# Category is a pure function of the route (classify_and_interpret):
+# /api/auth/* is "user" activity (authentication + account self-service),
+# everything else mutating is "application" activity.
+#
+# What this middleware structurally CANNOT attribute: identity-establishing
+# requests (login) have no session cookie yet at the START of the request, so
+# request.state.user is never set for them here — login is self-instrumented
+# in routes_auth.py instead, where the resolved (or rejected) identity is
+# already in hand. No double-logging risk: this middleware finds nothing to
+# attribute for that one request and simply records nothing.
+_AUDITED_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+
+@app.middleware("http")
+async def audit_activity(request, call_next):
+    response = await call_next(request)
+
+    method = request.method
+    path = request.url.path
+    if (
+        method in _AUDITED_METHODS
+        and path.startswith("/api/")
+        and 200 <= response.status_code < 400
+    ):
+        user = getattr(request.state, "user", None)
+        if user:
+            # Session users and API keys are both attributable — resolve_api_key
+            # already synthesizes a distinguishable "apikey:<name>" username, so
+            # no special-casing is needed to tell the two apart in the trail.
+            try:
+                category, action = classify_and_interpret(method, path)
+                asyncio.create_task(
+                    record_event(
+                        category,
+                        action,
+                        username=user.get("username"),
+                        role=user.get("role"),
+                        summary=f"{method} {path} → {response.status_code}",
+                        detail={"method": method, "path": path, "status": response.status_code},
+                    )
+                )
+            except Exception as exc:  # pragma: no cover — defensive, must never break the response
+                logger.warning("audit_activity: failed to schedule record_event: %s", exc)
+
+    return response
 
 
 # ── Interactive API docs (issue-local-030) ────────────────────────────────────

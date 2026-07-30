@@ -5,6 +5,13 @@ Sets up two output channels:
   - stdout StreamHandler  (all levels, same as before)
   - logs/app.log          (RotatingFileHandler, all levels)
   - logs/audit.log        (RotatingFileHandler, INFO+, backend.audit logger only)
+  - logs/system.log       (RotatingFileHandler, INFO+, backend.system logger only)
+
+Also attaches AuditLogHandler (backend/audit/log_bridge.py, issue-local-033)
+so the "Application" and "System" Audit tabs are fed from these same
+channels: backend.audit → category "application"; backend.system (explicit
+lifecycle milestones) and the root logger at WARNING+ (real problems,
+anywhere) → category "system".
 
 Call setup_logging() once at application startup (main.py).
 """
@@ -14,6 +21,8 @@ from __future__ import annotations
 import logging
 import logging.handlers
 from pathlib import Path
+
+from backend.audit.log_bridge import AuditLogHandler
 
 _FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATE_FMT = "%Y-%m-%dT%H:%M:%S"
@@ -69,6 +78,38 @@ def setup_logging(log_dir: Path) -> None:
     audit_handler.setLevel(logging.INFO)
     audit_handler.setFormatter(formatter)
     audit_logger.addHandler(audit_handler)
+
+    # issue-local-033: feed the Audit section's "Application" tab from this
+    # same logger — a queryable, filterable, per-actor home for the same
+    # events audit.log already captured as flat text.
+    audit_logger.addHandler(AuditLogHandler("application", level=logging.INFO))
+
+    # ── System logger (issue-local-033) ─────────────────────────────────────
+    # Dedicated channel for informational lifecycle milestones (startup,
+    # schema migrations, ...) — explicit log calls at those points, not a
+    # blanket capture (most INFO-level app logging is normal operation, not
+    # "system log" material).
+    system_logger = logging.getLogger("backend.system")
+    system_logger.setLevel(logging.DEBUG)
+    system_logger.propagate = True
+
+    system_handler = logging.handlers.RotatingFileHandler(
+        log_dir / "system.log",
+        maxBytes=_MAX_BYTES,
+        backupCount=_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    system_handler.setLevel(logging.INFO)
+    system_handler.setFormatter(formatter)
+    system_logger.addHandler(system_handler)
+    system_logger.addHandler(AuditLogHandler("system", level=logging.INFO))
+
+    # Also feed "System" from any WARNING+ record anywhere in the app (real
+    # problems — failed DB inits, unhandled exceptions, degraded providers —
+    # are genuine system-log material regardless of which module logged
+    # them). Attached to root, so this does not depend on every such call
+    # site using the backend.system logger specifically.
+    root.addHandler(AuditLogHandler("system", level=logging.WARNING))
 
     # ── Watchers logger ──────────────────────────────────────────────────────
     # Dedicated channel for watcher evaluation / trigger / error events

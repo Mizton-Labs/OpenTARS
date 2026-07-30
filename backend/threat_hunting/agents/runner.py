@@ -37,9 +37,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # In-memory job registry — maps run_id → generation task handle
 _ACTIVE_JOBS: dict[str, asyncio.Task] = {}
@@ -71,6 +74,65 @@ def _node_timeout_seconds() -> int:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# issue-local-033 (follow-up): per-run_id set of step_logs entries (keyed by
+# 'step') already audited as "agent" events — see _audit_new_agent_steps.
+# Same bookkeeping-dict pattern as _ACTIVE_JOBS/_ACTIVE_RUN_PKG above. Cleared
+# on terminal status so it never grows unbounded across the process lifetime.
+_AUDITED_AGENT_STEPS: dict[str, set[str]] = {}
+_TERMINAL_STATUSES = frozenset({"completed", "cancelled", "error", "rejected"})
+
+
+async def _audit_new_agent_steps(run_id: str, state: dict[str, Any], status: str) -> None:
+    """Record an 'agent' audit event for any step_logs entry not yet seen for
+    this run.
+
+    Root cause this fixes: `append_run_step_log` (threat_hunting/db.py) —
+    the function originally instrumented for the "agent" audit category —
+    is only called from siem/executor.py, report_writer.py, and
+    threat_intel_analyst.py, all of which run OUTSIDE the LangGraph graph.
+    The actual graph nodes (hypothesis_generator, ttp_analyst, ...) persist
+    through THIS function instead, called once per node from
+    _run_pipeline's streaming loop with the full accumulated step_logs list
+    (state.py::_reduce_step_logs: last entry wins per step, each node writes
+    its own step exactly once per run — no interim "running" state here,
+    unlike the SIEM steps). Diffing against a per-run tracked set is what
+    turns "the whole accumulated list, every call" into "one event per step".
+    """
+    seen = _AUDITED_AGENT_STEPS.setdefault(run_id, set())
+    for entry in state.get("step_logs") or []:
+        step_key = entry.get("step")
+        if not step_key or step_key in seen:
+            continue
+        seen.add(step_key)
+        try:
+            from backend.audit.db import record_event
+            from backend.audit.interpret import interpret_agent_step
+
+            entry_status = entry.get("status", "unknown")
+            await record_event(
+                "agent",
+                interpret_agent_step(step_key, entry_status),
+                username=state.get("created_by"),
+                summary=f"{step_key}: {entry_status}",
+                detail={
+                    "run_id": run_id,
+                    "step": step_key,
+                    "status": entry_status,
+                    "elapsed_s": entry.get("elapsed_s"),
+                    "item_count": entry.get("item_count"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, never break the pipeline
+            logger.warning(
+                "_audit_new_agent_steps: record_event failed for run %s step %s: %s",
+                run_id,
+                step_key,
+                exc,
+            )
+    if status in _TERMINAL_STATUSES:
+        _AUDITED_AGENT_STEPS.pop(run_id, None)
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -181,6 +243,8 @@ async def _save_generation_state(
                 ),
             )
         await db.commit()
+
+    await _audit_new_agent_steps(run_id, state, status)
 
 
 async def _get_run_record(run_id: str) -> dict[str, Any] | None:
