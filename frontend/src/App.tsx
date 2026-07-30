@@ -11,6 +11,7 @@ import HuntDashboard from './pages/threat-hunting/HuntDashboard'
 import Account from './pages/Account'
 import About from './pages/About'
 import Assistant from './pages/Assistant'
+import Audit from './pages/Audit'
 import Login from './pages/Login'
 import Home from './pages/Home'
 import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
@@ -48,6 +49,7 @@ const PAGE_COMPONENTS: Record<ShellRoute, React.ComponentType> = {
   // registered below alongside /new, /tracking, /:id).
   'threat-hunting': HuntDashboard,
   assistant: Assistant,
+  audit: Audit,
   account: Account,
   about: About,
 }

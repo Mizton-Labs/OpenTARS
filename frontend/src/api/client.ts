@@ -884,6 +884,25 @@ export const api = {
     },
   },
 
+  // Audit (issue-local-033) — read-only. `category` is always required, one
+  // Audit tab at a time. The backend enforces who may see which category and
+  // whose activity — admin sees every actor across all four categories, a
+  // non-admin is restricted to the "user"/"agent" categories and always
+  // scoped to their own username server-side (routes_audit.py), never a
+  // client-supplied value.
+  audit: {
+    listEvents: (
+      category: string,
+      params: { search?: string; limit?: number; offset?: number } = {},
+    ) => {
+      const q = new URLSearchParams({ category })
+      if (params.search) q.set('search', params.search)
+      if (params.limit !== undefined) q.set('limit', String(params.limit))
+      if (params.offset !== undefined) q.set('offset', String(params.offset))
+      return request<AuditEventsResponse>(`/audit/events?${q.toString()}`)
+    },
+  },
+
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
   getDefaultTheme: () => request<{ theme: string }>('/app/theme'),
@@ -2688,6 +2707,24 @@ export interface ExplorerRow {
   description?: string
   rationale?: string
   sources?: { id: string; name: string; hunt_id_display: string }[]
+}
+
+// issue-local-033: Audit section — one row per event, one of the four tab
+// categories (application/user/agent/system).
+export interface AuditEvent {
+  id: string
+  category: 'application' | 'user' | 'agent' | 'system'
+  action: string
+  username: string | null
+  role: string | null
+  summary: string
+  detail: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface AuditEventsResponse {
+  events: AuditEvent[]
+  total: number
 }
 
 export interface THTrackingHunt {
