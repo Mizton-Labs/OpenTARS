@@ -140,7 +140,6 @@ function IOCRow({
       <tr
         className={clsx(
           'border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors',
-          removed && 'opacity-50',
           !removed && ioc.noise_score >= HIGH_NOISE_THRESHOLD && 'bg-red-950/10',
           !removed && ioc.noise_score >= NOISE_THRESHOLD && ioc.noise_score < HIGH_NOISE_THRESHOLD && 'bg-amber-950/10',
         )}
@@ -165,13 +164,10 @@ function IOCRow({
         </td>
         {/* IOC value */}
         <td className="py-1.5 pr-2">
-          {/* issue-local-033 (2nd): same fix as HuntDetail.tsx's IOC tab —
-              the strikethrough already conveys "removed"; dimming the text
-              color too (on top of this row's own opacity-50) made it hard
-              to read. */}
-          <span className={clsx('font-mono text-[12px] break-all text-gray-200', removed && 'line-through')}>
-            {ioc.ioc}
-          </span>
+          {/* issue-local-033 (3rd): no strikethrough, no row-level dimming —
+              the "Removed" badge below is the sole removal indicator, so a
+              removed IOC reads exactly like a kept one at a glance. */}
+          <span className="font-mono text-[12px] break-all text-gray-200">{ioc.ioc}</span>
         </td>
         {/* Type */}
         <td className="py-1.5 pr-2 whitespace-nowrap">

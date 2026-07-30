@@ -37,6 +37,7 @@ class AuditLogHandler(logging.Handler):
         # own imports — notably aiosqlite — are necessarily ready) and this
         # handler, which is only ever exercised once logging is live.
         from backend.audit.db import record_event
+        from backend.audit.interpret import interpret_log_message, interpret_system_log
 
         try:
             message = record.getMessage()
@@ -49,10 +50,16 @@ class AuditLogHandler(logging.Handler):
             return
 
         try:
+            # issue-local-033 (follow-up): action is a short interpretation,
+            # not the raw logger name — summary keeps the actual message.
+            if self._category == "system":
+                action = interpret_system_log(record.name, record.levelname, message)
+            else:
+                action = interpret_log_message(record.name, message)
             loop.create_task(
                 record_event(
                     self._category,
-                    record.name,
+                    action,
                     summary=message,
                     detail={"level": record.levelname, "logger": record.name},
                 )

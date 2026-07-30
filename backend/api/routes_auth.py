@@ -359,7 +359,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
         try:
             await record_event(
                 "user",
-                "login.failed",
+                "Failed sign-in attempt",
                 username=body.username,
                 summary=f"Failed login attempt for '{body.username}'",
                 detail={"ip": _client_ip(request)},
@@ -374,7 +374,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
     try:
         await record_event(
             "user",
-            "login.success",
+            "Signed in",
             username=user["username"],
             role=user.get("role"),
             summary=f"'{user['username']}' logged in",

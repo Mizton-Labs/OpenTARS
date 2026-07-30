@@ -14,29 +14,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **New: an "Audit" sidebar entry**, visible to every signed-in user. Four tabs — Application, User,
   Agent, System — each backed by `GET /api/audit/events?category=...`, with search and
   page-size-selectable pagination (25/50/100/200, matching Data Explorer's pattern).
-  - **Application** — events bridged from the existing ingestion audit logger (feed pulls/pushes,
-    watcher triggers).
-  - **User** — every successful authenticated mutating request (POST/PUT/DELETE/PATCH), captured by
-    a single generic middleware so no per-route instrumentation was needed, plus login
-    success/failure (the one action that middleware structurally can't attribute, since no session
-    exists yet at the start of that request).
-  - **Agent** — AI/pipeline activity (hypothesis generation, SIEM execution steps, report/threat-intel
-    steps, ...), fed from the single existing choke point every one of those ~15 steps already calls
-    (`append_run_step_log`), attributed to the run's own creator.
+  - **User** — authentication and account activity: sign-in/sign-out (including failed attempts),
+    password/theme changes, SSO configuration, and user/API-key management. Category is a pure
+    function of the route (`/api/auth/*`), computed once and shared by the generic audit middleware
+    and every other interpretation below — no per-route instrumentation needed.
+  - **Application** — everything else the application does: hunt package/evidence/IOC-verdict/
+    connector/report changes, LLM provider and configuration changes, source/watcher management, plus
+    the existing ingestion-pull and watcher-trigger events. Every action gets a short, consistent,
+    human-readable label (e.g. "Created hunt package", "Updated IOC verdicts") rather than the raw
+    method/path or log line — a curated table covers ~110 routes and the ingestion log shape, with an
+    algorithmic fallback so a future route is never shown fully raw.
+  - **Agent** — AI/pipeline activity (hypothesis generation, TTP analysis, query drafting, SIEM
+    execution, report/threat-intel steps, ...), each with an interpreted label reflecting what
+    happened and whether it succeeded ("Generated hunting hypotheses" / "Hypothesis generation
+    failed"). Fed from the two places that persist pipeline step logs — the LangGraph node loop
+    itself (`_save_generation_state`, the actual per-node choke point; previously missed, which is
+    why this category showed almost nothing despite hunts actively running) and
+    `append_run_step_log` for the post-approval steps that run outside the graph — attributed to the
+    run's own creator.
   - **System** — operational health: a dedicated startup/shutdown lifecycle logger, plus a bridge that
     captures any WARNING+ log record anywhere in the app (failed DB inits, degraded providers, ...)
-    regardless of which module logged it.
-  - **Permissions**: an admin sees every category and every actor. A normal user only ever sees the
-    User and Agent tabs, and only their own activity within them — enforced server-side
-    (`routes_audit.py` always resolves the actor from the caller's own session, never a
-    client-supplied value, the same rule Assistant chat sessions already follow) — Application and
-    System return 403 for a non-admin regardless of what the client sends.
+    regardless of which module logged it, labeled by the originating module.
+  - **Permissions**: an admin sees every category and every actor. A normal user sees Application,
+    User, and Agent — their own everyday activity, their own authentication activity, and their own
+    agent-triggered runs — always scoped server-side to the caller's own session (`routes_audit.py`
+    never trusts a client-supplied identity, the same rule Assistant chat sessions already follow).
+    Only System (not a per-user concept) stays admin-only.
   - Retention is bounded automatically: checked probabilistically (not on every write) and trimmed
     back down well before an unbounded table could become a problem.
-- **Fixed: a removed IOC in the Hunt Detail and Retrohunt IOC tables was hard to read.** The
-  strikethrough already conveys "removed"; dimming the text color on top of that (and the row's own
-  reduced opacity) made it low-contrast. Removed IOCs now use the same text color as kept ones —
-  only the strikethrough marks them as removed.
+- **Fixed: a removed IOC in the Hunt Detail and Retrohunt IOC tables was hard to read.** Removed IOCs
+  no longer get a strikethrough or dimmed row — every cell reads at full brightness like a kept IOC.
+  The red "Removed" badge and background/border tint are the sole removal indicator.
 
 ### Added — Dashboard charts, pagination (issue-local-034)
 

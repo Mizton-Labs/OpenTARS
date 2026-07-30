@@ -84,12 +84,12 @@ describe('Audit — admin tab visibility', () => {
     expect(screen.getByRole('button', { name: /^system$/i })).toBeInTheDocument()
   })
 
-  it('hides Application and System from a non-admin', async () => {
+  it('hides only System from a non-admin — Application is their own everyday activity', async () => {
     mockIsAdmin = false
     renderAudit()
     await screen.findByRole('button', { name: /^user$/i })
 
-    expect(screen.queryByRole('button', { name: /^application$/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^application$/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^system$/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^agent$/i })).toBeInTheDocument()
   })

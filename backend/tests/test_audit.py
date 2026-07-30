@@ -21,6 +21,7 @@ from backend.auth import db as auth_db
 from backend.auth import service
 from backend.main import app
 from backend.threat_hunting import db as th_db
+from backend.threat_hunting.agents import runner as th_runner
 
 
 @pytest.fixture
@@ -213,7 +214,10 @@ class TestRoutesAudit:
                 "user", "a", username="bob", role="threat-viewer", summary="bob user event"
             )
             await audit_db.record_event("agent", "a", username="alice", summary="alice agent event")
-            await audit_db.record_event("application", "a", summary="app event")
+            await audit_db.record_event("application", "a", summary="unattributed app event")
+            await audit_db.record_event(
+                "application", "a", username="alice", summary="alice application event"
+            )
             await audit_db.record_event("system", "a", summary="system event")
 
         asyncio.run(_seed())
@@ -247,10 +251,12 @@ class TestRoutesAudit:
 
     def test_admin_can_see_application_and_system(self, audit_env) -> None:
         c = self._login("admin", "Adminpass1")
-        for category in ("application", "system"):
-            r = c.get("/api/audit/events", params={"category": category})
-            assert r.status_code == 200
-            assert r.json()["total"] == 1
+        r = c.get("/api/audit/events", params={"category": "application"})
+        assert r.status_code == 200
+        assert r.json()["total"] == 2  # unattributed + alice's, admin sees every actor
+        r = c.get("/api/audit/events", params={"category": "system"})
+        assert r.status_code == 200
+        assert r.json()["total"] == 1
 
     def test_non_admin_scoped_to_own_username(self, audit_env) -> None:
         c = self._login("alice", "Alicepass1")
@@ -276,10 +282,17 @@ class TestRoutesAudit:
         assert r.status_code == 200
         assert r.json()["total"] == 1
 
-    def test_non_admin_forbidden_from_application(self, audit_env) -> None:
+    def test_non_admin_sees_application_scoped_to_self(self, audit_env) -> None:
+        # issue-local-033 (follow-up): "application" now covers a non-admin's
+        # own everyday activity (hunt packages, evidence, IOC verdicts, ...),
+        # so it moved from admin-only into _USER_VISIBLE_CATEGORIES, scoped
+        # to the caller's own username like "user"/"agent" already were.
         c = self._login("alice", "Alicepass1")
         r = c.get("/api/audit/events", params={"category": "application"})
-        assert r.status_code == 403
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["events"][0]["username"] == "alice"
 
     def test_non_admin_forbidden_from_system(self, audit_env) -> None:
         c = self._login("alice", "Alicepass1")
@@ -316,7 +329,7 @@ class TestLoginAudit:
 
         events, total = asyncio.run(audit_db.list_events(category="user"))
         actions = [e["action"] for e in events]
-        assert "login.success" in actions
+        assert "Signed in" in actions
         assert total >= 1
 
     def test_failed_login_is_recorded_without_password(self, audit_env) -> None:
@@ -325,7 +338,7 @@ class TestLoginAudit:
         assert r.status_code == 401
 
         events, _ = asyncio.run(audit_db.list_events(category="user"))
-        failed = [e for e in events if e["action"] == "login.failed"]
+        failed = [e for e in events if e["action"] == "Failed sign-in attempt"]
         assert len(failed) == 1
         assert failed[0]["username"] == "admin"
         assert "wrong" not in str(failed[0])
@@ -360,7 +373,8 @@ class TestAgentAuditIntegration:
                 events, total = await audit_db.list_events(category="agent")
 
         assert total == 1
-        assert events[0]["action"] == "hypothesis_generator"
+        assert events[0]["action"] == "Generated hunting hypotheses"
+        assert events[0]["summary"] == "hypothesis_generator: completed"
         assert events[0]["username"] == "carol"
         assert events[0]["detail"]["run_id"] == "run-1"
         assert events[0]["detail"]["hunt_package_id"] == pkg["id"]
@@ -375,6 +389,106 @@ class TestAgentAuditIntegration:
             patch.object(audit_db, "_DB_PATH", db_path),
         ):
             await th_db.append_run_step_log("nonexistent", {"step": "x", "status": "completed"})
+            _, total = await audit_db.list_events(category="agent")
+
+        assert total == 0
+
+
+class TestSaveGenerationStateAgentAudit:
+    """issue-local-033 (follow-up): _save_generation_state — the actual
+    per-node choke point for LangGraph pipeline persistence — is the fix for
+    the Agent category not populating. append_run_step_log (tested above) is
+    only called from the 3 steps that run OUTSIDE the graph; the 7 graph
+    nodes (hypothesis_generator, ttp_analyst, ...) persist through
+    _save_generation_state instead, once per node, with the FULL accumulated
+    step_logs list each time — so the fix must diff against what was already
+    audited for that run_id, not blindly record the whole list every call.
+    """
+
+    @pytest.fixture
+    async def th_db_path(self, tmp_path: Path):
+        path = tmp_path / "th.db"
+        with patch.object(th_db, "_TH_DB_PATH", path):
+            await th_db.init_threat_hunting_db()
+            yield path
+
+    @pytest.fixture(autouse=True)
+    def _clear_tracked_steps(self):
+        th_runner._AUDITED_AGENT_STEPS.clear()
+        yield
+        th_runner._AUDITED_AGENT_STEPS.clear()
+
+    @pytest.mark.asyncio
+    async def test_records_one_event_per_new_step_no_duplicates_on_repeat_save(
+        self, th_db_path: Path, db_path: Path
+    ) -> None:
+        with (
+            patch.object(th_db, "_TH_DB_PATH", th_db_path),
+            patch.object(audit_db, "_DB_PATH", db_path),
+        ):
+            pkg = await th_db.create_hunt_package("Hunt", "", created_by="dave")
+            run_id = "run-graph-1"
+            state = {
+                "created_by": "dave",
+                "step_logs": [{"step": "intake_classifier", "status": "ok"}],
+            }
+
+            # First node completes — one "agent" event, correctly interpreted.
+            await th_runner._save_generation_state(run_id, pkg["id"], state, status="running")
+            events, total = await audit_db.list_events(category="agent")
+            assert total == 1
+            assert events[0]["action"] == "Classified evidence intake"
+            assert events[0]["username"] == "dave"
+
+            # LangGraph's streaming loop calls _save_generation_state again on
+            # the NEXT node with the reducer's full accumulated list — the
+            # SAME first entry must not be re-recorded.
+            await th_runner._save_generation_state(run_id, pkg["id"], state, status="running")
+            _, total = await audit_db.list_events(category="agent")
+            assert total == 1
+
+            # A second, genuinely new step appears in the accumulated list —
+            # exactly one more event, for that step only. Terminal status
+            # ("completed") also exercises the tracking-dict cleanup path.
+            state["step_logs"].append({"step": "hypothesis_generator", "status": "ok"})
+            await th_runner._save_generation_state(run_id, pkg["id"], state, status="completed")
+            events, total = await audit_db.list_events(category="agent")
+            assert total == 2
+            actions = {e["action"] for e in events}
+            assert actions == {"Classified evidence intake", "Generated hunting hypotheses"}
+
+        assert run_id not in th_runner._AUDITED_AGENT_STEPS
+
+    @pytest.mark.asyncio
+    async def test_error_status_step_gets_error_label(
+        self, th_db_path: Path, db_path: Path
+    ) -> None:
+        with (
+            patch.object(th_db, "_TH_DB_PATH", th_db_path),
+            patch.object(audit_db, "_DB_PATH", db_path),
+        ):
+            pkg = await th_db.create_hunt_package("Hunt", "", created_by="dave")
+            run_id = "run-graph-2"
+            state = {
+                "created_by": "dave",
+                "step_logs": [{"step": "ttp_analyst", "status": "error"}],
+            }
+            await th_runner._save_generation_state(run_id, pkg["id"], state, status="error")
+            events, total = await audit_db.list_events(category="agent")
+
+        assert total == 1
+        assert events[0]["action"] == "MITRE ATT&CK TTP analysis failed"
+
+    @pytest.mark.asyncio
+    async def test_no_step_logs_records_nothing(self, th_db_path: Path, db_path: Path) -> None:
+        with (
+            patch.object(th_db, "_TH_DB_PATH", th_db_path),
+            patch.object(audit_db, "_DB_PATH", db_path),
+        ):
+            pkg = await th_db.create_hunt_package("Hunt", "", created_by="dave")
+            await th_runner._save_generation_state(
+                "run-graph-3", pkg["id"], {"created_by": "dave"}, status="running"
+            )
             _, total = await audit_db.list_events(category="agent")
 
         assert total == 0

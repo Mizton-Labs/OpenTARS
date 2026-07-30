@@ -2928,11 +2928,12 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
 
     try:
         from backend.audit.db import record_event
+        from backend.audit.interpret import interpret_agent_step
 
         status = entry.get("status", "unknown")
         await record_event(
             "agent",
-            step_key,
+            interpret_agent_step(step_key, status),
             username=row["created_by"],
             summary=f"{step_key}: {status}",
             detail={

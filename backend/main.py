@@ -39,6 +39,7 @@ from backend.api.routes_threat_hunting import router as threat_hunting_router
 from backend.api.routes_viewer import router as viewer_router
 from backend.api.routes_watchers import router as watchers_router
 from backend.audit.db import init_audit_db, record_event
+from backend.audit.interpret import classify_and_interpret
 from backend.auth.api_scopes import API_SCOPES, scope_allows
 from backend.auth.db import init_users_db
 from backend.auth.service import (
@@ -499,14 +500,20 @@ async def auth_enforcement(request, call_next):
     return await call_next(request)
 
 
-# issue-local-033: generic "user" audit-event capture. Registered AFTER
-# auth_enforcement (making it the outer layer — Starlette wraps middleware in
-# registration order, last-added = outermost), so by the time execution
-# returns here from `call_next`, the inner auth_enforcement layer has already
-# fully run and `request.state.user` is populated for any authenticated
-# request. This gives blanket, zero-per-route-code audit coverage of every
-# successful mutating API call instead of hand-instrumenting each route —
-# consistent by construction, and new routes are covered automatically.
+# issue-local-033 (follow-up): generic "user"/"application" audit-event
+# capture. Registered AFTER auth_enforcement (making it the outer layer —
+# Starlette wraps middleware in registration order, last-added = outermost),
+# so by the time execution returns here from `call_next`, the inner
+# auth_enforcement layer has already fully run and `request.state.user` is
+# populated for any authenticated request. This gives blanket,
+# zero-per-route-code audit coverage of every successful mutating API call
+# instead of hand-instrumenting each route — consistent by construction, and
+# new routes are covered automatically (with a readable label even before
+# anyone adds one to interpret.py's curated table).
+#
+# Category is a pure function of the route (classify_and_interpret):
+# /api/auth/* is "user" activity (authentication + account self-service),
+# everything else mutating is "application" activity.
 #
 # What this middleware structurally CANNOT attribute: identity-establishing
 # requests (login) have no session cookie yet at the START of the request, so
@@ -534,13 +541,14 @@ async def audit_activity(request, call_next):
             # already synthesizes a distinguishable "apikey:<name>" username, so
             # no special-casing is needed to tell the two apart in the trail.
             try:
+                category, action = classify_and_interpret(method, path)
                 asyncio.create_task(
                     record_event(
-                        "user",
-                        f"{method} {path}",
+                        category,
+                        action,
                         username=user.get("username"),
                         role=user.get("role"),
-                        summary=f"{method} {path}",
+                        summary=f"{method} {path} → {response.status_code}",
                         detail={"method": method, "path": path, "status": response.status_code},
                     )
                 )

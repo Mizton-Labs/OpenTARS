@@ -3,10 +3,12 @@
  *
  * Four tabs, one per log category: Application, User, Agent, System. Visible
  * to every signed-in user, but scoped: an admin sees every category and
- * every actor; a normal user only ever sees the User and Agent tabs, and
- * only their own activity within them (enforced server-side by
- * GET /api/audit/events — this page never trusts a client-side check alone,
- * the same convention every admin-gated view in this app follows).
+ * every actor; a normal user sees Application/User/Agent — their own
+ * everyday activity, authentication activity, and agent-triggered runs —
+ * scoped to themselves. Only System (operational health, not "activity") is
+ * admin-only (enforced server-side by GET /api/audit/events — this page
+ * never trusts a client-side check alone, the same convention every
+ * admin-gated view in this app follows).
  */
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -26,8 +28,12 @@ interface AuditCategory {
 }
 
 // Order matches the issue's own listing: Application, User, Agent, System.
+// Only System is admin-only — Application moved into non-admin-visible
+// territory alongside User/Agent (issue-local-033 follow-up): it now covers
+// a non-admin's own everyday activity (hunt packages, evidence, IOC
+// verdicts, ...), not just admin-facing ingestion/watcher events.
 const AUDIT_CATEGORIES: AuditCategory[] = [
-  { id: 'application', label: 'Application', icon: Boxes, adminOnly: true },
+  { id: 'application', label: 'Application', icon: Boxes, adminOnly: false },
   { id: 'user', label: 'User', icon: User, adminOnly: false },
   { id: 'agent', label: 'Agent', icon: Bot, adminOnly: false },
   { id: 'system', label: 'System', icon: Server, adminOnly: true },
@@ -100,7 +106,7 @@ export default function Audit() {
   // If the caller's admin status is not (or no longer) true, never leave the
   // selection sitting on an admin-only tab — mirrors the server-side 403.
   useEffect(() => {
-    if (!isAdmin && (category === 'application' || category === 'system')) {
+    if (!isAdmin && category === 'system') {
       setCategory('user')
     }
   }, [isAdmin, category])

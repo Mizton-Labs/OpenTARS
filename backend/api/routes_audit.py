@@ -6,11 +6,14 @@ at a time — the same shape Data Explorer's /api/threat-hunting/explorer/
 
   - admin (or auth disabled, the open-app admin-equivalent): every category,
     every actor.
-  - any other signed-in role: only the "user" and "agent" categories
-    ("Application" and "System" are not a per-user concept), and always
-    scoped to the CALLER'S OWN username — never a client-supplied value, the
-    same non-negotiable rule backend.search.sessions already enforces for
-    Assistant sessions.
+  - any other signed-in role: "user", "agent", and "application" — the
+    caller's own authentication activity, their own agent-triggered runs,
+    and their own everyday application actions (creating hunt packages,
+    editing IOC verdicts, ...) — always scoped to the CALLER'S OWN username,
+    never a client-supplied value, the same non-negotiable rule
+    backend.search.sessions already enforces for Assistant sessions.
+    "System" is not a per-user concept (operational health, not activity)
+    and stays admin-only.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from backend.config.loader import load_auth_enabled
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
 #: Categories a non-admin caller may ever see — see module docstring.
-_USER_VISIBLE_CATEGORIES = frozenset({"user", "agent"})
+_USER_VISIBLE_CATEGORIES = frozenset({"user", "agent", "application"})
 
 
 def _caller(request: Request) -> tuple[str | None, str | None]:
