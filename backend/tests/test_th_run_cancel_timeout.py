@@ -206,7 +206,7 @@ async def test_stalled_node_times_out_and_marks_run_errored(tmp_path: Path) -> N
         patch.object(th_db, "_TH_DB_PATH", db_path),
         patch.object(runner, "_ACTIVE_JOBS", {}),
         patch.object(runner, "_ACTIVE_RUN_PKG", {}),
-        patch.object(runner, "_NODE_TIMEOUT_SECONDS", 0.05),
+        patch.object(runner, "_node_timeout_seconds", return_value=0.05),
         patch(
             "backend.threat_hunting.agents.pipeline.get_compiled_graph",
             return_value=_HangingGraph(),

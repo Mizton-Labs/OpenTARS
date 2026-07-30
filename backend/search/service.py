@@ -138,6 +138,10 @@ class SearchHit:
     route: str
     #: Stable identifier of the underlying record, when there is one.
     ref: str | None = None
+    #: issue-local-034: True when the underlying record is archived — the
+    #: frontend renders an "Archived" badge next to the title rather than
+    #: silently including it unlabeled.
+    archived: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -255,7 +259,10 @@ async def _search_hunts(query: str, role: str | None) -> list[SearchHit]:
     # pays to load it.
     from backend.threat_hunting import db as th_db
 
-    packages = await th_db.list_hunt_packages(search=query)
+    # issue-local-034: include_archived=True — an archived hunt stays
+    # findable via search (tagged), even though it's excluded from the main
+    # package list/Dashboard by default.
+    packages = await th_db.list_hunt_packages(search=query, include_archived=True)
     hits: list[SearchHit] = []
     for pkg in packages[:MAX_PER_SECTION]:
         label = sanitize_text(pkg.get("hunt_id_display")) or ""
@@ -268,6 +275,7 @@ async def _search_hunts(query: str, role: str | None) -> list[SearchHit]:
                 or f"Status: {sanitize_text(pkg.get('status'))}",
                 route=f"/threat-hunting/{pkg['id']}",
                 ref=str(pkg["id"]),
+                archived=pkg.get("status") == "archived",
             )
         )
     return hits

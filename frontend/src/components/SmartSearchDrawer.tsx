@@ -24,7 +24,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { clsx } from 'clsx'
-import { Search, X, Sparkles, Loader2 } from 'lucide-react'
+import { Search, X, Sparkles, Loader2, Bot } from 'lucide-react'
 import { api, type SearchHit, type SearchResults } from '../api/client'
 import { SmartChatPanel } from './SmartChatPanel'
 import { useAssistantSessionContext } from '../hooks/useAssistantSessionContext'
@@ -86,8 +86,8 @@ export default function SmartSearchDrawer() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Search OpenTARS"
-          aria-label="Search OpenTARS"
+          title="Search & Assistant"
+          aria-label="Search & Assistant"
           // Flush into the top-right corner so it reads as application chrome
           // rather than something floating over the page. ProtectedLayout
           // reserves a matching right-hand gutter on <main>, so it can never
@@ -96,9 +96,13 @@ export default function SmartSearchDrawer() {
           // Brand-filled rather than another grey icon button: this is the only
           // entry point to search and it sits in a corner people do not
           // habitually look at, so it needs to read as a primary action.
-          className="fixed top-0 right-0 z-30 rounded-bl-xl bg-brand-600 p-3 text-white shadow-lg ring-1 ring-brand-400/40 hover:bg-brand-500 hover:ring-brand-300/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 transition-colors"
+          // issue-local-034: both a magnifier and a bot glyph, side by side —
+          // this opens BOTH a deterministic search and a chat assistant, and
+          // a bare magnifying glass read as "search only" to users.
+          className="fixed top-0 right-0 z-30 flex items-center gap-1.5 rounded-bl-xl bg-brand-600 p-3 text-white shadow-lg ring-1 ring-brand-400/40 hover:bg-brand-500 hover:ring-brand-300/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 transition-colors"
         >
           <Search className="w-4 h-4" />
+          <Bot className="w-4 h-4" />
         </button>
       )}
 

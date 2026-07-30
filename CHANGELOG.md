@@ -9,6 +9,41 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Data Explorer fixes, hunt package/run delete & archive, configurable pipeline timeout (issue-local-034)
+
+- **Fixed: Data Explorer search didn't actually filter most categories.** Previously, search only
+  ever matched a hunt package's own name/description/stored analysis — a package matching anywhere
+  returned *every* row of that package unfiltered. Evidence, SIEM Searches, Hunting Leads, and
+  Queries Drafted were a complete no-op; Runs, IOCs, and Hypotheses were coarse (a package match let
+  every one of its rows through, not just the matching one). Every hunt-scoped category now matches
+  its own displayed field(s) — a label, an IOC value, a model name, a hypothesis title — so search
+  shows only the rows that themselves match.
+- **New: a "Run" column** on Runs, Hypotheses, Hunting Leads, Queries Drafted, IOCs Extracted, and
+  SIEM Searches, linking to the exact run a row came from (not just the hunt package, which used to
+  land on its newest run regardless). Deep-links via `/threat-hunting/{id}?run={runId}`.
+- **New: evidence rows are now expandable**, previewing inline with the same viewer (PDF / extracted
+  text / "not processed") the Evidence tab's own detail pane already uses — no more switching to
+  the hunt package just to see what an evidence item actually contains.
+- **Rebuilt: "Feed Sources"** used to show unrelated Threat-Intel ingestion-pipeline stats. It now
+  aggregates where hunt evidence actually came from — the domain for URL evidence (parsed
+  deterministically), or a best-effort identified vendor/organization for file/text/watcher evidence
+  (one LLM call at evidence-add time, soft-fail, never computed live) — with the same Hunts-badge
+  drill-through the Threat Actor/Campaign/Malware Family tabs already have.
+- **Archived hunts and runs are visible again in Data Explorer and global Search/Assistant**,
+  tagged "Archived" — they still disappear from the main Hunt Package list and Dashboard, unchanged.
+- **New: Archive/Unarchive and permanent Delete** for both individual runs (in the all-runs table)
+  and whole hunt packages (next to Re-run). Archive is reversible and available to the same
+  researcher+admin roles as every other Threat Hunting action. Delete is permanent and cascades
+  through every IOC, task result, report, comment, and threat-intel analysis tied to what's
+  deleted — **admin-only**, with a strong confirmation dialog, since nothing else in this app
+  destroys data outright.
+- **Fixed: some hunt runs (e.g. TH67) were failing on a plain timeout, not a hang.** Diagnosed a
+  genuine `query_drafting_agent` LLM slowdown (provider retries + transport timeouts on both
+  configured providers) pushing past the previous hardcoded 600-second per-node budget. The
+  timeout is now configurable in Configuration → Agents, default raised to 900 seconds.
+- **Design: the search-drawer trigger now shows a magnifier and a bot icon together**, so it reads
+  as "search and assistant" at a glance, not just search.
+
 ### Added — Dashboard charts, pagination (issue-local-034)
 
 - **New: two timeline charts lead the Dashboard** — Hunts per Day and IOCs per Day, both respecting

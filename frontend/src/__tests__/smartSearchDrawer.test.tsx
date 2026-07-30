@@ -106,7 +106,7 @@ function renderDrawer() {
   )
 }
 
-const openButton = () => screen.getByRole('button', { name: /search opentars/i })
+const openButton = () => screen.getByRole('button', { name: /search & assistant/i })
 const smartTab = () => screen.getByRole('button', { name: /smart/i })
 
 beforeEach(() => {

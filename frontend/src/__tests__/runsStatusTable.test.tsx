@@ -18,6 +18,8 @@ vi.mock('../api/client', async () => {
       threatHunting: {
         ...actual.api.threatHunting,
         getRunReport: vi.fn(),
+        setRunArchived: vi.fn(),
+        hardDeleteRun: vi.fn(),
       },
       llm: {
         ...actual.api.llm,
@@ -63,6 +65,8 @@ function makeRun(overrides: Partial<THuntPackageRun> = {}): THuntPackageRun {
 
 beforeEach(() => {
   vi.mocked(api.threatHunting.getRunReport).mockReset()
+  vi.mocked(api.threatHunting.setRunArchived).mockReset().mockResolvedValue({ run_id: 'run-1', archived: true })
+  vi.mocked(api.threatHunting.hardDeleteRun).mockReset().mockResolvedValue(undefined)
 })
 
 describe('RunsStatusTable', () => {
@@ -273,6 +277,59 @@ describe('RunsStatusTable', () => {
       fireEvent.click(screen.getByRole('button', { name: 'gpt-oss' }))
       expect(onSelectRun).toHaveBeenCalledWith('run-42')
       expect(onSelectRun).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('Archive/Delete actions (issue-local-034)', () => {
+    it('shows no Actions column when neither isResearcher nor isAdmin', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun()]} />)
+      expect(screen.queryByText('Actions')).not.toBeInTheDocument()
+      expect(screen.queryByTitle('Archive run')).not.toBeInTheDocument()
+      expect(screen.queryByTitle('Permanently delete run')).not.toBeInTheDocument()
+    })
+
+    it('shows only Archive (not Delete) for a researcher', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun()]} isResearcher />)
+      expect(screen.getByTitle('Archive run')).toBeInTheDocument()
+      expect(screen.queryByTitle('Permanently delete run')).not.toBeInTheDocument()
+    })
+
+    it('shows only Delete (not Archive) for an admin who is not a researcher', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun()]} isAdmin />)
+      expect(screen.queryByTitle('Archive run')).not.toBeInTheDocument()
+      expect(screen.getByTitle('Permanently delete run')).toBeInTheDocument()
+    })
+
+    it('clicking Archive calls setRunArchived with the toggled value', async () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ id: 'run-9', archived: false })]} isResearcher />)
+      fireEvent.click(screen.getByTitle('Archive run'))
+      await waitFor(() =>
+        expect(api.threatHunting.setRunArchived).toHaveBeenCalledWith('pkg-1', 'run-9', true),
+      )
+    })
+
+    it('shows "Unarchive run" and an Archived badge when the run is already archived', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ archived: true })]} isResearcher />)
+      expect(screen.getByTitle('Unarchive run')).toBeInTheDocument()
+      expect(screen.getByText('Archived')).toBeInTheDocument()
+    })
+
+    it('Delete requires confirmation before calling hardDeleteRun', async () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ id: 'run-9' })]} isAdmin />)
+      fireEvent.click(screen.getByTitle('Permanently delete run'))
+      expect(api.threatHunting.hardDeleteRun).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Permanently' }))
+      await waitFor(() =>
+        expect(api.threatHunting.hardDeleteRun).toHaveBeenCalledWith('pkg-1', 'run-9'),
+      )
+    })
+
+    it('cancelling the delete confirmation never calls hardDeleteRun', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun()]} isAdmin />)
+      fireEvent.click(screen.getByTitle('Permanently delete run'))
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(api.threatHunting.hardDeleteRun).not.toHaveBeenCalled()
     })
   })
 })

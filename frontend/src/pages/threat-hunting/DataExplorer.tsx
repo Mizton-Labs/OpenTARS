@@ -32,10 +32,13 @@ import {
   Boxes,
   Database,
   Loader2,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { api, type ExplorerRow } from '../../api/client'
 import { HUNT_ID_BADGE } from './runStatusUtils'
 import Pagination from '../../components/Pagination'
+import EvidenceContent from './EvidenceContent'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 
@@ -77,6 +80,33 @@ function HuntLink({ id, display }: { id?: string; display?: string }) {
   )
 }
 
+// issue-local-034: deep-links to a SPECIFIC run within a hunt package, not
+// just the package (which lands on its newest run) — read by
+// ThreatHuntingDetail.tsx's `?run=` query param.
+function RunLink({ pkgId, runId, display }: { pkgId?: string; runId?: string; display?: string }) {
+  const navigate = useNavigate()
+  if (!pkgId || !runId || !display) return <span className="text-gray-600">—</span>
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(`/threat-hunting/${pkgId}?run=${runId}`)}
+      className={clsx(HUNT_ID_BADGE, 'text-[10px] hover:border-brand-500 transition-colors')}
+    >
+      {display}
+    </button>
+  )
+}
+
+// issue-local-034: archived hunts/runs are included in Data Explorer (unlike
+// the Dashboard/main package list), tagged rather than hidden.
+function ArchivedBadge() {
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+      Archived
+    </span>
+  )
+}
+
 function SourceBadges({ sources }: { sources?: ExplorerRow['sources'] }) {
   const navigate = useNavigate()
   if (!sources || sources.length === 0) return <span className="text-gray-600">—</span>
@@ -112,11 +142,27 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
       return [
         { header: 'Hunt', render: (r) => <HuntLink id={r.id} display={r.hunt_id_display} /> },
         { header: 'Name', render: (r) => cell(r.name) },
-        { header: 'Status', render: (r) => cell(r.status) },
+        {
+          header: 'Status',
+          render: (r) => (
+            <span className="flex items-center gap-1.5">
+              {cell(r.status)}
+              {r.status === 'archived' && <ArchivedBadge />}
+            </span>
+          ),
+        },
       ]
     case 'runs':
       return [
-        { header: 'Run', render: (r) => cell(r.run_id_display) },
+        {
+          header: 'Run',
+          render: (r) => (
+            <span className="flex items-center gap-1.5">
+              <RunLink pkgId={r.hunt_package_id} runId={r.id} display={r.run_id_display} />
+              {r.archived && <ArchivedBadge />}
+            </span>
+          ),
+        },
         {
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
@@ -142,6 +188,10 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
         },
+        {
+          header: 'Run',
+          render: (r) => <RunLink pkgId={r.hunt_package_id} runId={r.run_id} display={r.run_id_display} />,
+        },
         { header: 'Title', render: (r) => cell(r.title) },
         { header: 'Relevance', render: (r) => cell(r.relevance) },
         { header: 'Confidence', render: (r) => cell(r.confidence) },
@@ -153,6 +203,10 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
         },
+        {
+          header: 'Run',
+          render: (r) => <RunLink pkgId={r.hunt_package_id} runId={r.run_id} display={r.run_id_display} />,
+        },
         { header: 'Title', render: (r) => cell(r.title) },
         { header: 'Priority', render: (r) => cell(r.priority) },
         { header: 'Discarded', render: (r) => cell(r.discarded) },
@@ -162,6 +216,10 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
         {
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
+        },
+        {
+          header: 'Run',
+          render: (r) => <RunLink pkgId={r.hunt_package_id} runId={r.run_id} display={r.run_id_display} />,
         },
         { header: 'Title', render: (r) => cell(r.title) },
         { header: 'Language', render: (r) => cell(r.language) },
@@ -178,6 +236,10 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
         },
+        {
+          header: 'Run',
+          render: (r) => <RunLink pkgId={r.hunt_package_id} runId={r.run_id} display={r.run_id_display} />,
+        },
         { header: 'IOC', render: (r) => <span className="font-mono">{cell(r.ioc)}</span> },
         { header: 'Type', render: (r) => cell(r.ioc_type) },
         { header: 'Action', render: (r) => cell(r.action) },
@@ -188,6 +250,10 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
         {
           header: 'Hunt',
           render: (r) => <HuntLink id={r.hunt_package_id} display={r.hunt_id_display} />,
+        },
+        {
+          header: 'Run',
+          render: (r) => <RunLink pkgId={r.hunt_package_id} runId={r.run_id} display={r.run_id_display} />,
         },
         { header: 'Type', render: (r) => cell(r.task_type) },
         { header: 'Connector', render: (r) => cell(r.siem_connector) },
@@ -224,13 +290,72 @@ function columnsFor(category: string): { header: string; render: (r: ExplorerRow
         { header: 'Hunts', render: (r) => <SourceBadges sources={r.sources} /> },
       ]
     case 'feed_sources':
+      // issue-local-034: rebuilt from unrelated ingestion-pipeline stats
+      // into evidence-source aggregation — same {name, count, sources}
+      // shape the other global-style categories already use.
       return [
-        { header: 'Source', render: (r) => cell(r.source) },
+        { header: 'Source', render: (r) => cell(r.name) },
         { header: 'Entries', render: (r) => cell(r.count) },
+        { header: 'Hunts', render: (r) => <SourceBadges sources={r.sources} /> },
       ]
     default:
       return []
   }
+}
+
+// issue-local-034: expandable evidence row — reuses EvidenceContent.tsx (the
+// same preview HuntDetail's Evidence tab uses) instead of a second copy.
+// Explorer's evidence rows are intentionally lightweight (no extracted_text/
+// mime_type — that would bloat every page load), so expanding lazily fetches
+// the item's package's full evidence list; react-query dedupes/caches by
+// hunt_package_id, so expanding a second row from the same package is free.
+function EvidenceExplorerRow({ row, columns }: { row: ExplorerRow; columns: { header: string; render: (r: ExplorerRow) => React.ReactNode }[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const { data: items, isLoading } = useQuery({
+    queryKey: ['th-evidence', row.hunt_package_id],
+    queryFn: () => api.threatHunting.listEvidence(row.hunt_package_id!),
+    enabled: expanded && !!row.hunt_package_id,
+  })
+  const item = items?.find((i) => i.id === row.id)
+
+  return (
+    <>
+      <tr className="border-t border-gray-800/60">
+        <td className="py-1.5 pl-2 pr-0 w-6">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-gray-500 hover:text-gray-300"
+            aria-label={expanded ? 'Hide preview' : 'Show preview'}
+          >
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+        </td>
+        {columns.map((col) => (
+          <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
+            {col.render(row)}
+          </td>
+        ))}
+      </tr>
+      {expanded && (
+        <tr className="border-t border-gray-800/40 bg-gray-950/40">
+          <td colSpan={columns.length + 1} className="p-3">
+            {isLoading ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : item ? (
+              <div className="card min-h-[160px] flex flex-col">
+                <EvidenceContent item={item} pkgId={row.hunt_package_id!} />
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 py-2">Evidence item not found.</p>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  )
 }
 
 export default function DataExplorer() {
@@ -340,6 +465,7 @@ export default function DataExplorer() {
             <table className="w-full min-w-[700px]">
               <thead>
                 <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+                  {category === 'evidence' && <th className="w-6" />}
                   {columns.map((col) => (
                     <th key={col.header} className="text-left py-1.5 px-2">
                       {col.header}
@@ -348,15 +474,19 @@ export default function DataExplorer() {
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((row, i) => (
-                  <tr key={row.id ?? i} className="border-t border-gray-800/60">
-                    {columns.map((col) => (
-                      <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
-                        {col.render(row)}
-                      </td>
+                {category === 'evidence'
+                  ? pageRows.map((row, i) => (
+                      <EvidenceExplorerRow key={row.id ?? i} row={row} columns={columns} />
+                    ))
+                  : pageRows.map((row, i) => (
+                      <tr key={row.id ?? i} className="border-t border-gray-800/60">
+                        {columns.map((col) => (
+                          <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
+                            {col.render(row)}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>
