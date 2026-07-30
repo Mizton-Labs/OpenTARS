@@ -225,6 +225,38 @@ def test_viewer_still_reaches_hunts_and_threat_intel():
     assert "Threat Intel" in found
 
 
+def test_archived_hunt_is_found_and_tagged(monkeypatch):
+    # issue-local-034: global search reverses the usual archived-exclusion —
+    # an archived hunt stays findable, tagged, unlike the main package list/
+    # Dashboard (which the `isolated_sources` fixture's fake_packages does
+    # NOT model — this test patches list_hunt_packages directly to also
+    # assert include_archived=True was actually requested).
+    import backend.threat_hunting.db as th_db
+
+    captured_kwargs: dict = {}
+
+    async def fake_packages_with_archived(*, search=None, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [
+            {
+                "id": "pkg-archived",
+                "name": "Old Lazarus hunt",
+                "description": "",
+                "status": "archived",
+                "hunt_id_display": "TH02",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_hunt_packages", fake_packages_with_archived)
+
+    found = _sections(asyncio.run(global_search("lazarus", role="admin")))
+
+    assert captured_kwargs.get("include_archived") is True
+    hits = found["Threat Hunting"]
+    assert len(hits) == 1
+    assert hits[0]["archived"] is True
+
+
 # ── No secrets in the index ───────────────────────────────────────────────────
 
 

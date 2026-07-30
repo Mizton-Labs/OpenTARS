@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 11
+_TH_SCHEMA_VERSION = 12
 
 
 def _utc_now_iso() -> str:
@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     fetch_metadata   TEXT,
     watcher_snapshot TEXT,
     created_at       TEXT NOT NULL,
-    provenance_notes TEXT
+    provenance_notes TEXT,
+    source_entity    TEXT
 );
 """
 
@@ -136,7 +137,8 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     run_config          TEXT DEFAULT '{}',
     run_seq             INTEGER,
     threat_intel_status TEXT,
-    created_by          TEXT
+    created_by          TEXT,
+    archived            INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -458,6 +460,29 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         logger.info(
             "Migrated threat_hunting.db to schema v11 (deduped extracted_iocs, added unique index)"
         )
+    if current_version < 12:
+        # v12 (issue-local-034): per-run archive (independent of a run's
+        # generation_status, which stays about pipeline execution state, and
+        # independent of the parent package's own status/archived flag —
+        # a single bad/duplicate run can be archived without touching the
+        # rest of the package) + evidence_items.source_entity, the resolved
+        # "where did this evidence come from" entity (URL domain, or a
+        # best-effort LLM-identified vendor/organization for file/text/
+        # watcher evidence) backing the Data Explorer "Feed sources" tab.
+        try:
+            await db.execute(
+                "ALTER TABLE hunting_packages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE evidence_items ADD COLUMN source_entity TEXT")
+        except Exception:
+            pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v12 "
+            "(added hunting_packages.archived, evidence_items.source_entity)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -722,8 +747,13 @@ async def list_hunt_packages(
     search: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    include_archived: bool = False,
 ) -> list[dict[str, Any]]:
-    """List all non-archived hunt packages with evidence counts and latest run summary.
+    """List hunt packages with evidence counts and latest run summary.
+    Excludes archived packages by default (every existing call site — main
+    package list, Dashboard); pass ``include_archived=True`` to include them
+    too (issue-local-034: global search does this, so an archived hunt stays
+    findable there — tagged, not simply gone).
 
     issue-006-D: each package dict gains three optional keys:
       - ``phases``         list[{step, status, elapsed_s}] from latest run's step_logs
@@ -744,7 +774,7 @@ async def list_hunt_packages(
     plain text). All filtering happens in the base query; everything below
     it already keys off the resulting ``pkg_ids``, so it cascades for free.
     """
-    where_clauses = ["hp.status != 'archived'"]
+    where_clauses = ["1=1"] if include_archived else ["hp.status != 'archived'"]
     params: list[Any] = []
     if date_from:
         where_clauses.append("hp.created_at >= ?")
@@ -891,14 +921,25 @@ async def list_hunt_packages(
 
 
 def _matching_pkg_where(
-    *, search: str | None, date_from: str | None, date_to: str | None
+    *,
+    search: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    include_archived: bool = False,
 ) -> tuple[str, list[Any]]:
-    """Build the WHERE clause + params for "which non-archived hunt packages
-    match this search/date-range filter" — the same deep-search and
-    date-bound rules as ``list_hunt_packages``, shared by
-    ``get_hunt_dashboard_stats`` and ``list_explorer_rows`` so the two always
-    agree on what counts as "matching"."""
-    where_clauses = ["hp.status != 'archived'"]
+    """Build the WHERE clause + params for "which hunt packages match this
+    search/date-range filter" — the same deep-search and date-bound rules as
+    ``list_hunt_packages``, shared by ``get_hunt_dashboard_stats`` and
+    ``list_explorer_rows`` so the two always agree on what counts as
+    "matching".
+
+    issue-local-034: *include_archived* defaults to False, preserving every
+    existing call site's behavior (Dashboard, main package list). Data
+    Explorer and global search pass True — archived packages should stay
+    findable there (tagged "Archived"), just not in the default/active
+    views.
+    """
+    where_clauses = ["1=1"] if include_archived else ["hp.status != 'archived'"]
     params: list[Any] = []
     if date_from:
         where_clauses.append("hp.created_at >= ?")
@@ -928,8 +969,11 @@ async def _matching_pkg_rows(
     search: str | None,
     date_from: str | None,
     date_to: str | None,
+    include_archived: bool = False,
 ) -> list[aiosqlite.Row]:
-    where_sql, params = _matching_pkg_where(search=search, date_from=date_from, date_to=date_to)
+    where_sql, params = _matching_pkg_where(
+        search=search, date_from=date_from, date_to=date_to, include_archived=include_archived
+    )
     cur = await db.execute(
         "SELECT hp.id, hp.status, hp.name, hp.hunt_seq, hp.created_at "
         f"FROM hunt_packages hp WHERE {where_sql}",  # noqa: S608
@@ -1134,9 +1178,19 @@ EXPLORER_CATEGORIES = frozenset(
     }
 )
 
-_EXPLORER_GLOBAL_CATEGORIES = frozenset(
-    {"threat_actors", "campaigns", "malware_families", "ttps", "feed_sources"}
-)
+_EXPLORER_GLOBAL_CATEGORIES = frozenset({"threat_actors", "campaigns", "malware_families", "ttps"})
+
+
+def _explorer_row_matches(search: str | None, *values: Any) -> bool:
+    """Row-level search match (issue-local-034) — used by every hunt-scoped
+    Data Explorer category so "search" actually filters to rows that
+    THEMSELVES match, not every row of a package that matches somewhere
+    else. Same case-insensitive substring rule the global categories
+    (threat_actors/campaigns/...) already use."""
+    if not search:
+        return True
+    needle = search.lower()
+    return any(needle in str(v).lower() for v in values if v)
 
 
 async def list_explorer_rows(
@@ -1150,13 +1204,19 @@ async def list_explorer_rows(
     Explorer (issue-local-033).
 
     Hunt-scoped categories (hunts/runs/evidence/hypotheses/hunting_leads/
-    queries/iocs/siem_searches) are filtered by the same search/date-range
-    rules ``get_hunt_dashboard_stats`` uses — the row set here always backs
-    the same numbers that function reports for the same filter.
+    queries/iocs/siem_searches/feed_sources) are filtered by the same
+    search/date-range rules ``get_hunt_dashboard_stats`` uses to decide
+    which PACKAGES are in scope — but *search* is then also applied a
+    second time, per row, against that category's own displayed field(s)
+    (issue-local-034 fix: previously a package matching anywhere returned
+    every one of its rows unfiltered). Archived packages/runs are included
+    here (unlike the Dashboard/main package list), tagged rather than
+    hidden — Data Explorer is a "see everything" surface.
 
-    The five Threat Intel categories are global aggregates (see that
-    function's docstring for why) — *date_from*/*date_to* are ignored for
-    them, and *search* instead matches the entity's own name/title.
+    The four remaining Threat Intel categories are global aggregates (see
+    ``_global_explorer_rows``'s docstring for why) — *date_from*/*date_to*
+    are ignored for them, and *search* instead matches the entity's own
+    name/title.
     """
     import json as _json
 
@@ -1170,7 +1230,24 @@ async def list_explorer_rows(
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        pkg_rows = await _matching_pkg_rows(db, search=search, date_from=date_from, date_to=date_to)
+        # issue-local-034: include_archived=True — Explorer is a "see
+        # everything, tagged" surface, unlike the Dashboard/main list.
+        #
+        # search is only applied at the PACKAGE level for "hunts" itself
+        # (there, package fields ARE the row). Every other category now does
+        # its own row-level match below — passing search here too would
+        # first narrow the candidate packages by fields most categories
+        # don't even have (evidence/siem_searches/hunting_leads/queries
+        # aren't referenced by _matching_pkg_where at all), making a
+        # genuinely-matching row unreachable whenever its parent package
+        # doesn't ALSO happen to match on name/description/other blobs.
+        pkg_rows = await _matching_pkg_rows(
+            db,
+            search=search if category == "hunts" else None,
+            date_from=date_from,
+            date_to=date_to,
+            include_archived=True,
+        )
         pkg_ids = tuple(r["id"] for r in pkg_rows)
         if not pkg_ids:
             return []
@@ -1179,6 +1256,8 @@ async def list_explorer_rows(
         name_by_pkg = {r["id"]: r["name"] for r in pkg_rows}
 
         if category == "hunts":
+            # Package-level search already IS the row match here — no
+            # second per-row filter needed.
             return [
                 {
                     "id": r["id"],
@@ -1189,10 +1268,14 @@ async def list_explorer_rows(
                 for r in pkg_rows
             ]
 
+        if category == "feed_sources":
+            entities = await aggregate_evidence_sources(pkg_ids)
+            return [e for e in entities if _explorer_row_matches(search, e["name"])]
+
         if category == "runs":
             cur = await db.execute(
                 "SELECT id, hunt_package_id, llm_model, generation_status, research_effort, "
-                "       run_seq, created_at "
+                "       run_seq, created_at, archived "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY created_at DESC",
                 pkg_ids,
@@ -1202,17 +1285,27 @@ async def list_explorer_rows(
             out = []
             for r in rows:
                 hunt_id = hunt_id_by_pkg.get(r["hunt_package_id"], "")
+                run_id_display = format_run_id(hunt_id, r["run_seq"])
+                if not _explorer_row_matches(
+                    search,
+                    r["llm_model"],
+                    r["generation_status"],
+                    r["research_effort"],
+                    run_id_display,
+                ):
+                    continue
                 out.append(
                     {
                         "id": r["id"],
                         "hunt_package_id": r["hunt_package_id"],
                         "hunt_id_display": hunt_id,
-                        "run_id_display": format_run_id(hunt_id, r["run_seq"]),
+                        "run_id_display": run_id_display,
                         "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
                         "llm_model": r["llm_model"] or "unknown",
                         "generation_status": r["generation_status"],
                         "research_effort": r["research_effort"],
                         "created_at": r["created_at"],
+                        "archived": bool(r["archived"]),
                     }
                 )
             return out
@@ -1226,68 +1319,97 @@ async def list_explorer_rows(
             )
             rows = await cur.fetchall()
             await cur.close()
-            return [
-                {
-                    "id": r["id"],
-                    "hunt_package_id": r["hunt_package_id"],
-                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
-                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
-                    "item_type": r["item_type"],
-                    "label": r["label"] or r["source_ref"] or "",
-                    "created_at": r["created_at"],
-                }
-                for r in rows
-            ]
+            out = []
+            for r in rows:
+                if not _explorer_row_matches(search, r["label"], r["source_ref"], r["item_type"]):
+                    continue
+                out.append(
+                    {
+                        "id": r["id"],
+                        "hunt_package_id": r["hunt_package_id"],
+                        "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
+                        "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                        "item_type": r["item_type"],
+                        "label": r["label"] or r["source_ref"] or "",
+                        "created_at": r["created_at"],
+                    }
+                )
+            return out
 
         if category == "iocs":
             cur = await db.execute(
-                "SELECT id, hunt_package_id, ioc, ioc_type, action, noise_score, created_at "
-                f"FROM extracted_iocs WHERE hunt_package_id IN ({placeholders}) "
-                "ORDER BY created_at DESC",
+                "SELECT x.id, x.hunt_package_id, x.run_id, x.ioc, x.ioc_type, x.action, "
+                "       x.noise_score, x.created_at, hpk.run_seq "
+                "FROM extracted_iocs x "
+                "LEFT JOIN hunting_packages hpk ON hpk.id = x.run_id "
+                f"WHERE x.hunt_package_id IN ({placeholders}) "  # noqa: S608
+                "ORDER BY x.created_at DESC",
                 pkg_ids,
             )
             rows = await cur.fetchall()
             await cur.close()
-            return [
-                {
-                    "id": r["id"],
-                    "hunt_package_id": r["hunt_package_id"],
-                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
-                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
-                    "ioc": r["ioc"],
-                    "ioc_type": r["ioc_type"],
-                    "action": r["action"],
-                    "noise_score": r["noise_score"],
-                    "created_at": r["created_at"],
-                }
-                for r in rows
-            ]
+            out = []
+            for r in rows:
+                if not _explorer_row_matches(search, r["ioc"]):
+                    continue
+                hunt_id = hunt_id_by_pkg.get(r["hunt_package_id"], "")
+                out.append(
+                    {
+                        "id": r["id"],
+                        "hunt_package_id": r["hunt_package_id"],
+                        "run_id": r["run_id"],
+                        "run_id_display": format_run_id(hunt_id, r["run_seq"])
+                        if r["run_seq"]
+                        else "",
+                        "hunt_id_display": hunt_id,
+                        "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                        "ioc": r["ioc"],
+                        "ioc_type": r["ioc_type"],
+                        "action": r["action"],
+                        "noise_score": r["noise_score"],
+                        "created_at": r["created_at"],
+                    }
+                )
+            return out
 
         if category == "siem_searches":
             cur = await db.execute(
-                "SELECT id, hunt_package_id, task_type, siem_connector, status, query_text, "
-                "       created_at, completed_at "
-                f"FROM task_results WHERE hunt_package_id IN ({placeholders}) "
-                "ORDER BY created_at DESC",
+                "SELECT t.id, t.hunt_package_id, t.run_id, t.task_type, t.siem_connector, "
+                "       t.status, t.query_text, t.created_at, t.completed_at, hpk.run_seq "
+                "FROM task_results t "
+                "LEFT JOIN hunting_packages hpk ON hpk.id = t.run_id "
+                f"WHERE t.hunt_package_id IN ({placeholders}) "  # noqa: S608
+                "ORDER BY t.created_at DESC",
                 pkg_ids,
             )
             rows = await cur.fetchall()
             await cur.close()
-            return [
-                {
-                    "id": r["id"],
-                    "hunt_package_id": r["hunt_package_id"],
-                    "hunt_id_display": hunt_id_by_pkg.get(r["hunt_package_id"], ""),
-                    "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
-                    "task_type": r["task_type"],
-                    "siem_connector": r["siem_connector"],
-                    "status": r["status"],
-                    "query_text": r["query_text"],
-                    "created_at": r["created_at"],
-                    "completed_at": r["completed_at"],
-                }
-                for r in rows
-            ]
+            out = []
+            for r in rows:
+                if not _explorer_row_matches(
+                    search, r["task_type"], r["siem_connector"], r["query_text"], r["status"]
+                ):
+                    continue
+                hunt_id = hunt_id_by_pkg.get(r["hunt_package_id"], "")
+                out.append(
+                    {
+                        "id": r["id"],
+                        "hunt_package_id": r["hunt_package_id"],
+                        "run_id": r["run_id"],
+                        "run_id_display": format_run_id(hunt_id, r["run_seq"])
+                        if r["run_seq"]
+                        else "",
+                        "hunt_id_display": hunt_id,
+                        "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
+                        "task_type": r["task_type"],
+                        "siem_connector": r["siem_connector"],
+                        "status": r["status"],
+                        "query_text": r["query_text"],
+                        "created_at": r["created_at"],
+                        "completed_at": r["completed_at"],
+                    }
+                )
+            return out
 
         # hypotheses / hunting_leads / queries — flattened out of each
         # matching run's JSON blob.
@@ -1298,7 +1420,7 @@ async def list_explorer_rows(
         }
         json_field = field_by_category[category]
         cur = await db.execute(
-            f"SELECT hunt_package_id, run_seq, created_at, {json_field} "  # noqa: S608
+            f"SELECT id, hunt_package_id, run_seq, created_at, {json_field} "  # noqa: S608
             f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
             "ORDER BY created_at DESC",
             pkg_ids,
@@ -1317,9 +1439,13 @@ async def list_explorer_rows(
             for item in items:
                 if not isinstance(item, dict):
                     continue
+                extra_text = item.get("query") if category == "queries" else item.get("description")
+                if not _explorer_row_matches(search, item.get("title"), extra_text):
+                    continue
                 row = {
                     "id": item.get("id", ""),
                     "hunt_package_id": r["hunt_package_id"],
+                    "run_id": r["id"],
                     "hunt_id_display": hunt_id,
                     "run_id_display": format_run_id(hunt_id, r["run_seq"]),
                     "hunt_name": name_by_pkg.get(r["hunt_package_id"], ""),
@@ -1361,14 +1487,6 @@ async def _global_explorer_rows(category: str, *, search: str | None) -> list[di
             for r in await aggregate_ttps()
             if _matches(r["technique_name"]) or _matches(r["technique_id"])
         ]
-    if category == "feed_sources":
-        from backend.db.manager import get_summary
-
-        return [
-            {"source": row.get("source"), "count": row.get("count", 0)}
-            for row in await get_summary()
-            if row.get("source") != "__total__" and _matches(str(row.get("source") or ""))
-        ]
     raise ValueError(f"unknown global Data Explorer category: {category!r}")  # pragma: no cover
 
 
@@ -1389,6 +1507,87 @@ async def update_hunt_package(
         )
         await db.commit()
     return await get_hunt_package(pkg_id)
+
+
+async def set_run_archived(run_id: str, archived: bool) -> bool:
+    """Toggle a single run's archived flag (issue-local-034) — independent
+    of that run's ``generation_status`` (pipeline execution state, not
+    visibility) and independent of the *package's* own status, so a single
+    bad/duplicate run can be archived without touching the rest of the
+    package or its other runs. Returns False if the run doesn't exist."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE hunting_packages SET archived = ? WHERE id = ?",
+            (1 if archived else 0, run_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def hard_delete_run(run_id: str) -> bool:
+    """Permanently delete one run and every row that references it
+    (issue-local-034). Irreversible — callers must gate this on admin-only
+    access (routes_threat_hunting.py) and a strong client-side confirmation.
+    Returns False if the run doesn't exist."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute("SELECT id FROM hunting_packages WHERE id = ?", (run_id,))
+        row = await cur.fetchone()
+        await cur.close()
+        if not row:
+            return False
+        for table in (
+            "extracted_iocs",
+            "task_results",
+            "hunt_reports",
+            "run_comments",
+            "threat_intel_analysis",
+        ):
+            await db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))  # noqa: S608
+        await db.execute("DELETE FROM hunting_packages WHERE id = ?", (run_id,))
+        await db.commit()
+    return True
+
+
+async def hard_delete_package(pkg_id: str) -> bool:
+    """Permanently delete a hunt package, every one of its runs, and every
+    row that references either (issue-local-034). Irreversible — callers
+    must gate this on admin-only access and a strong client-side
+    confirmation. Returns False if the package doesn't exist."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute("SELECT id FROM hunt_packages WHERE id = ?", (pkg_id,))
+        row = await cur.fetchone()
+        await cur.close()
+        if not row:
+            return False
+        cur = await db.execute(
+            "SELECT id FROM hunting_packages WHERE hunt_package_id = ?", (pkg_id,)
+        )
+        run_ids = [r[0] for r in await cur.fetchall()]
+        await cur.close()
+        for run_id in run_ids:
+            for table in (
+                "extracted_iocs",
+                "task_results",
+                "hunt_reports",
+                "run_comments",
+                "threat_intel_analysis",
+            ):
+                await db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))  # noqa: S608
+        await db.execute("DELETE FROM hunting_packages WHERE hunt_package_id = ?", (pkg_id,))
+        # Package-scoped rows not already covered by run_id above — a run's
+        # extracted_iocs/task_results could in principle predate run_id
+        # tracking (legacy rows), so also sweep by hunt_package_id directly.
+        for table in ("extracted_iocs", "task_results", "hunt_reports", "threat_intel_analysis"):
+            await db.execute(f"DELETE FROM {table} WHERE hunt_package_id = ?", (pkg_id,))  # noqa: S608
+        await db.execute(
+            "DELETE FROM evidence_blobs WHERE evidence_item_id IN "
+            "(SELECT id FROM evidence_items WHERE hunt_package_id = ?)",
+            (pkg_id,),
+        )
+        await db.execute("DELETE FROM evidence_items WHERE hunt_package_id = ?", (pkg_id,))
+        await db.execute("DELETE FROM hunt_packages WHERE id = ?", (pkg_id,))
+        await db.commit()
+    return True
 
 
 # ── Evidence Item CRUD ────────────────────────────────────────────────────────
@@ -1413,6 +1612,7 @@ async def add_evidence_item(
     watcher_snapshot: dict | None = None,
     provenance_notes: str = "",
     blob_data: bytes | None = None,
+    source_entity: str | None = None,
 ) -> dict[str, Any]:
     import json
 
@@ -1425,8 +1625,8 @@ async def add_evidence_item(
               (id, hunt_package_id, item_type, label, source_ref, content_hash,
                mime_type, fetch_url, final_url, extracted_text, parser_used,
                parser_version, parse_status, parse_warnings, fetch_metadata,
-               watcher_snapshot, created_at, provenance_notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               watcher_snapshot, created_at, provenance_notes, source_entity)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 item_id,
@@ -1447,6 +1647,7 @@ async def add_evidence_item(
                 json.dumps(watcher_snapshot or {}),
                 now,
                 provenance_notes,
+                source_entity,
             ),
         )
         if blob_data is not None:
@@ -1604,6 +1805,7 @@ async def update_evidence_item(
     final_url: str | None = None,
     content_hash: str | None = None,
     mime_type: str | None = None,
+    source_entity: str | None = None,
 ) -> None:
     """Partially update an evidence item.
 
@@ -1644,6 +1846,9 @@ async def update_evidence_item(
     if mime_type is not None:
         set_clauses.append("mime_type = ?")
         params.append(mime_type)
+    if source_entity is not None:
+        set_clauses.append("source_entity = ?")
+        params.append(source_entity)
 
     if not set_clauses:
         return  # nothing to update
@@ -2211,7 +2416,8 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         cur = await db.execute(
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
-                      step_logs, deep_retrohunt, run_seq, threat_intel_status, created_by
+                      step_logs, deep_retrohunt, run_seq, threat_intel_status, created_by,
+                      archived
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -2249,6 +2455,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         run["removed_ioc_count"] = removed_count
         run["has_report"] = run["id"] in report_run_ids
         run["run_id_display"] = format_run_id(hunt_id_display, run_seq)
+        run["archived"] = bool(run["archived"])
         result.append(run)
     return result
 
@@ -2777,6 +2984,63 @@ async def aggregate_ttps() -> list[dict[str, Any]]:
 
     out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_technique.values()]
     out.sort(key=lambda r: -len(r["sources"]))
+    return out
+
+
+#: Fallback bucket names (issue-local-034) for evidence whose source_entity
+#: couldn't be resolved (LLM found nothing, or resolution hasn't run yet —
+#: e.g. a file still parse_status='pending') — keyed by item_type so the
+#: Feed Sources tab never silently drops rows, it groups them honestly.
+_UNRESOLVED_SOURCE_BUCKETS = {
+    "file": "Manual upload (unidentified source)",
+    "manual_text": "Manual note (unidentified source)",
+    "watcher_feed": "Watcher feed (unidentified source)",
+    "url": "URL (unresolved)",
+}
+
+
+async def aggregate_evidence_sources(pkg_ids: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Group evidence within *pkg_ids* by resolved ``source_entity`` — backs
+    the Data Explorer "Feed sources" tab (issue-local-034): where hunt
+    evidence actually came from (a URL's domain, or a best-effort
+    LLM-identified vendor/organization for file/text/watcher evidence — see
+    ``evidence_source.py``), not the unrelated ingestion-pipeline stats this
+    tab showed before. Same ``{name, count, sources}`` shape the other
+    global-style categories (threat_actors/campaigns/...) already use, so
+    the frontend's existing ``SourceBadges`` rendering just works."""
+    if not pkg_ids:
+        return []
+    placeholders = ",".join("?" for _ in pkg_ids)
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT ei.hunt_package_id, ei.item_type, ei.source_entity, "
+            "       hp.name AS hunt_name, hp.hunt_seq "
+            "FROM evidence_items ei "
+            "JOIN hunt_packages hp ON hp.id = ei.hunt_package_id "
+            f"WHERE ei.hunt_package_id IN ({placeholders})",  # noqa: S608
+            pkg_ids,
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+
+    prefix = load_hunt_id_prefix()
+    by_entity: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        entity = (row["source_entity"] or "").strip() or _UNRESOLVED_SOURCE_BUCKETS.get(
+            row["item_type"], "Unidentified source"
+        )
+        entry = by_entity.setdefault(entity, {"name": entity, "count": 0, "sources": {}})
+        entry["count"] += 1
+        pkg_id = row["hunt_package_id"]
+        entry["sources"][pkg_id] = {
+            "id": pkg_id,
+            "name": row["hunt_name"],
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+        }
+
+    out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_entity.values()]
+    out.sort(key=lambda r: -r["count"])
     return out
 
 

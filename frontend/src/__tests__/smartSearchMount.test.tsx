@@ -70,7 +70,7 @@ function renderAt(path: string) {
   )
 }
 
-const searchButton = () => screen.queryByRole('button', { name: /search opentars/i })
+const searchButton = () => screen.queryByRole('button', { name: /search & assistant/i })
 
 beforeEach(() => vi.clearAllMocks())
 

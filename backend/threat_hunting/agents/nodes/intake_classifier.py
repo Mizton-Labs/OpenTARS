@@ -193,6 +193,18 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                     result = await asyncio.to_thread(
                         extract_file, raw, label, mime_type_hint, parser_mode
                     )
+                    # issue-local-034: best-effort vendor/organization
+                    # extraction, now that the file's text is available —
+                    # soft-fail, never blocks the pipeline.
+                    from backend.threat_hunting.evidence_source import (
+                        resolve_source_entity_from_text,
+                    )
+
+                    source_entity = await resolve_source_entity_from_text(
+                        result["extracted_text"],
+                        provider_name=state.get("provider_name"),
+                        model_name=state.get("model_name"),
+                    )
                     await th_db.update_evidence_item(
                         item_id,
                         extracted_text=result["extracted_text"],
@@ -202,6 +214,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                         parse_warnings=result["parse_warnings"],
                         content_hash=result["content_hash"],
                         mime_type=result["mime_type"],
+                        source_entity=source_entity,
                     )
                     debug_lines.append(
                         f"FILE_PARSE_OK: {label} → {len(result['extracted_text'])} chars "
