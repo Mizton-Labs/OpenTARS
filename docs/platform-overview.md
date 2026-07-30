@@ -1,7 +1,7 @@
 # OpenTARS — Platform Overview
 
 **Audience:** Security managers, SOC leads, non-technical stakeholders.  
-**Last updated:** 2026-06-21
+**Last updated:** 2026-07-29
 
 ---
 
@@ -193,6 +193,31 @@ analyst can:
 
 This gate is enforced at the infrastructure level, not just in the UI. The SIEM
 connector will not receive any query until the database records an explicit approval.
+
+---
+
+## Ask OpenTARS a Question
+
+Beyond the hunting pipeline, a second, smaller AI capability sits behind a search
+icon on every page: **global search** and **the Assistant**. Global search finds
+hunt packages, threat intel, watchers, and settings by keyword, instantly. The
+Assistant goes further — ask it a plain-English question ("what CVEs have we seen
+across our hunts?", "which threat actors are we tracking?") and it answers from
+whatever you already have access to, with the sources it used cited alongside the
+answer. Conversations are saved automatically as named sessions you can revisit,
+rename, or export.
+
+The guardrail is structural, not just a prompt instruction: the Assistant only
+ever retrieves and summarizes data the asking user's own role could already
+reach — the same lookup the search box itself uses — and it has no ability to
+create, change, or execute anything. Answering a question and running a hunt are
+two different, separately-gated capabilities.
+
+A **Dashboard** (the Threat Hunting module's default view) and a **Data
+Explorer** (the row-level data behind every Dashboard number, one click away)
+round out the day-to-day picture: hunt/run counts, activity over time, IOC and
+evidence breakdowns, and the threat actors/campaigns/malware families/MITRE
+techniques identified across every hunt, all in one place.
 
 ---
 

@@ -1,7 +1,8 @@
 # Architecture — OpenTARS v0.1
 
-**Status:** Complete (Threat Hunting phases 1–6 implemented)
-**Last updated:** 2026-06-21
+**Status:** Complete (Threat Hunting phases 1–6 implemented; global search/SmartSearch,
+Assistant sessions, Threat Hunting Dashboard, and Data Explorer added since)
+**Last updated:** 2026-07-29
 
 ---
 
@@ -37,6 +38,7 @@ structured reports. All data is stored locally in SQLite; no external database i
     │   watchers.db                     │
     │   mapping_versions.db             │
     │   threat_hunting.db               │
+    │   assistant_sessions.db           │
     └───────────────────────────────────┘
 ```
 
@@ -102,7 +104,7 @@ structured reports. All data is stored locally in SQLite; no external database i
 | Viewer | `src/pages/Viewer.tsx` | Summary table + live entry table + Normalized tab (client-side viewer: bounded `pagination_max` fetch, in-browser paging/search/per-field filters/column picker/per-source colours — prompts-043, ADR-0015; the 021F mapping_version filter was removed from this surface) |
 | Smart Mappings | `src/pages/SmartMappings.tsx` | LLM proposal review queue with outcome badges and auto-applied/discarded audit toggle (021E-2 + 021E-4) |
 | Configuration | `src/pages/Configuration.tsx` | Tabbed config (reordered prompts-043, default `local-feed`): Local Feed, Remote Feed, External RSS, External API, Listener Endpoint, Global Field Defaults, Application (now hosts `PaginationMaxSetting`), Normalizer (sub-tabs: Settings, Mapping versions [`MappingVersionsPanel.tsx`, 021F], Activity [`ActivityTab.tsx`, 021G]), LLM Providers (`src/pages/configuration/LLMProvidersTab.tsx`, 021D-2; rebuilt in 022 around per-card `ProviderCard` with symmetric Test/Save/Delete wired to per-provider CRUD; rewritten in 027 to mirror the wizard's Discover-then-Probe staging — the "Default model to use" dropdown reads from `draft.available_models` on first paint, a new "Discover Models" button calls the persisted discover route and PUTs the resulting list to disk, "Test connection" probes via the draft endpoint with `api_key: "***"` (relying on the 027 merge-stored-key branch), and Save is gated on a probe-since-last-edit hash so editing any gating field re-locks Save until a fresh green probe lands). The "Add LLM" entry point opens `components/AddProviderWizard.tsx` — a 4-stage modal (Identify → Connect to provider → Test Model → Add Provider) rewritten in 027 around `draftHash` / `lastProbedHash` so each stage gates the next and the final "Add Provider" button is not even mounted in the DOM until the probe gate is satisfied. 028 decoupled the stage-2 (model picker) reveal from the discover call's aggregate `status`: stage 2 now shows whenever a non-empty model list came back (any status — a 200 with models but backend `status==='error'` still surfaces the dropdown) or the server returned a 2xx empty catalog (`emptyCatalog` → free-text model input + an amber "Server reachable, 0 models published" note instead of a red error); a thrown discover error or a non-2xx transport failure still shows the red error and keeps stage 2 hidden. A shared `components/TestDetailsModal.tsx` renders the structured per-step transcript returned by both the Test and Discover routes (it still receives the real aggregate `status`; only the wizard gating is decoupled) |
-| About | `src/pages/About.tsx` | Version, git commit, backend health |
+| About | `src/pages/About.tsx` | Tabbed (issue-local-030): **General** (version, git commit + date, license, logo header — the original content), **API Docs** (`about/ApiDocsTab.tsx`, `docs/api-threat-hunting.md` rendered as styled HTML, split into one card per topic behind a table of contents), **API Swagger** (`about/ApiSwaggerTab.tsx`, vendored Swagger UI served from `/docs-assets` so it works air-gapped, document-relative `openapi_url` so it resolves correctly behind a reverse-proxy alias, defaults to the endpoints a scoped API key can reach with a "Show all endpoints" checkbox for the full schema). Both API tabs and `/docs`/`/redoc`/`/openapi.json` require a session even when reached directly (they sit outside `/api/`, which the auth middleware would otherwise skip) |
 | Assistant | `src/pages/Assistant.tsx` | SmartSearch chatbot as its own sidebar section (above Account) rather than only living behind the search drawer. Thin shell around `AssistantSessionProvider`'s shared context (see Search drawer row below) — same live conversation, same session, as the drawer's Smart tab, not an independent copy of it. Renders `AssistantSessionBar` (New/Save/Export/Delete/Sessions-picker, issue-local-032) |
 
 ### Threat Hunting Frontend
@@ -130,6 +132,7 @@ structured reports. All data is stored locally in SQLite; no external database i
 |---|---|---|
 | LLM Providers | `src/pages/configuration/LLMProvidersTab.tsx` | Multi-provider management (OpenAI, Anthropic, Ollama, compatible) |
 | SIEM Connectors | `src/pages/configuration/SiemConnectorsTab.tsx` | Splunk connector profiles (Phase 5) |
+| API Access | `src/pages/configuration/ApiAccessTab.tsx` | Scoped API access keys (issue-local-029) — enable/disable programmatic access, create/edit/test/delete keys, per-key scope editing (`backend/auth/api_scopes.py` is the single source of truth both this UI and the auth middleware enforce against). A key's secret is shown exactly once, at creation |
 | User Management | `src/pages/configuration/UserManagementTab.tsx` | Admin-only: create/delete users, reset passwords |
 
 ---
@@ -231,10 +234,14 @@ data/threat_hunting.db  (hunt_reports)
 | langchain-core | LangChain base abstractions and message types |
 | langchain-openai | OpenAI + compatible provider integration for LangGraph nodes |
 | langchain-anthropic | Anthropic provider integration for LangGraph nodes |
+| reportlab | PDF generation — hunt/comparison reports and Assistant session export (pure Python, no OS deps) |
 | React + Vite | Frontend framework + build tool |
 | Tailwind CSS | Utility-first styling |
 | @tanstack/react-query | Server state management |
 | react-router-dom | Client-side routing |
+| react-markdown + remark-gfm | Markdown rendering — the About page's API Docs tab and SmartSearch/Assistant chat replies (both lazy-loaded, kept out of the main bundle) |
+| @xyflow/react | Node/edge graph rendering — the Threat Hunting pipeline visualizer and the Hypothesis/Lead/IOC relationship chart |
+| mermaid | Alternate pipeline-visualization rendering mode (lazy-loaded) |
 
 ---
 

@@ -2,9 +2,10 @@
 
 This is the endpoint reference for `/api/threat-hunting/*` — hunt packages, evidence,
 IOCs, LLM-driven hunt generation, SIEM connectors/execution, reports, Threat
-Intelligence, run comparison, and cross-hunt tracking. It also documents the
-`/api/auth/api-keys/*` management endpoints used to create and administer the
-scoped API keys that can call this API programmatically (issue-local-029).
+Intelligence, run comparison, cross-hunt tracking, and the Dashboard/Data
+Explorer aggregate views. It also documents the `/api/auth/api-keys/*`
+management endpoints used to create and administer the scoped API keys that
+can call this API programmatically (issue-local-029).
 
 For the Threat Intel ingestion/query API (`/api/viewer`, `/api/normalizer`,
 `/api/ingest`, `/api/query/nl`, …), see the **API Client Script** section of
@@ -31,7 +32,7 @@ is then gated by **role**:
 |---|---|
 | `admin` | Full access to every route in this document. |
 | `threat-researcher` | Full read **and** write access to everything under `/api/threat-hunting/` (all HTTP methods). |
-| `threat-viewer` | **Read-only**, and only `GET` requests whose path starts with `/api/threat-hunting/packages` — this covers packages, evidence, IOCs, runs, reports, threat-intel, and comparison reads, but **not** `GET /connectors*` or `GET /tracking/*`. |
+| `threat-viewer` | **Read-only**, and only `GET` requests whose path starts with `/api/threat-hunting/packages`, `/api/threat-hunting/dashboard`, or `/api/threat-hunting/explorer/` — this covers packages, evidence, IOCs, runs, reports, threat-intel, comparison reads, the Dashboard, and the Data Explorer (issue-local-032/033), but **not** `GET /connectors*` or `GET /tracking/*`. |
 | `feed-sender` | No access to this API at all (listener-only account). |
 
 ### 2. API access key (scoped, programmatic — issue-local-029)
@@ -64,7 +65,7 @@ directly and never even look at the bearer token).
 | Scope id | Label | Grants |
 |---|---|---|
 | `hunts:create` | Create hunt packages | `POST /packages` |
-| `hunts:read` | List / view hunt packages | `GET /packages`, `GET /packages/{id}` |
+| `hunts:read` | List / view hunt packages | `GET /packages`, `GET /packages/{id}`, `GET /dashboard`, `GET /explorer/{category}` |
 | `hunts:update` | Update hunt packages | `PUT /packages/{id}` |
 | `hunts:delete` | Delete hunt packages | `DELETE /packages/{id}` |
 | `evidence:add` | Add evidence | `POST /packages/{id}/evidence/{file,url,text,watcher}` |
@@ -400,6 +401,66 @@ a package from every dashboard aggregation above without touching its data.
 
 **`DELETE /tracking/hunts/{pkg_id}`** — a real, permanent archive (same
 mechanism as `DELETE /packages/{pkg_id}`), not a correlation-only toggle.
+
+---
+
+## Dashboard & Data Explorer (issue-local-032/033/034)
+
+Unlike Threat Intel Tracking above, these two are reachable by a `threat-viewer`
+session (their paths aren't `/packages`-prefixed, but they're explicitly
+allowlisted anyway — see the role table at the top of this document).
+
+| Method | Path | Session role | API-key scope |
+|---|---|---|---|
+| GET | `/dashboard` | viewer+ | `hunts:read` |
+| GET | `/explorer/{category}` | viewer+ | `hunts:read` |
+
+**`GET /dashboard`** — aggregate counts backing the Threat Hunting Dashboard
+(the module's default view). Query params `search`, `date_from`, `date_to`
+use the same deep-search/date-range rules as `GET /packages`, and filter
+every hunt-scoped figure below the same way — the Threat Intel fields are the
+one exception, deliberately global (see next paragraph). Response:
+
+```
+packages_total, packages_by_status{}, hunts_per_day[{date,count}],
+runs_total, runs_by_model{}, hunts_by_model{},
+evidence_total, evidence_by_type{},
+hypotheses_total, hunting_leads_total, queries_total,
+iocs_extracted_total, iocs_kept_total, iocs_per_day[{date,count}],
+siem_searches_total, siem_searches_completed, siem_events_total,
+threat_actors_total, campaigns_total, malware_families_total,
+ttps_total, sources_processed
+```
+
+`hunts_per_day`/`iocs_per_day` are the matching rows bucketed by creation day,
+ascending, with no fixed window — a narrow date filter yields a short series,
+no filter yields the whole history. `threat_actors_total`/`campaigns_total`/
+`malware_families_total`/`ttps_total`/`sources_processed` are **not** filtered
+by `search`/`date_from`/`date_to` — same cross-hunt-aggregate convention as
+`GET /tracking/dashboard` above.
+
+**`GET /explorer/{category}`** — the row-level data behind one Dashboard
+panel/stat card. `category` is one of:
+
+```
+hunts, runs, evidence, hypotheses, hunting_leads, queries, iocs,
+siem_searches, threat_actors, campaigns, malware_families, ttps, feed_sources
+```
+
+An unknown category returns `404`. For the eight hunt-scoped categories
+(`hunts` through `siem_searches`), `search`/`date_from`/`date_to` filter
+exactly like `GET /dashboard`. For the five Threat Intel categories,
+`date_from`/`date_to` are ignored and `search` instead matches the entity's
+own name (or, for `ttps`, its MITRE technique id/name). Each row carries
+enough of its owning hunt package (`hunt_package_id`, `hunt_id_display`,
+`hunt_name`) to deep-link back to it; the response shape otherwise varies by
+category — see `backend/threat_hunting/db.py::list_explorer_rows` for the
+exact per-category fields.
+
+```bash
+curl -s -H "Authorization: Bearer ak_9792056a7694.<secret>" \
+  "http://localhost:8000/api/threat-hunting/explorer/iocs?search=ransomware"
+```
 
 ---
 

@@ -108,6 +108,23 @@ An agentic, LangGraph-driven pipeline that turns raw evidence into a structured,
   Downstream reports (per-run and comparison) are professionally branded, structured, and exportable.
 - **Evidence content viewer** — every uploaded evidence item stays accessible after upload: a sidebar
   list plus a content pane that renders PDFs inline and plaintext/extracted content in full.
+- **Dashboard** — the module's default view: hunt/run/evidence/IOC/hypothesis/lead/query counts,
+  two activity-over-time charts (hunts and IOCs per day), per-model breakdowns, and the threat
+  actors/campaigns/malware families/MITRE techniques identified across every hunt. Every panel links
+  straight to the matching **Data Explorer** category — the underlying row-level data, one click away.
+
+### Search & Assistant
+
+- **Global search** — a search icon on every page finds hunt packages, threat intel (raw and
+  normalized), watchers, settings pages, and documentation by keyword, scoped to whatever the
+  signed-in user's role can already see.
+- **Assistant chatbot** — ask a plain-English question and get an answer sourced from your own data,
+  with the matching results cited alongside it. Retrieval is deterministic and role-scoped exactly
+  like the search box; the model only ever summarizes results the asking user could already reach,
+  and it has no ability to create, change, or execute anything.
+- **Saved sessions** — conversations are automatically saved (default name is a timestamp), and can
+  be renamed, exported (Markdown/JSON/PDF), or deleted from a top bar available both in the search
+  drawer and on the Assistant's own full-page sidebar entry — the same conversation either way.
 
 ### Configuration
 
@@ -120,6 +137,11 @@ An agentic, LangGraph-driven pipeline that turns raw evidence into a structured,
 - **Authentication** — session-based login with four roles (`admin`, `threat-researcher`,
   `threat-viewer`, `feed-sender`), optional SSO/OIDC, per-user theme preferences, and an
   admin-configurable password policy.
+- **Scoped API access keys** — admin-issued bearer tokens for programmatic access to
+  `/api/threat-hunting/*`, authorized purely by an explicit, per-key set of scopes rather than the
+  key holder's own role — a key can never reach configuration, user management, or LLM-provider
+  endpoints, no matter what scopes it holds. A key's secret is shown exactly once, at creation. See
+  [`docs/api-threat-hunting.md`](docs/api-threat-hunting.md) for the full scope reference.
 - **Config-drift notice** — every live, operator-editable config file
   (`application.yaml`/`sources.yaml`/`feed-fields.yaml`/`normalizer-config.yaml`) is gitignored, so
   an operator's customizations never conflict with an upgrade. When a new release ships config content
@@ -436,8 +458,13 @@ Beyond the API and watchers, the web UI exposes the core day-to-day surfaces:
 ## API Client Script
 
 `scripts/api_client.py` is a standalone, dependency-free (Python standard library
-only) client for the API. Run it with any Python 3 — no virtualenv needed. Every
-command prints a JSON document to stdout.
+only) client for the **Threat Intel** API (`/api/viewer`, `/api/normalizer`,
+`/api/ingest`, `/api/query/nl`, …). Run it with any Python 3 — no virtualenv needed.
+Every command prints a JSON document to stdout.
+
+> For the **Threat Hunting** API instead, see
+> [Threat Hunting API Client](#threat-hunting-api-client) below — a separate,
+> equally dependency-free client covering every `/api/threat-hunting/*` route.
 
 ```bash
 scripts/api_client.py --help          # full syntax for all commands
@@ -654,6 +681,55 @@ scripts/api_client.py --url http://192.168.0.10:8001 send --data '[{"indicator":
 
 ---
 
+## Threat Hunting API Client
+
+`scripts/client_tests_demo/threat_hunting/api_client_threat_hunting.py` is a
+standalone, dependency-free (Python standard library only) client covering
+**every** `/api/threat-hunting/*` route: packages, evidence, IOCs,
+generation/runs, SIEM connectors, execution, reports, Threat Intelligence,
+comparison, run comments, cross-hunt tracking, and the Dashboard/Data
+Explorer aggregate views. Full endpoint reference:
+[`docs/api-threat-hunting.md`](docs/api-threat-hunting.md).
+
+```bash
+scripts/client_tests_demo/threat_hunting/api_client_threat_hunting.py --help
+```
+
+Authenticates the same two ways the API itself does — a session login
+(`--username`/`--password`, any role) or, for automation, a **scoped API
+access key** issued from Configuration → General → API Access
+(`--api-key '<client_id>.<secret>'`); a key is authorized purely by its
+granted scopes, and routes with no matching scope (connectors, execution,
+approve/reject, comparison generation, …) require the session-login path
+regardless of what scopes a key holds.
+
+```bash
+scripts/client_tests_demo/threat_hunting/api_client_threat_hunting.py \
+  --url http://192.168.0.10:8000 --username analyst packages-list
+
+scripts/client_tests_demo/threat_hunting/api_client_threat_hunting.py \
+  --url http://192.168.0.10:8000 --api-key 'ak_9792056a7694.<secret>' \
+  packages-create --name "Programmatic hunt"
+```
+
+A demo runner drives the client through a full T1–T17 test plan (create a
+package, attach evidence, run generation, register/test a SIEM connector,
+approve, generate/read a report, read the tracking dashboard, clean up) and
+saves every result to disk — same format as the Threat Intel demo runner
+above. See
+[`scripts/client_tests_demo/threat_hunting/README.md`](scripts/client_tests_demo/threat_hunting/README.md)
+for setup and the full test/command reference.
+
+```bash
+cp scripts/client_tests_demo/threat_hunting/.env.example \
+   scripts/client_tests_demo/threat_hunting/.env.test
+# edit .env.test: host/port (or url), user_hunt/pass_hunt (researcher or admin)
+
+bash scripts/client_tests_demo/threat_hunting/run_tests.sh
+```
+
+---
+
 ## Canonical schema reconciliation
 
 The normalizer's canonical namespace is sourced from
@@ -764,8 +840,11 @@ backend/                    # Python / FastAPI backend
 frontend/                   # React / TypeScript frontend
 data/                       # SQLite databases (auto-created, gitignored)
   watchers.db               # Watcher definitions + triggered-event history
+  threat_hunting.db         # Hunt packages, evidence, IOCs, runs, reports
+  assistant_sessions.db     # Saved Assistant/SmartSearch chat sessions
 docs/                       # Architecture, plans, session log
-scripts/                    # check.sh, test.sh, security-check.sh, api_client.py
+scripts/                    # check.sh, test.sh, security-check.sh, api_client.py,
+                             # client_tests_demo/{threat_intel,threat_hunting}/
 ```
 
 `config/application.yaml`, `config/sources.yaml`, `config/feed-fields.yaml`, and
