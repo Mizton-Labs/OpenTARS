@@ -165,7 +165,11 @@ function IOCRow({
         </td>
         {/* IOC value */}
         <td className="py-1.5 pr-2">
-          <span className={clsx('font-mono text-[12px] break-all', removed ? 'text-gray-500 line-through' : 'text-gray-200')}>
+          {/* issue-local-033 (2nd): same fix as HuntDetail.tsx's IOC tab —
+              the strikethrough already conveys "removed"; dimming the text
+              color too (on top of this row's own opacity-50) made it hard
+              to read. */}
+          <span className={clsx('font-mono text-[12px] break-all text-gray-200', removed && 'line-through')}>
             {ioc.ioc}
           </span>
         </td>

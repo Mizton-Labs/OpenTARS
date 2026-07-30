@@ -18,6 +18,7 @@ import {
   Bot,
   Gauge,
   Compass,
+  ScrollText,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -99,6 +100,10 @@ const [homeSection, ...moduleSections] = navSections
 const utilityItems: NavItem[] = [
   { to: 'configuration', label: 'Configuration', icon: Settings,   adminOnly: true,  authOnly: false },
   { to: 'assistant',     label: 'Assistant',     icon: Bot,        adminOnly: false, authOnly: false },
+  // issue-local-033: visible to every signed-in user — admin sees all four
+  // log categories/every actor, a normal user sees only their own User/Agent
+  // activity (enforced server-side, routes_audit.py).
+  { to: 'audit',         label: 'Audit',         icon: ScrollText, adminOnly: false, authOnly: false },
   { to: 'account',       label: 'Account',       icon: UserCircle, adminOnly: false, authOnly: true  },
   { to: 'about',         label: 'About',         icon: Info,       adminOnly: false, authOnly: false },
 ]

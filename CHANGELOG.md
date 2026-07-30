@@ -9,6 +9,35 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Audit section; fixed unreadable removed-IOC text (issue-local-033)
+
+- **New: an "Audit" sidebar entry**, visible to every signed-in user. Four tabs — Application, User,
+  Agent, System — each backed by `GET /api/audit/events?category=...`, with search and
+  page-size-selectable pagination (25/50/100/200, matching Data Explorer's pattern).
+  - **Application** — events bridged from the existing ingestion audit logger (feed pulls/pushes,
+    watcher triggers).
+  - **User** — every successful authenticated mutating request (POST/PUT/DELETE/PATCH), captured by
+    a single generic middleware so no per-route instrumentation was needed, plus login
+    success/failure (the one action that middleware structurally can't attribute, since no session
+    exists yet at the start of that request).
+  - **Agent** — AI/pipeline activity (hypothesis generation, SIEM execution steps, report/threat-intel
+    steps, ...), fed from the single existing choke point every one of those ~15 steps already calls
+    (`append_run_step_log`), attributed to the run's own creator.
+  - **System** — operational health: a dedicated startup/shutdown lifecycle logger, plus a bridge that
+    captures any WARNING+ log record anywhere in the app (failed DB inits, degraded providers, ...)
+    regardless of which module logged it.
+  - **Permissions**: an admin sees every category and every actor. A normal user only ever sees the
+    User and Agent tabs, and only their own activity within them — enforced server-side
+    (`routes_audit.py` always resolves the actor from the caller's own session, never a
+    client-supplied value, the same rule Assistant chat sessions already follow) — Application and
+    System return 403 for a non-admin regardless of what the client sends.
+  - Retention is bounded automatically: checked probabilistically (not on every write) and trimmed
+    back down well before an unbounded table could become a problem.
+- **Fixed: a removed IOC in the Hunt Detail and Retrohunt IOC tables was hard to read.** The
+  strikethrough already conveys "removed"; dimming the text color on top of that (and the row's own
+  reduced opacity) made it low-contrast. Removed IOCs now use the same text color as kept ones —
+  only the strikethrough marks them as removed.
+
 ### Added — Dashboard charts, pagination (issue-local-034)
 
 - **New: two timeline charts lead the Dashboard** — Hunts per Day and IOCs per Day, both respecting

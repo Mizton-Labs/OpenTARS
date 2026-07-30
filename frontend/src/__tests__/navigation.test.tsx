@@ -324,7 +324,7 @@ describe('getAppBasePrefix() three-tier precedence (prompts-020)', () => {
   })
 
   it('exposes the known top-level routes as a single source of truth', () => {
-    expect(KNOWN_ROUTES).toEqual(['home', 'viewer', 'configuration', 'normalizer', 'watchers', 'threat-hunting', 'assistant', 'account', 'about', 'login'])  // issue-local-012: 'home' added
+    expect(KNOWN_ROUTES).toEqual(['home', 'viewer', 'configuration', 'normalizer', 'watchers', 'threat-hunting', 'assistant', 'audit', 'account', 'about', 'login'])  // issue-local-012: 'home' added; issue-local-033: 'audit' added
   })
 
   it('returns "" at root with no meta tag', () => {

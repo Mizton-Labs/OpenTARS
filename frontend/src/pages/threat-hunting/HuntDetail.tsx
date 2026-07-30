@@ -500,8 +500,14 @@ export default function HuntDetail({
                         <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
                         <span
                           className={clsx(
-                            'font-mono flex-1 truncate',
-                            removed ? 'text-gray-500 line-through' : 'text-gray-200',
+                            // issue-local-033 (2nd): a removed IOC is already
+                            // marked by the strikethrough — dimming the text
+                            // color on top of that (and the row's own
+                            // opacity-60) made it hard to read. Same color as
+                            // a kept IOC either way; the strikethrough alone
+                            // conveys "removed".
+                            'font-mono flex-1 truncate text-gray-200',
+                            removed && 'line-through',
                           )}
                         >
                           {ioc.ioc}
