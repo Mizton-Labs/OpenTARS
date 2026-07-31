@@ -3146,6 +3146,12 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
     Args:
         run_id: Primary key of the hunting_packages row.
         entry:  A step-log dict; must contain a ``"step"`` key.
+
+    issue-local-033: this is the single choke point every agent node, SIEM
+    execution step, and report/threat-intel step already calls — so it also
+    doubles as the source for the Audit section's "Agent" category, rather
+    than instrumenting each of those ~15 call sites individually. Attributed
+    to the run's own ``created_by`` (the user who triggered that run).
     """
     import json as _json
 
@@ -3155,14 +3161,17 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT step_logs FROM hunting_packages WHERE id = ?", (run_id,))
+        cur = await db.execute(
+            "SELECT step_logs, created_by, hunt_package_id FROM hunting_packages WHERE id = ?",
+            (run_id,),
+        )
         row = await cur.fetchone()
         await cur.close()
         if not row:
             return
 
         try:
-            logs: list[dict[str, Any]] = _json.loads(row[0] or "[]")
+            logs: list[dict[str, Any]] = _json.loads(row["step_logs"] or "[]")
             if not isinstance(logs, list):
                 logs = []
         except Exception:
@@ -3180,6 +3189,26 @@ async def append_run_step_log(run_id: str, entry: dict[str, Any]) -> None:
             (_json.dumps(logs, ensure_ascii=False, default=str), run_id),
         )
         await db.commit()
+
+    try:
+        from backend.audit.db import record_event
+        from backend.audit.interpret import interpret_agent_step
+
+        status = entry.get("status", "unknown")
+        await record_event(
+            "agent",
+            interpret_agent_step(step_key, status),
+            username=row["created_by"],
+            summary=f"{step_key}: {status}",
+            detail={
+                "run_id": run_id,
+                "hunt_package_id": row["hunt_package_id"],
+                "status": status,
+                "decision": entry.get("decision"),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never break step logging
+        logger.warning("append_run_step_log: audit record_event failed: %s", exc)
 
 
 async def set_run_threat_intel_status(run_id: str, status: str | None) -> None:

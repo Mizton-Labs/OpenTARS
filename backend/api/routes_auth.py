@@ -38,6 +38,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from backend.audit.db import record_event
 from backend.auth import db
 from backend.auth.api_scopes import DEFAULT_PROFILE_SCOPES, list_scopes, valid_scope_ids
 from backend.auth.dependencies import (
@@ -343,14 +344,44 @@ async def get_sso_callback_url(request: Request, _user: dict = Depends(require_a
 
 @router.post("/login")
 async def login(body: LoginBody, request: Request, response: Response) -> dict:
-    """Authenticate and start a session. Generic error on any failure."""
+    """Authenticate and start a session. Generic error on any failure.
+
+    issue-local-033: login is the one action the generic user-activity audit
+    middleware (main.py) structurally cannot attribute — there is no session
+    cookie yet at the START of this request for it to resolve an actor from.
+    Instrumented directly here instead, both on success and failure (a
+    failed-login trail is itself security-relevant). Never logs the
+    password; the attempted username is not secret in this app's threat
+    model (it's the same value shown throughout the UI/API for that user).
+    """
     user = await authenticate(body.username, body.password, _client_ip(request))
     if user is None:
+        try:
+            await record_event(
+                "user",
+                "Failed sign-in attempt",
+                username=body.username,
+                summary=f"Failed login attempt for '{body.username}'",
+                detail={"ip": _client_ip(request)},
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+            logger.warning("login: audit record_event failed: %s", exc)
         # Single generic message — never reveal whether the username exists,
         # the password was wrong, the account is disabled, or it was throttled.
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = await create_session_for_user(user["id"])
     set_session_cookie(request, response, token, max_age=int(SESSION_TTL.total_seconds()))
+    try:
+        await record_event(
+            "user",
+            "Signed in",
+            username=user["username"],
+            role=user.get("role"),
+            summary=f"'{user['username']}' logged in",
+            detail={"ip": _client_ip(request)},
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+        logger.warning("login: audit record_event failed: %s", exc)
     return {"user": _public_user(user)}
 
 

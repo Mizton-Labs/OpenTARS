@@ -560,21 +560,19 @@ export default function HuntDetail({
                         className={clsx(
                           'flex items-center gap-3 px-3 py-2 rounded-lg text-sm',
                           removed
-                            ? 'bg-red-900/10 border border-red-900/30 opacity-60'
+                            ? 'bg-red-900/10 border border-red-900/30'
                             : ioc.flagged_noisy
                               ? 'bg-amber-900/10 border border-amber-800/30'
                               : 'bg-gray-800/40',
                         )}
                       >
                         <span className="text-gray-500 w-24 shrink-0">{ioc.ioc_type}</span>
-                        <span
-                          className={clsx(
-                            'font-mono flex-1 truncate',
-                            removed ? 'text-gray-500 line-through' : 'text-gray-200',
-                          )}
-                        >
-                          {ioc.ioc}
-                        </span>
+                        {/* issue-local-033 (3rd): no strikethrough, no row-level
+                            dimming — the red background/border above plus the
+                            'remove' verdict badge below are the sole removal
+                            indicators, so a removed IOC reads exactly like a
+                            kept one at a glance. */}
+                        <span className="font-mono flex-1 truncate text-gray-200">{ioc.ioc}</span>
                         <span className="w-28 shrink-0 flex items-center gap-1.5">
                           {ioc.flagged_noisy && (
                             <span className="text-amber-500 text-[11px]">noisy</span>
