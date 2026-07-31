@@ -9,8 +9,10 @@
  * one click away. Categories and their row shape come straight from
  * `GET /api/threat-hunting/explorer/{category}` (db.list_explorer_rows) —
  * see that function's docstring for the search/date-range rules per
- * category (hunt-scoped categories filter like the package list; the five
- * Threat Intel categories are global and only match by name).
+ * category (hunt-scoped categories filter like the package list; the four
+ * Threat Intel tracking categories are global and only match by name).
+ * Tabs render in two rows — Threat Hunting categories, then Threat Intel
+ * tracking categories — see HUNTING_TAB_ROW/THREAT_INTEL_TAB_ROW below.
  */
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -65,6 +67,14 @@ const EXPLORER_CATEGORIES: Category[] = [
 ]
 
 const DEFAULT_CATEGORY = EXPLORER_CATEGORIES[0].id
+
+// Threat Intel tracking's global entities (backend's `_EXPLORER_GLOBAL_CATEGORIES`) get their own
+// row, separate from the hunt-scoped Threat Hunting categories above. `feed_sources` stays with
+// Threat Hunting — despite the name, it aggregates a hunt's own evidence sources, not the Threat
+// Intel pipeline.
+const THREAT_INTEL_CATEGORY_IDS = new Set(['threat_actors', 'campaigns', 'malware_families', 'ttps'])
+const HUNTING_TAB_ROW = EXPLORER_CATEGORIES.filter((c) => !THREAT_INTEL_CATEGORY_IDS.has(c.id))
+const THREAT_INTEL_TAB_ROW = EXPLORER_CATEGORIES.filter((c) => THREAT_INTEL_CATEGORY_IDS.has(c.id))
 
 function HuntLink({ id, display }: { id?: string; display?: string }) {
   const navigate = useNavigate()
@@ -409,26 +419,44 @@ export default function DataExplorer() {
         </p>
       </div>
 
-      {/* issue-local-034: wraps onto a second row instead of scrolling
-          horizontally — 13 categories don't fit one row at any reasonable
-          width. */}
+      {/* Two rows by design: Threat Hunting categories, then Threat Intel
+          tracking's global entities — kept visually separate rather than
+          wrapping together. */}
       <div className="border-b border-gray-800">
-        <nav className="flex flex-wrap gap-x-4 gap-y-2">
-          {EXPLORER_CATEGORIES.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setCategory(c.id)}
-              className={clsx(
-                'flex items-center gap-1.5 pb-3 text-sm font-medium whitespace-nowrap transition-colors',
-                category === c.id ? 'tab-active' : 'tab-inactive',
-              )}
-            >
-              <c.icon className="w-3.5 h-3.5" />
-              {c.label}
-            </button>
-          ))}
-        </nav>
+        <div className="flex flex-col gap-2">
+          <nav className="flex flex-wrap gap-x-4 gap-y-2">
+            {HUNTING_TAB_ROW.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setCategory(c.id)}
+                className={clsx(
+                  'flex items-center gap-1.5 pb-3 text-sm font-medium whitespace-nowrap transition-colors',
+                  category === c.id ? 'tab-active' : 'tab-inactive',
+                )}
+              >
+                <c.icon className="w-3.5 h-3.5" />
+                {c.label}
+              </button>
+            ))}
+          </nav>
+          <nav className="flex flex-wrap gap-x-4 gap-y-2">
+            {THREAT_INTEL_TAB_ROW.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setCategory(c.id)}
+                className={clsx(
+                  'flex items-center gap-1.5 pb-3 text-sm font-medium whitespace-nowrap transition-colors',
+                  category === c.id ? 'tab-active' : 'tab-inactive',
+                )}
+              >
+                <c.icon className="w-3.5 h-3.5" />
+                {c.label}
+              </button>
+            ))}
+          </nav>
+        </div>
       </div>
 
       <div className="relative max-w-xs">
