@@ -169,6 +169,7 @@ async def compare_runs(
     model_name: str | None = None,
     created_by: str | None = None,
     phase: str = "full",
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Compare runs of a hunt package and persist a comparison report.
 
@@ -185,12 +186,25 @@ async def compare_runs(
     status happens to be" — so re-running the Preliminary tab later stays
     reproducible instead of drifting as runs progress.
 
+    issue-local-035 follow-up: *job_id*, when provided, is a
+    `comparison_jobs` row this call reports progress to at each of its four
+    stages (loading_runs/building_tables/generating_narrative/finalizing) —
+    see routes_threat_hunting.py's `_run_comparison_job`, the only caller
+    that passes one. ``None`` (direct calls, e.g. from tests) skips all
+    progress reporting — behavior is otherwise identical either way.
+
     Raises ValueError if the package doesn't exist or has no (matching)
     runs — callers (the route) translate that into an HTTP 404/400.
     """
     if phase not in ("preliminary", "full"):
         raise ValueError(f"phase must be 'preliminary' or 'full', got {phase!r}")
     log = get_run_logger(__name__, hunt_package_id, None)
+
+    async def _step(name: str) -> None:
+        if job_id:
+            await th_db.update_comparison_job(job_id, current_step=name)
+
+    await _step("loading_runs")
 
     pkg = await th_db.get_hunt_package(hunt_package_id)
     if not pkg:
@@ -208,6 +222,8 @@ async def compare_runs(
         record = await th_db.get_generation_run(run["id"])
         if record:
             full_records[run["id"]] = record
+
+    await _step("building_tables")
 
     # ── Deterministic per-run diff table (no LLM) ────────────────────────────
     diff_rows: list[dict[str, Any]] = []
@@ -249,6 +265,7 @@ async def compare_runs(
         )
 
     # ── LLM enrichment — soft-fail, the diff table above is still persisted ──
+    await _step("generating_narrative")
     summary = ""
     key_differences: list[str] = []
     gaps: list[str] = []
@@ -356,6 +373,8 @@ async def compare_runs(
         "recommended_combination": recommended_combination,
     }
 
+    await _step("finalizing")
+
     # Pre-render markdown (mirrors write_report's _markdown convention) so the
     # download route doesn't need to re-render on every GET.
     try:
@@ -372,6 +391,11 @@ async def compare_runs(
         created_by=created_by,
         phase=phase,
     )
+
+    if job_id:
+        await th_db.update_comparison_job(
+            job_id, status="completed", current_step="finalizing", report_id=report.get("id")
+        )
 
     log.info(
         "comparison_analyst: compared %d run(s) for %s (phase=%s)",

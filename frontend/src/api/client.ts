@@ -1560,7 +1560,11 @@ export const api = {
         { method: 'POST' },
       ),
 
-    // ── Comparison Module (issue-local-020; phase split issue-local-035) ─────
+    // ── Comparison Module (issue-local-020; phase split issue-local-035;
+    //    background job issue-local-035 follow-up) ─────────────────────────
+    /** Starts a background comparison job and returns immediately — the job
+     *  keeps running even if the caller closes the dialog or navigates
+     *  away. Poll getComparisonJobStatus() for progress. */
     compareRuns: (
       pkgId: string,
       body: {
@@ -1570,10 +1574,14 @@ export const api = {
         phase?: 'preliminary' | 'full'
       } = {},
     ) =>
-      request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
+      request<THComparisonJob>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    getComparisonJobStatus: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      request<THComparisonJob>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare/status?phase=${phase}`,
+      ),
     getComparison: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
       request<THComparisonReport>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison?phase=${phase}`,
@@ -2669,6 +2677,32 @@ export interface THComparisonReport {
   full_report: THComparisonFullReport
   created_at: string
   created_by: string | null
+}
+
+/** issue-local-035 follow-up: background job tracking for "Assess &
+ *  Compare" — POST /compare returns one of these immediately (status
+ *  'running') instead of awaiting the full comparison inline; poll
+ *  GET /compare/status for progress. */
+export type THComparisonJobStep =
+  | 'loading_runs'
+  | 'building_tables'
+  | 'generating_narrative'
+  | 'finalizing'
+
+export interface THComparisonJob {
+  id: string
+  hunt_package_id: string
+  phase: 'preliminary' | 'full'
+  status: 'running' | 'completed' | 'error'
+  current_step: THComparisonJobStep | null
+  error_message: string | null
+  run_ids: string[] | null
+  provider_name: string | null
+  model_name: string | null
+  report_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
 }
 
 // ── Threat Intel Tracking dashboard (issue-local-021) ───────────────────────

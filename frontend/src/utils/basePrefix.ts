@@ -12,13 +12,27 @@
  *   3. EMPTY — when neither yields a prefix (true root mount, or SSR).
  *
  * Auto-detection algorithm (strategy delta):
- *   - If window.location.pathname ends in /<route> or /<route>/ for any
- *     entry of KNOWN_ROUTES, the prefix is everything before that segment
- *     (the "route-suffix strip"). This handles the deep-route-reload case
- *     such as https://host/feeds/configuration → prefix "/feeds".
- *   - Otherwise the prefix is window.location.pathname with the trailing
- *     slash stripped (the "trailing-slash strip"). This handles the
- *     index-load case such as https://host/feeds/ → prefix "/feeds".
+ *   - Split window.location.pathname into segments and scan left to right
+ *     for the FIRST one that matches a KNOWN_ROUTES entry; the prefix is
+ *     everything before that segment (the "first-known-route-segment
+ *     strip"). This handles both the deep-route-reload case such as
+ *     https://host/feeds/configuration → prefix "/feeds" AND routes nested
+ *     arbitrarily deep under a known top-level route — e.g.
+ *     https://host/threat-hunting/<uuid> (no alias: the match is at
+ *     segment 0, so the prefix is "") and
+ *     https://host/feeds/threat-hunting/<uuid> (aliased: match at segment
+ *     1, prefix "/feeds") — without needing every nested sub-route name
+ *     (tracking, explorer, packages, :id, ...) enumerated here too.
+ *     issue-local-035 follow-up: the previous version only matched when a
+ *     known route was the FINAL segment, so any nested Threat Hunting
+ *     route (.../threat-hunting/<uuid>, .../threat-hunting/tracking, ...)
+ *     fell through to the fallback below and was misdetected as if the
+ *     entire path were a reverse-proxy alias — corrupting both the API
+ *     client's BASE and React Router's basename on a hard refresh.
+ *   - Otherwise (no known-route segment anywhere in the path) the prefix is
+ *     window.location.pathname with the trailing slash stripped (the
+ *     "trailing-slash strip"). This handles the index-load case such as
+ *     https://host/feeds/ → prefix "/feeds".
  *
  * Behaviour matrix:
  *   URL                              meta   detected   final
@@ -74,14 +88,19 @@ function _readMetaTag(): string {
 function _detectFromLocation(): string {
   if (typeof window === 'undefined' || !window.location) return ''
   const path = window.location.pathname || '/'
-  // Route-suffix strip: try each known route.
-  for (const r of KNOWN_ROUTES) {
-    // Match "<anything>/<route>" or "<anything>/<route>/" at end of path.
-    const re = new RegExp(`^(.*?)/${r}/?$`)
-    const m = path.match(re)
-    if (m) return _normalise(m[1])
+  // First-known-route-segment strip: scan segments left to right and stop
+  // at the first one that names a top-level SPA route — everything before
+  // it is the prefix, regardless of how deeply the route is nested past
+  // that point (issue-local-035 follow-up).
+  const segments = path.split('/').filter(Boolean)
+  const knownRoutes: readonly string[] = KNOWN_ROUTES
+  for (let i = 0; i < segments.length; i++) {
+    if (knownRoutes.includes(segments[i])) {
+      return _normalise('/' + segments.slice(0, i).join('/'))
+    }
   }
-  // Trailing-slash strip fallback.
+  // No known-route segment anywhere in the path — trailing-slash strip
+  // fallback (e.g. the alias index load "https://host/feeds/").
   return _normalise(path)
 }
 

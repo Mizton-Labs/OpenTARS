@@ -270,6 +270,151 @@ class TestIocOverviewDedup:
             assert all(row["run_count"] == 1 for row in overview)
 
 
+class TestLegacyIocOverviewMigration:
+    """issue-local-035 follow-up: comparison reports persisted BEFORE the
+    dedup shipped have a flat, one-row-per-(run,ioc) ioc_overview with no
+    'occurrences' key — the old ComparisonAssessmentTab.tsx table shape.
+    Reading such a report must transparently upgrade it to the new
+    consolidated shape, not hand the frontend something it will crash on."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_flat_rows_are_migrated_to_occurrences_shape(
+        self, db_path: Path
+    ) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            legacy_full_report = {
+                "report_kind": "comparison",
+                "phase": "full",
+                "hunt_name": "pkg",
+                "compared_run_ids": ["run-1", "run-2"],
+                "ioc_overview": [
+                    {
+                        "ioc": "evil.example.com",
+                        "ioc_type": "domain",
+                        "run_id": "run-1",
+                        "run_id_display": "TH01-X01",
+                        "model": "gpt-test",
+                        "confidence_pct": 90,
+                        "verdict": "keep",
+                        "hypotheses": ["H1"],
+                    },
+                    {
+                        "ioc": "evil.example.com",
+                        "ioc_type": "domain",
+                        "run_id": "run-2",
+                        "run_id_display": "TH01-X02",
+                        "model": "gpt-test",
+                        "confidence_pct": 40,
+                        "verdict": "remove",
+                        "hypotheses": [],
+                    },
+                ],
+            }
+            await th_db.create_hunt_report(
+                pkg["id"],
+                executive_summary="legacy",
+                full_report=legacy_full_report,
+                run_id=None,
+            )
+
+            result = await th_db.get_latest_comparison_report(pkg["id"], phase="full")
+
+            overview = result["full_report"]["ioc_overview"]
+            assert len(overview) == 1
+            row = overview[0]
+            assert row["ioc"] == "evil.example.com"
+            assert row["run_count"] == 2
+            assert row["verdict_summary"] == "kept in 1, removed in 1"
+            assert {o["run_id"] for o in row["occurrences"]} == {"run-1", "run-2"}
+            assert row["hypotheses"] == ["H1"]
+
+    @pytest.mark.asyncio
+    async def test_new_shape_reports_pass_through_unchanged(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            new_shape_report = {
+                "report_kind": "comparison",
+                "phase": "full",
+                "hunt_name": "pkg",
+                "compared_run_ids": ["run-1"],
+                "ioc_overview": [
+                    {
+                        "ioc": "evil.example.com",
+                        "ioc_type": "domain",
+                        "run_count": 1,
+                        "verdict_summary": "kept in 1",
+                        "occurrences": [
+                            {
+                                "run_id": "run-1",
+                                "run_id_display": "TH01-X01",
+                                "model": "gpt-test",
+                                "confidence_pct": 90,
+                                "verdict": "keep",
+                            }
+                        ],
+                        "hypotheses": [],
+                    }
+                ],
+            }
+            await th_db.create_hunt_report(
+                pkg["id"], executive_summary="new", full_report=new_shape_report, run_id=None
+            )
+
+            result = await th_db.get_latest_comparison_report(pkg["id"], phase="full")
+            assert result["full_report"]["ioc_overview"] == new_shape_report["ioc_overview"]
+
+    @pytest.mark.asyncio
+    async def test_empty_ioc_overview_unaffected(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await th_db.create_hunt_report(
+                pkg["id"],
+                executive_summary="empty",
+                full_report={
+                    "report_kind": "comparison",
+                    "phase": "full",
+                    "compared_run_ids": [],
+                    "ioc_overview": [],
+                },
+                run_id=None,
+            )
+            result = await th_db.get_latest_comparison_report(pkg["id"], phase="full")
+            assert result["full_report"]["ioc_overview"] == []
+
+    @pytest.mark.asyncio
+    async def test_legacy_migration_applies_to_consolidated_reports_too(
+        self, db_path: Path
+    ) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            legacy_full_report = {
+                "report_kind": "consolidated",
+                "phase": "full",
+                "compared_run_ids": ["run-1"],
+                "ioc_overview": [
+                    {
+                        "ioc": "a.example.com",
+                        "ioc_type": "domain",
+                        "run_id": "run-1",
+                        "run_id_display": "TH01-X01",
+                        "model": "gpt-test",
+                        "confidence_pct": 90,
+                        "verdict": "keep",
+                        "hypotheses": [],
+                    }
+                ],
+            }
+            await th_db.create_hunt_report(
+                pkg["id"],
+                executive_summary="legacy consolidated",
+                full_report=legacy_full_report,
+                run_id=None,
+            )
+            result = await th_db.get_latest_consolidated_report(pkg["id"], phase="full")
+            assert "occurrences" in result["full_report"]["ioc_overview"][0]
+
+
 class TestComparisonRenderersTotalIocColumn:
     def test_markdown_includes_total_iocs_column(self) -> None:
         full_report = {

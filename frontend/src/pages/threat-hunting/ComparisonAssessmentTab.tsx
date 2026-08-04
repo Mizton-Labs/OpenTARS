@@ -13,7 +13,7 @@
  * MD/PDF/JSON download links mirroring RunsStatusTable.tsx's ReportLinks
  * icon+badge pattern (issue-local-019).
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { clsx } from 'clsx'
@@ -33,9 +33,16 @@ import {
   ListChecks,
   CheckCircle2,
 } from 'lucide-react'
-import { api, type THComparisonReport, type THuntPackageRun, type LLMProviderSummary } from '../../api/client'
+import {
+  api,
+  type THComparisonReport,
+  type THComparisonJob,
+  type THuntPackageRun,
+  type LLMProviderSummary,
+} from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import { runLabel } from './runStatusUtils'
+import ComparisonProgress from './ComparisonProgress'
 
 function downloadJson(report: THComparisonReport) {
   const blob = new Blob([JSON.stringify(report.full_report, null, 2)], { type: 'application/json' })
@@ -114,6 +121,30 @@ function ComparisonPhasePanel({
     retry: false,
   })
 
+  // issue-local-035 follow-up: the comparison now runs as a backend job
+  // decoupled from this dialog — poll its status so progress renders
+  // whether or not the triggering dialog (or even this tab) stayed open,
+  // and stop polling once it reaches a terminal state.
+  const { data: job } = useQuery({
+    queryKey: ['th-comparison-job', pkgId, phase],
+    queryFn: () => api.threatHunting.getComparisonJobStatus(pkgId, phase).catch(() => null),
+    refetchInterval: (query) => {
+      const status = (query.state.data as THComparisonJob | null)?.status
+      return status === 'running' ? 2000 : false
+    },
+  })
+
+  // Once the job completes, the report it produced needs to replace
+  // whatever is currently shown — invalidate exactly once per completion,
+  // not on every poll tick while it's already completed.
+  const lastHandledJobId = useRef<string | null>(null)
+  useEffect(() => {
+    if (job?.status === 'completed' && lastHandledJobId.current !== job.id) {
+      lastHandledJobId.current = job.id
+      qc.invalidateQueries({ queryKey: ['th-comparison', pkgId, phase] })
+    }
+  }, [job, qc, pkgId, phase])
+
   // issue-local-035: Recommended Combination card actions.
   const [showRerunPicker, setShowRerunPicker] = useState(false)
   const [rerunRunIds, setRerunRunIds] = useState<Set<string>>(new Set())
@@ -160,6 +191,11 @@ function ComparisonPhasePanel({
 
   const chosenModel = compareModelChoice !== '' ? (modelOptions[Number(compareModelChoice)] ?? null) : null
 
+  // issue-local-035 follow-up: this used to await the whole comparison
+  // (including the LLM call) inline and only close the dialog once a
+  // report came back — closing the dialog or navigating away mid-request
+  // killed it. Now it just starts the background job and returns
+  // immediately; ComparisonProgress (polling `job` above) shows the rest.
   const compareMut = useMutation({
     mutationFn: () => {
       const allSelected = runs.length > 0 && compareRunIds.size === runs.length
@@ -170,8 +206,10 @@ function ComparisonPhasePanel({
         phase,
       })
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-comparison', pkgId, phase] })
+    onSuccess: (startedJob) => {
+      // Seed the poll immediately so progress renders on the very next
+      // paint instead of waiting for the first refetchInterval tick.
+      qc.setQueryData(['th-comparison-job', pkgId, phase], startedJob)
       setShowCompareDialog(false)
     },
   })
@@ -181,14 +219,20 @@ function ComparisonPhasePanel({
     setShowCompareDialog(true)
   }
 
+  const jobRunning = job?.status === 'running'
+
   const assessButton = isResearcher && runs.length > 0 && (
     <button
       className="btn-primary text-sm flex items-center gap-1.5"
-      disabled={compareMut.isPending}
+      disabled={compareMut.isPending || jobRunning}
       onClick={openDialog}
     >
-      {compareMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitCompare className="w-3.5 h-3.5" />}
-      {report ? 'Re-Assess & Compare' : 'Assess & Compare'}
+      {compareMut.isPending || jobRunning ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : (
+        <GitCompare className="w-3.5 h-3.5" />
+      )}
+      {jobRunning ? 'Comparing…' : report ? 'Re-Assess & Compare' : 'Assess & Compare'}
     </button>
   )
 
@@ -304,6 +348,13 @@ function ComparisonPhasePanel({
     </div>
   )
 
+  // issue-local-035 follow-up: shown above whichever branch renders below —
+  // the empty state, or a stale-while-revalidating existing report — so
+  // progress is visible regardless of what was on screen when the job
+  // started, and independent of the dialog that triggered it (which is
+  // already closed by the time this can be seen).
+  const progressBanner = job && job.status !== 'completed' && <ComparisonProgress job={job} />
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-gray-500 py-8">
@@ -315,24 +366,27 @@ function ComparisonPhasePanel({
   if (!report) {
     return (
       <div className="space-y-5">
-        <div className="text-center py-10 space-y-3">
-          <GitCompare className="w-10 h-10 text-gray-700 mx-auto" />
-          <p className="text-sm text-gray-500">
-            No {phase === 'preliminary' ? 'preliminary' : 'full'} comparison assessment yet.
-          </p>
-          <p className="text-sm text-gray-600">
-            Click <span className="text-brand-400">Assess &amp; Compare</span> below to compare
-            runs of this hunt package.
-          </p>
-          {runs.length > 0 && (
-            <p className="text-[11px] text-gray-600">
-              Will compare all {runs.length} run{runs.length === 1 ? '' : 's'} using{' '}
-              {chosenModel ? `${chosenModel.provider} / ${chosenModel.model}` : 'the configured default model'}{' '}
-              unless changed below.
+        {progressBanner}
+        {!progressBanner && (
+          <div className="text-center py-10 space-y-3">
+            <GitCompare className="w-10 h-10 text-gray-700 mx-auto" />
+            <p className="text-sm text-gray-500">
+              No {phase === 'preliminary' ? 'preliminary' : 'full'} comparison assessment yet.
             </p>
-          )}
-          <div className="flex justify-center">{assessButton}</div>
-        </div>
+            <p className="text-sm text-gray-600">
+              Click <span className="text-brand-400">Assess &amp; Compare</span> below to compare
+              runs of this hunt package.
+            </p>
+            {runs.length > 0 && (
+              <p className="text-[11px] text-gray-600">
+                Will compare all {runs.length} run{runs.length === 1 ? '' : 's'} using{' '}
+                {chosenModel ? `${chosenModel.provider} / ${chosenModel.model}` : 'the configured default model'}{' '}
+                unless changed below.
+              </p>
+            )}
+            <div className="flex justify-center">{assessButton}</div>
+          </div>
+        )}
         {dialog}
       </div>
     )
@@ -344,6 +398,7 @@ function ComparisonPhasePanel({
 
   return (
     <div className="space-y-5">
+      {progressBanner}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <GitCompare className="w-5 h-5 text-brand-400" />
@@ -440,7 +495,7 @@ function ComparisonPhasePanel({
                     <td className="py-1.5 px-2 text-[11px] text-gray-400 whitespace-nowrap">{row.ioc_type}</td>
                     <td className="py-1.5 px-2 text-[11px]">
                       <div className="flex flex-wrap gap-1">
-                        {row.occurrences.map((occ, j) => (
+                        {(row.occurrences ?? []).map((occ, j) => (
                           <span
                             key={`${occ.run_id}-${j}`}
                             title={`${occ.model || 'unknown model'}${
@@ -462,7 +517,7 @@ function ComparisonPhasePanel({
                       {row.verdict_summary}
                     </td>
                     <td className="py-1.5 px-2 text-[11px] text-gray-400">
-                      {row.hypotheses.length > 0 ? row.hypotheses.join(', ') : '—'}
+                      {row.hypotheses?.length > 0 ? row.hypotheses.join(', ') : '—'}
                     </td>
                   </tr>
                 ))}

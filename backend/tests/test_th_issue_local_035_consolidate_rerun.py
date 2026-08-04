@@ -200,7 +200,8 @@ class TestConsolidateRoute:
                 compare_resp = client.post(
                     f"/api/threat-hunting/packages/{pkg['id']}/compare", json={"phase": "full"}
                 )
-                assert compare_resp.status_code == 201, compare_resp.text
+                assert compare_resp.status_code == 202, compare_resp.text
+                await comparison_analyst.compare_runs(pkg["id"], phase="full")
 
             consolidate_resp = client.post(
                 f"/api/threat-hunting/packages/{pkg['id']}/compare/consolidate",
@@ -265,7 +266,8 @@ class TestRerunRoute:
                 compare_resp = client.post(
                     f"/api/threat-hunting/packages/{pkg['id']}/compare", json={"phase": "full"}
                 )
-                assert compare_resp.status_code == 201, compare_resp.text
+                assert compare_resp.status_code == 202, compare_resp.text
+                await comparison_analyst.compare_runs(pkg["id"], phase="full")
 
             fake_record = {"id": "new-run-1", "generation_status": "running"}
             with patch(
@@ -336,6 +338,7 @@ class TestRerunRoute:
                 client.post(
                     f"/api/threat-hunting/packages/{pkg['id']}/compare", json={"phase": "full"}
                 )
+                await comparison_analyst.compare_runs(pkg["id"], phase="full")
 
             with patch(
                 "backend.threat_hunting.agents.runner.start_generation",

@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- issue-local-035 follow-up: without an absolute base, every relative
+         URL below (favicon, script src) resolves against the CURRENT route,
+         not the app root — breaking `npm run dev` on a hard refresh at any
+         nested route (e.g. /threat-hunting/<uuid>). The production build
+         gets the equivalent tag injected server-side by
+         backend.main._render_index_html; this is that same fix for the dev
+         server, which serves this file source-as-is. -->
+    <base href="/" />
     <link rel="icon" type="image/png" href="tars-favicon.png" />
     <title>OpenTARS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

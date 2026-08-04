@@ -1,9 +1,13 @@
 """Tests for the SPA catch-all + base-prefix injection.
 
-Originally added in prompts-017; updated in prompts-019 for the new
-no-prefix-relative contract:
+Originally added in prompts-017; updated in prompts-019 for the (since
+revised) no-prefix-relative contract, then again in the issue-local-035
+follow-up once the relative "./" base was found to break any nested route
+(e.g. /threat-hunting/<uuid>) on a hard refresh — see
+backend.main._render_index_html's docstring for the full root-cause writeup.
+Current contract:
 
-    prefix == ""   →  inject <base href="./">; OMIT the app-base-prefix <meta>
+    prefix == ""   →  inject <base href="/">; OMIT the app-base-prefix <meta>
     prefix != ""   →  inject <base href="<prefix>/"> AND the <meta> tag
 """
 
@@ -57,12 +61,12 @@ def test_spa_index_has_meta_and_base_with_prefix(client_with_prefix):
 
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
-def test_spa_index_empty_prefix_omits_meta_and_uses_relative_base(client_empty_prefix):
-    """Empty prefix → <base href="./"> present, app-base-prefix <meta> ABSENT."""
+def test_spa_index_empty_prefix_omits_meta_and_uses_root_base(client_empty_prefix):
+    """Empty prefix → <base href="/"> present, app-base-prefix <meta> ABSENT."""
     resp = client_empty_prefix.get("/")
     assert resp.status_code == 200
     body = resp.text
-    assert '<base href="./">' in body
+    assert '<base href="/">' in body
     # The contract is "no prefix machinery visible in the document".
     assert 'name="app-base-prefix"' not in body
 
@@ -72,8 +76,22 @@ def test_spa_catch_all_serves_index_for_deep_link(client_empty_prefix):
     """A SPA deep-link path returns the index.html shell, not 404."""
     resp = client_empty_prefix.get("/viewer")
     assert resp.status_code == 200
-    # In the empty-prefix case we expect the <base href="./"> marker.
-    assert '<base href="./">' in resp.text
+    # In the empty-prefix case we expect the root-anchored <base href="/"> marker.
+    assert '<base href="/">' in resp.text
+
+
+@pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
+def test_spa_catch_all_serves_index_for_multi_segment_deep_link(client_empty_prefix):
+    """issue-local-035 follow-up regression: a hard refresh on a NESTED SPA
+    route (e.g. /threat-hunting/<uuid>, /threat-hunting/tracking) must still
+    get the root-anchored <base href="/">, not the old relative "./" which
+    resolved one directory too deep for any path more than one segment long
+    and broke asset loading entirely."""
+    for path in ("/threat-hunting/abc123", "/threat-hunting/tracking", "/threat-hunting/explorer"):
+        resp = client_empty_prefix.get(path)
+        assert resp.status_code == 200, path
+        assert '<base href="/">' in resp.text, path
+        assert '<base href="./">' not in resp.text, path
 
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
@@ -107,7 +125,7 @@ def test_spa_injection_is_idempotent_across_prefix_changes():
     # Going back to empty must drop the meta tag entirely.
     thrice = _render_index_html("")
     assert thrice.count("<base href=") == 1
-    assert '<base href="./">' in thrice
+    assert '<base href="/">' in thrice
     assert 'name="app-base-prefix"' not in thrice
 
 
@@ -118,7 +136,7 @@ def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
 
     for _ in range(3):
         out = _render_index_html("")
-        assert '<base href="./">' in out
+        assert '<base href="/">' in out
         assert 'name="app-base-prefix"' not in out
 
 
@@ -133,9 +151,14 @@ def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
 # other application is mounted there (in the real deployment, the parent app's
 # schema was rendered instead of this app's).
 #
-# The fix is the same document-relative strategy the SPA already uses (see the
-# <base href="./"> tests above): reference `openapi.json` relatively so it
+# The fix: reference `openapi.json` relatively (no leading slash) so it
 # always resolves inside the alias, with or without app_base_prefix set.
+# Safe here specifically because /docs and /redoc are each served at one
+# FIXED, single-segment path — unlike the SPA's own routes (which vary in
+# depth and, per the issue-local-035 follow-up above, need an ABSOLUTE
+# <base href> instead precisely because relative resolution isn't
+# depth-safe), a relative reference from a fixed one-segment page has no
+# depth ambiguity to get wrong.
 
 
 def test_swagger_references_openapi_relatively(client_empty_prefix):

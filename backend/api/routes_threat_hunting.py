@@ -1408,20 +1408,80 @@ class CompareRunsBody(BaseModel):
     phase: Literal["preliminary", "full"] = "full"
 
 
-@router.post("/packages/{pkg_id}/compare", status_code=201)
-async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Request) -> dict:
-    """Compare all runs of this hunt package (any status) and persist a
-    comparison report. Synchronous — a single LLM call, matching the
-    existing manual report-generation pattern."""
-    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+async def _run_comparison_job(
+    job_id: str,
+    pkg_id: str,
+    *,
+    run_ids: list[str] | None,
+    provider_name: str | None,
+    model_name: str | None,
+    created_by: str | None,
+    phase: str,
+) -> None:
+    """Background task: run the comparison and report progress via *job_id*.
+
+    issue-local-035 follow-up: this is what makes "Assess & Compare" survive
+    the triggering dialog closing or the tab navigating away — it runs
+    detached from the request/response cycle that started it, unlike the
+    prior synchronous `await compare_runs(...)` directly inside the route
+    (which Starlette would cancel if the client disconnected mid-request).
+    """
+    from backend.threat_hunting.agents.logging_utils import get_run_logger
     from backend.threat_hunting.agents.nodes.comparison_analyst import compare_runs
+
+    log = get_run_logger(__name__, pkg_id, None)
+    try:
+        await compare_runs(
+            pkg_id,
+            run_ids=run_ids,
+            provider_name=provider_name,
+            model_name=model_name,
+            created_by=created_by,
+            phase=phase,
+            job_id=job_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("comparison job %s failed: %s", job_id[:8], exc)
+        await th_db.update_comparison_job(job_id, status="error", error_message=str(exc))
+
+
+@router.post("/packages/{pkg_id}/compare", status_code=202)
+async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Request) -> dict:
+    """Start a background comparison job for this hunt package's runs and
+    return immediately with the job's initial (running) status.
+
+    issue-local-035 follow-up: previously synchronous (a single LLM call
+    awaited inline), which meant closing the "Assess & Compare" dialog or
+    navigating away mid-request killed the comparison. Now fire-and-forget,
+    matching /generate's pattern — poll GET /compare/status for progress.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    # Cheap, synchronous validation up front — same check compare_runs()
+    # itself does, duplicated here so a bad request still gets an immediate
+    # 400 instead of a job that's created only to fail a moment later.
+    runs_summary = await th_db.list_generation_runs(pkg_id)
+    if body.run_ids is not None:
+        wanted = set(body.run_ids)
+        runs_summary = [r for r in runs_summary if r["id"] in wanted]
+    if not runs_summary:
+        raise HTTPException(status_code=400, detail="No runs to compare for this hunt package")
 
     created_by = None
     if hasattr(request.state, "user") and request.state.user:
         created_by = request.state.user.get("username")
 
-    try:
-        return await compare_runs(
+    job = await th_db.create_comparison_job(
+        pkg_id,
+        phase=body.phase,
+        run_ids=body.run_ids,
+        provider_name=body.provider_name,
+        model_name=body.model_name,
+        created_by=created_by,
+    )
+    asyncio.create_task(
+        _run_comparison_job(
+            job["id"],
             pkg_id,
             run_ids=body.run_ids,
             provider_name=body.provider_name,
@@ -1429,8 +1489,20 @@ async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Requ
             created_by=created_by,
             phase=body.phase,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    )
+    return job
+
+
+@router.get("/packages/{pkg_id}/compare/status")
+async def get_comparison_job_status(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> dict:
+    """Poll the latest comparison job's status for this package/phase."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    job = await th_db.get_latest_comparison_job(pkg_id, phase=phase)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No comparison job found.")
+    return job
 
 
 @router.get("/packages/{pkg_id}/comparison")

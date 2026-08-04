@@ -13,6 +13,7 @@ import type {
   THuntPackageRun,
   THThreatIntel,
   THComparisonReport,
+  THComparisonJob,
 } from '../api/client'
 
 vi.mock('../api/client', async () => {
@@ -35,6 +36,7 @@ vi.mock('../api/client', async () => {
         getThreatIntel: vi.fn(),
         triggerRunThreatIntel: vi.fn(),
         compareRuns: vi.fn(),
+        getComparisonJobStatus: vi.fn(),
         getComparison: vi.fn(),
         downloadComparisonMarkdown: vi.fn(() => 'http://x/comparison/markdown'),
         downloadComparisonPdf: vi.fn(() => 'http://x/comparison/pdf'),
@@ -156,6 +158,25 @@ function makeComparison(overrides: Partial<THComparisonReport> = {}): THComparis
   }
 }
 
+function makeJob(overrides: Partial<THComparisonJob> = {}): THComparisonJob {
+  return {
+    id: 'job-1',
+    hunt_package_id: 'pkg-1',
+    phase: 'full',
+    status: 'running',
+    current_step: 'loading_runs',
+    error_message: null,
+    run_ids: null,
+    provider_name: null,
+    model_name: null,
+    report_id: null,
+    created_by: null,
+    created_at: '2026-01-03T00:00:00Z',
+    updated_at: '2026-01-03T00:00:00Z',
+    ...overrides,
+  }
+}
+
 function renderDetail() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -179,6 +200,7 @@ beforeEach(() => {
   vi.mocked(api.threatHunting.listRunComments).mockResolvedValue([])
   vi.mocked(api.threatHunting.getRunThreatIntel).mockRejectedValue(new Error('none'))
   vi.mocked(api.threatHunting.getThreatIntel).mockRejectedValue(new Error('none'))
+  vi.mocked(api.threatHunting.getComparisonJobStatus).mockRejectedValue(new Error('no job'))
   vi.mocked(api.threatHunting.getComparison).mockRejectedValue(new Error('none'))
 })
 
@@ -267,19 +289,19 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
     expect(screen.getByText('Combine IOC lists.')).toBeInTheDocument()
   })
 
-  it('clicking Comparison Assessment then Assess & Compare opens the run picker and calls compareRuns', async () => {
+  it('issue-local-035 follow-up: clicking Assess & Compare starts a background job, closes the dialog immediately, and shows progress', async () => {
     // issue-local-021: Assess & Compare is now self-contained inside
     // ComparisonAssessmentTab — navigate to the tab first (no comparison
     // yet), then trigger the dialog from within it.
-    vi.mocked(api.threatHunting.compareRuns).mockResolvedValue(makeComparison())
+    // issue-local-035 follow-up: compareRuns now starts a background job
+    // (status 'running') instead of awaiting the whole comparison — the
+    // dialog must close on that response alone, without waiting for a
+    // report, and the tab must show progress instead of the old empty state.
+    vi.mocked(api.threatHunting.compareRuns).mockResolvedValue(makeJob({ status: 'running' }))
     renderDetail()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Assess & Compare' }))
-
-    // getComparison starts empty; after a successful compare it must
-    // resolve with data so the invalidated query refetches real content.
-    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
     fireEvent.click(await screen.findByRole('button', { name: 'Compare' }))
 
     await waitFor(() =>
@@ -290,7 +312,47 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
         phase: 'full',
       }),
     )
-    expect(await screen.findByText('Runs largely agree on the threat actor.')).toBeInTheDocument()
+    // Dialog is gone immediately — the mutation only had to create the job,
+    // not wait for the LLM narrative.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Compare' })).not.toBeInTheDocument(),
+    )
+    expect(await screen.findByText('Comparison in progress…')).toBeInTheDocument()
+    expect(screen.getByText('Loading Runs')).toBeInTheDocument()
+  })
+
+  it('issue-local-035 follow-up: once the job completes, the tab refetches and shows the report', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      vi.mocked(api.threatHunting.getComparison)
+        .mockRejectedValueOnce(new Error('none yet'))
+        .mockResolvedValue(makeComparison())
+      vi.mocked(api.threatHunting.getComparisonJobStatus)
+        .mockResolvedValueOnce(makeJob({ status: 'running', current_step: 'generating_narrative' }))
+        .mockResolvedValue(makeJob({ status: 'completed', current_step: 'finalizing', report_id: 'cmp-1' }))
+
+      renderDetail()
+      fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+      expect(await screen.findByText('Comparison in progress…')).toBeInTheDocument()
+
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(await screen.findByText('Runs largely agree on the threat actor.')).toBeInTheDocument()
+      expect(screen.queryByText('Comparison in progress…')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('issue-local-035 follow-up: a failed job shows the error inline', async () => {
+    vi.mocked(api.threatHunting.getComparisonJobStatus).mockResolvedValue(
+      makeJob({ status: 'error', current_step: 'generating_narrative', error_message: 'LLM disabled' }),
+    )
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    expect(await screen.findByText('Comparison failed')).toBeInTheDocument()
+    expect(screen.getByText('LLM disabled')).toBeInTheDocument()
   })
 
   it('issue-local-035: renders one consolidated row per unique IOC with a per-run occurrence breakdown', async () => {

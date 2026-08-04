@@ -575,8 +575,12 @@ async def audit_activity(request, call_next):
 # instead of this application's.
 #
 # Fix: reference the schema RELATIVELY, which is the same document-relative
-# strategy the SPA already relies on (see _render_index_html's <base href="./">
-# and the API client's relative "api" BASE). The browser is at
+# strategy the SPA already relies on (see _render_index_html's injected
+# <base href> and the API client's relative "api" BASE — both still relative
+# URLs, resolved against that <base href>, which is now itself an ABSOLUTE
+# root/prefix path rather than "./" so the resolution is depth-independent;
+# see _render_index_html's docstring for why "./" alone wasn't safe). The
+# browser is at
 # <origin><alias>/docs, so "openapi.json" resolves to
 # <origin><alias>/openapi.json and is routed straight back to this app. This
 # is correct with OR without app_base_prefix configured, and needs no
@@ -757,14 +761,27 @@ def _strip_tag(html: str, marker: str) -> str:
 def _render_index_html(prefix: str) -> str:
     """Return index.html with link-generation tags injected per the contract.
 
-    Contract (prompts-019):
-      prefix == ""     → inject <base href="./">; OMIT the prefix <meta> tag
+    Contract (prompts-019, revised issue-local-035 follow-up):
+      prefix == ""     → inject <base href="/">; OMIT the prefix <meta> tag
       prefix != ""     → inject <base href="<prefix>/">; inject the <meta> tag
 
     A <base href> makes document-relative URLs in the SPA (asset references,
     API fetches, router-emitted hrefs) resolve consistently regardless of
     which deep route the document is loaded at. Omitting the <meta> when the
     prefix is empty signals "the prefix machinery is disabled".
+
+    issue-local-035 follow-up: the empty-prefix case used to inject a
+    RELATIVE <base href="./">, which resolves against the browser's CURRENT
+    URL, not the app's mount point — correct only when the current URL is
+    exactly one path segment deep. A hard refresh on any nested route (e.g.
+    /threat-hunting/<uuid>, /threat-hunting/tracking) made "./" resolve one
+    directory too deep, so `./assets/...` requested a path the /assets mount
+    doesn't serve, index.html was returned in its place, the browser refused
+    to execute HTML as a JS module, and the app never mounted — a blank
+    page. An ABSOLUTE "/" is depth-independent and correct at any route
+    depth for the true-root-mount case (the only case this branch covers —
+    a real reverse-proxy alias still gets its own absolute
+    "<prefix>/" via the other branch, unchanged).
 
     Idempotent: any prior <base href=...> and prior <meta name="app-base-prefix"...>
     are stripped before injection, so repeated renders at different prefixes
@@ -781,7 +798,7 @@ def _render_index_html(prefix: str) -> str:
     html = _strip_tag(html, '<meta name="' + _META_PREFIX_NAME + '"')
     html = _strip_tag(html, "<base href=")
 
-    base_href = f"{prefix}/" if prefix else "./"
+    base_href = f"{prefix}/" if prefix else "/"
     base_tag = f'<base href="{base_href}">'
     meta_tag = f'<meta name="{_META_PREFIX_NAME}" content="{prefix}">' if prefix else ""
 
