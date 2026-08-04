@@ -1560,21 +1560,58 @@ export const api = {
         { method: 'POST' },
       ),
 
-    // ── Comparison Module (issue-local-020) ──────────────────────────────────
+    // ── Comparison Module (issue-local-020; phase split issue-local-035) ─────
     compareRuns: (
       pkgId: string,
-      body: { provider_name?: string | null; model_name?: string | null; run_ids?: string[] } = {},
+      body: {
+        provider_name?: string | null
+        model_name?: string | null
+        run_ids?: string[]
+        phase?: 'preliminary' | 'full'
+      } = {},
     ) =>
       request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    getComparison: (pkgId: string) =>
-      request<THComparisonReport>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison`),
-    downloadComparisonMarkdown: (pkgId: string) =>
-      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/markdown`,
-    downloadComparisonPdf: (pkgId: string) =>
-      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/pdf`,
+    getComparison: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      request<THComparisonReport>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison?phase=${phase}`,
+      ),
+    downloadComparisonMarkdown: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/markdown?phase=${phase}`,
+    downloadComparisonPdf: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/pdf?phase=${phase}`,
+
+    // ── Recommended Combination actions (issue-local-035) ────────────────────
+    consolidateComparison: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      request<THComparisonReport>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare/consolidate`,
+        { method: 'POST', body: JSON.stringify({ phase }) },
+      ),
+    getConsolidated: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      request<THComparisonReport>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/consolidated?phase=${phase}`,
+      ),
+    downloadConsolidatedMarkdown: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/consolidated/markdown?phase=${phase}`,
+    downloadConsolidatedPdf: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
+      `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/consolidated/pdf?phase=${phase}`,
+    rerunFromRecommendation: (
+      pkgId: string,
+      body: {
+        new_package_name?: string
+        run_ids?: string[]
+        phase?: 'preliminary' | 'full'
+        provider_name?: string | null
+        model_name?: string | null
+        research_effort?: string
+      } = {},
+    ) =>
+      request<{ package: THuntPackage; generation: THGenerationRecord }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare/rerun`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
 
     // ── Threat Intel Tracking dashboard (issue-local-021) ────────────────────
     tracking: {
@@ -2571,15 +2608,15 @@ export interface THComparisonDiffRow {
    *  server-side so it can't drift from the two counts it's derived from. */
   total_ioc_count: number
   technique_count: number
-  event_count: number
+  /** issue-local-035: null for preliminary-phase comparisons (SIEM hasn't
+   *  run yet in that phase's scope), a number for full-phase comparisons. */
+  event_count: number | null
   created_at: string
 }
 
-/** issue-local-026: one row per IOC per run that extracted it — the
- *  cross-run overview table in the Comparison tab. */
-export interface THComparisonIocRow {
-  ioc: string
-  ioc_type: string
+/** issue-local-035: one occurrence of a deduplicated IOC in a single
+ *  compared run (a THComparisonIocRow can have several of these). */
+export interface THComparisonIocOccurrence {
   run_id: string
   run_id_display: string
   model: string
@@ -2587,6 +2624,19 @@ export interface THComparisonIocRow {
    *  model-reported confidence — see comparison_analyst.py docstring. */
   confidence_pct: number | null
   verdict: 'keep' | 'remove' | string
+}
+
+/** issue-local-026, deduplicated in issue-local-035: one row per UNIQUE
+ *  (ioc_type, ioc) across all compared runs — the cross-run overview table
+ *  in the Comparison tab, with a per-run occurrence breakdown instead of a
+ *  separate row per (run, ioc). */
+export interface THComparisonIocRow {
+  ioc: string
+  ioc_type: string
+  run_count: number
+  /** Human-readable verdict breakdown, e.g. "kept in 2, removed in 1". */
+  verdict_summary: string
+  occurrences: THComparisonIocOccurrence[]
   hypotheses: string[]
 }
 
@@ -2594,6 +2644,11 @@ export interface THComparisonFullReport {
   hunt_name: string
   hunt_id: string
   hunt_id_display: string
+  /** issue-local-035: 'preliminary' (pre-SIEM-execution) or 'full'. Absent
+   *  on reports created before the phase split — treat as 'full'. */
+  phase?: 'preliminary' | 'full'
+  trigger_provider_name?: string | null
+  trigger_model_name?: string | null
   compared_run_ids: string[]
   generated_at: string
   diff_table: THComparisonDiffRow[]

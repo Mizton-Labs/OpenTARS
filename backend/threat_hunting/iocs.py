@@ -293,13 +293,23 @@ def extract_iocs_from_text(text: str) -> list[ExtractedIOC]:
     # domain is what SIEM/EDR/DNS-log queries typically pivot on, and it must
     # exist as an atomic IOC before verdict/noise analysis runs downstream,
     # not just embedded inside the URL string.
+    #
+    # issue-local-035: a URL with no meaningful path/query/fragment (just
+    # scheme://host or scheme://host/) carries no information beyond the
+    # domain itself — it is stored as domain only, not also as url, to avoid
+    # the same indicator appearing under two types (seen live as TH67-X03).
     for m in _RE_URL.finditer(text):
         url_raw = m.group()
-        _add(url_raw, "url")
         try:
-            hostname = urlsplit(url_raw).hostname
+            parts = urlsplit(url_raw)
         except ValueError:
-            hostname = None
+            parts = None
+        hostname = parts.hostname if parts else None
+        bare_host_only = bool(
+            parts is not None and parts.path in ("", "/") and not parts.query and not parts.fragment
+        )
+        if not bare_host_only:
+            _add(url_raw, "url")
         if hostname:
             _add(hostname, "domain", description="Domain extracted from URL IOC")
 
@@ -354,18 +364,27 @@ def normalize_ioc_csv(rows: list[dict]) -> list[ExtractedIOC]:
         description = str(row.get("ioc_description", "")).strip()
         if not raw_ioc:
             continue
-        _add_row(raw_ioc, ioc_type, description)
 
-        # issue-local-026: same URL -> domain derivation as extract_iocs_from_text,
-        # for CSV-sourced IOCs (Deep Retrohunt CSV upload/re-run).
+        # issue-local-026/035: same URL -> domain derivation as
+        # extract_iocs_from_text, for CSV-sourced IOCs (Deep Retrohunt CSV
+        # upload/re-run) — including the bare-host-only demotion (a "url" row
+        # with no path/query/fragment is stored as domain only).
         if ioc_type == "url":
             url_for_parse = raw_ioc if "://" in raw_ioc else f"http://{raw_ioc}"
             try:
-                hostname = urlsplit(url_for_parse).hostname
+                parts = urlsplit(url_for_parse)
             except ValueError:
-                hostname = None
+                parts = None
+            hostname = parts.hostname if parts else None
+            bare_host_only = bool(
+                parts is not None and parts.path in ("", "/") and not parts.query and not parts.fragment
+            )
+            if not bare_host_only:
+                _add_row(raw_ioc, ioc_type, description)
             if hostname:
                 _add_row(hostname, "domain", "Domain extracted from URL IOC")
+        else:
+            _add_row(raw_ioc, ioc_type, description)
 
     return results
 

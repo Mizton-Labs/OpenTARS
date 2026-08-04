@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.threat_hunting.agents.nodes.intake_classifier import _llm_triage_iocs
+from backend.threat_hunting.agents.nodes.intake_classifier import (
+    _llm_triage_iocs,
+    _url_context_snippet,
+)
 
 
 class TestLlmTriageIocs:
@@ -55,6 +58,83 @@ class TestLlmTriageIocs:
         ):
             result = await _llm_triage_iocs(all_iocs, provider_name=None, model_name=None)
         # First item missing ioc_type, second missing ioc, third not a dict.
+        assert result == []
+
+
+class TestUrlContextSnippet:
+    """issue-local-035: surrounding-text snippet used for citation/reference
+    detection on url-type IOCs."""
+
+    def test_returns_snippet_around_first_occurrence(self):
+        corpus = "See references below. [12] https://vendor-blog.example.com/post more text here."
+        snippet = _url_context_snippet("https://vendor-blog.example.com/post", corpus)
+        assert "[12]" in snippet
+        assert "https://vendor-blog.example.com/post" in snippet
+
+    def test_returns_empty_when_url_not_found(self):
+        assert _url_context_snippet("https://not-present.example.com", "no urls here") == ""
+
+    def test_newlines_collapsed_to_spaces(self):
+        corpus = "line one\nhttps://x.example.com\nline three"
+        snippet = _url_context_snippet("https://x.example.com", corpus)
+        assert "\n" not in snippet
+
+
+class TestLlmTriageIocsUrlContext:
+    """issue-local-035: url-type candidates get a context= snippet in the
+    prompt sent to the LLM when a corpus is available; other types don't."""
+
+    @pytest.mark.asyncio
+    async def test_url_candidate_includes_context_from_corpus(self):
+        all_iocs = [
+            {"ioc": "https://vendor-blog.example.com/post", "ioc_type": "url", "flagged_noisy": False},
+        ]
+        corpus = "References:\n[1] https://vendor-blog.example.com/post — background reading."
+        captured: dict[str, str] = {}
+
+        async def _fake_call_llm(user, **kwargs):
+            captured["user"] = user
+            return "[]"
+
+        with patch(
+            "backend.threat_hunting.agents.llm_bridge.call_llm",
+            new=AsyncMock(side_effect=_fake_call_llm),
+        ):
+            await _llm_triage_iocs(
+                all_iocs, provider_name=None, model_name=None, evidence_text_corpus=corpus
+            )
+        assert "context=" in captured["user"]
+        assert "References" in captured["user"]
+
+    @pytest.mark.asyncio
+    async def test_non_url_candidate_has_no_context_field(self):
+        all_iocs = [{"ioc": "example.com", "ioc_type": "domain", "flagged_noisy": False}]
+        captured: dict[str, str] = {}
+
+        async def _fake_call_llm(user, **kwargs):
+            captured["user"] = user
+            return "[]"
+
+        with patch(
+            "backend.threat_hunting.agents.llm_bridge.call_llm",
+            new=AsyncMock(side_effect=_fake_call_llm),
+        ):
+            await _llm_triage_iocs(
+                all_iocs,
+                provider_name=None,
+                model_name=None,
+                evidence_text_corpus="example.com is mentioned here",
+            )
+        assert "context=" not in captured["user"]
+
+    @pytest.mark.asyncio
+    async def test_missing_corpus_does_not_crash_or_add_context(self):
+        all_iocs = [{"ioc": "https://x.example.com/a", "ioc_type": "url", "flagged_noisy": False}]
+        with patch(
+            "backend.threat_hunting.agents.llm_bridge.call_llm",
+            new=AsyncMock(return_value="[]"),
+        ):
+            result = await _llm_triage_iocs(all_iocs, provider_name=None, model_name=None)
         assert result == []
 
 

@@ -3,7 +3,8 @@
  * "Comparison Assessment" tab, and the "Assess & Compare" button in
  * HuntDetail.tsx.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type {
@@ -37,6 +38,10 @@ vi.mock('../api/client', async () => {
         getComparison: vi.fn(),
         downloadComparisonMarkdown: vi.fn(() => 'http://x/comparison/markdown'),
         downloadComparisonPdf: vi.fn(() => 'http://x/comparison/pdf'),
+        consolidateComparison: vi.fn(),
+        downloadConsolidatedMarkdown: vi.fn(() => 'http://x/consolidated/markdown'),
+        downloadConsolidatedPdf: vi.fn(() => 'http://x/consolidated/pdf'),
+        rerunFromRecommendation: vi.fn(),
       },
     },
   }
@@ -154,9 +159,11 @@ function makeComparison(overrides: Partial<THComparisonReport> = {}): THComparis
 function renderDetail() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={qc}>
-      <HuntDetail pkgId="pkg-1" onBack={() => {}} />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={['/threat-hunting/pkg-1']}>
+      <QueryClientProvider client={qc}>
+        <HuntDetail pkgId="pkg-1" onBack={() => {}} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 
@@ -246,7 +253,7 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
   it('shows an empty state when no comparison exists yet', async () => {
     renderDetail()
     fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
-    expect(await screen.findByText('No comparison assessment yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No full comparison assessment yet.')).toBeInTheDocument()
   })
 
   it('renders the diff table and narrative sections when a comparison exists', async () => {
@@ -280,8 +287,143 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
         run_ids: undefined,
         provider_name: undefined,
         model_name: undefined,
+        phase: 'full',
       }),
     )
     expect(await screen.findByText('Runs largely agree on the threat actor.')).toBeInTheDocument()
+  })
+
+  it('issue-local-035: renders one consolidated row per unique IOC with a per-run occurrence breakdown', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(
+      makeComparison({
+        full_report: {
+          ...makeComparison().full_report,
+          ioc_overview: [
+            {
+              ioc: 'evil.example.com',
+              ioc_type: 'domain',
+              run_count: 2,
+              verdict_summary: 'kept in 1, removed in 1',
+              occurrences: [
+                {
+                  run_id: 'run-1',
+                  run_id_display: 'TH01-X01',
+                  model: 'gpt-oss',
+                  confidence_pct: 90,
+                  verdict: 'keep',
+                },
+                {
+                  run_id: 'run-2',
+                  run_id_display: 'TH01-X02',
+                  model: 'gpt-oss',
+                  confidence_pct: 40,
+                  verdict: 'remove',
+                },
+              ],
+              hypotheses: ['H1'],
+            },
+          ],
+        },
+      }),
+    )
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    expect(await screen.findByText('Overall IOCs (1 unique)')).toBeInTheDocument()
+    expect(screen.getAllByText('evil.example.com')).toHaveLength(1)
+    // TH01-X01 also appears in the diff table above — only assert the
+    // second run's chip, which is unique to the IOC occurrence breakdown.
+    expect(screen.getByText('TH01-X02')).toBeInTheDocument()
+    expect(screen.getByText('kept in 1, removed in 1')).toBeInTheDocument()
+  })
+
+  it('issue-local-035: Preliminary and Full tabs fetch and show independent reports', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockImplementation(async (_pkgId, phase = 'full') =>
+      phase === 'preliminary'
+        ? makeComparison({
+            full_report: {
+              ...makeComparison().full_report,
+              phase: 'preliminary',
+              summary: 'Preliminary-only summary text.',
+            },
+          })
+        : makeComparison({
+            full_report: {
+              ...makeComparison().full_report,
+              phase: 'full',
+              summary: 'Full-only summary text.',
+            },
+          }),
+    )
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    // Full tab is the default.
+    expect(await screen.findByText('Full-only summary text.')).toBeInTheDocument()
+    expect(api.threatHunting.getComparison).toHaveBeenCalledWith('pkg-1', 'full')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preliminary Analysis' }))
+    expect(await screen.findByText('Preliminary-only summary text.')).toBeInTheDocument()
+    expect(api.threatHunting.getComparison).toHaveBeenCalledWith('pkg-1', 'preliminary')
+    expect(screen.queryByText('Full-only summary text.')).not.toBeInTheDocument()
+  })
+
+  it('issue-local-035: "Use as Consolidated Report" calls consolidateComparison and shows download links', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
+    vi.mocked(api.threatHunting.consolidateComparison).mockResolvedValue(makeComparison())
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Use as Consolidated Report' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.consolidateComparison).toHaveBeenCalledWith('pkg-1', 'full'),
+    )
+    expect(await screen.findByText('Consolidated report created.')).toBeInTheDocument()
+  })
+
+  it('issue-local-035: "Re-run with All Compared Runs" calls rerunFromRecommendation with no run_ids', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
+    vi.mocked(api.threatHunting.rerunFromRecommendation).mockResolvedValue({
+      package: { ...makePkg(), id: 'pkg-2', name: 'pkg (recommended combination)' },
+      generation: { id: 'run-new', generation_status: 'running' } as never,
+    })
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-run with All Compared Runs' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.rerunFromRecommendation).toHaveBeenCalledWith('pkg-1', {
+        run_ids: undefined,
+        phase: 'full',
+      }),
+    )
+  })
+
+  it('issue-local-035: "Re-run with Selected Runs" opens a picker and submits the chosen subset', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
+    vi.mocked(api.threatHunting.rerunFromRecommendation).mockResolvedValue({
+      package: { ...makePkg(), id: 'pkg-2', name: 'pkg (recommended combination)' },
+      generation: { id: 'run-new', generation_status: 'running' } as never,
+    })
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-run with Selected Runs…' }))
+    const dialogHeading = await screen.findByText('Re-run with Selected Runs')
+    const dialog = dialogHeading.closest('div.space-y-4') as HTMLElement
+
+    // makeComparison()'s compared_run_ids is ['run-1', 'run-2'] but `runs`
+    // passed to HuntDetail only ever includes run-1 (makeRun()) — the picker
+    // must only list runs that are both compared AND known, not crash on run-2.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Re-run' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.rerunFromRecommendation).toHaveBeenCalledWith('pkg-1', {
+        run_ids: ['run-1'],
+        phase: 'full',
+      }),
+    )
   })
 })

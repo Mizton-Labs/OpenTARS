@@ -294,3 +294,143 @@ class TestComparisonRoutes:
                 pdf_resp = client.get(f"/api/threat-hunting/packages/{pkg['id']}/comparison/pdf")
                 assert pdf_resp.status_code == 200
                 assert pdf_resp.content[:4] == b"%PDF"
+
+    @pytest.mark.asyncio
+    async def test_preliminary_and_full_phases_are_independent_slots(self, db_path: Path) -> None:
+        """issue-local-035: preliminary and full comparisons don't overwrite
+        each other — each phase has its own latest-report slot."""
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            client = TestClient(app)
+
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value=LLM_RESPONSE),
+            ):
+                prelim_resp = client.post(
+                    f"/api/threat-hunting/packages/{pkg['id']}/compare",
+                    json={"phase": "preliminary"},
+                )
+                assert prelim_resp.status_code == 201, prelim_resp.text
+
+                # No 'full' report exists yet — must 404, not fall back to preliminary.
+                full_get = client.get(
+                    f"/api/threat-hunting/packages/{pkg['id']}/comparison?phase=full"
+                )
+                assert full_get.status_code == 404
+
+                full_resp = client.post(
+                    f"/api/threat-hunting/packages/{pkg['id']}/compare", json={"phase": "full"}
+                )
+                assert full_resp.status_code == 201, full_resp.text
+
+            prelim_get = client.get(
+                f"/api/threat-hunting/packages/{pkg['id']}/comparison?phase=preliminary"
+            )
+            assert prelim_get.status_code == 200
+            assert prelim_get.json()["full_report"]["phase"] == "preliminary"
+
+            full_get = client.get(
+                f"/api/threat-hunting/packages/{pkg['id']}/comparison?phase=full"
+            )
+            assert full_get.status_code == 200
+            assert full_get.json()["full_report"]["phase"] == "full"
+
+    @pytest.mark.asyncio
+    async def test_default_phase_query_is_full(self, db_path: Path) -> None:
+        """issue-local-035: omitting ?phase= must match the pre-035 default
+        (full), so old bookmarks/clients keep working unchanged."""
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            client = TestClient(app)
+
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value=LLM_RESPONSE),
+            ):
+                client.post(f"/api/threat-hunting/packages/{pkg['id']}/compare", json={})
+
+            resp = client.get(f"/api/threat-hunting/packages/{pkg['id']}/comparison")
+            assert resp.status_code == 200
+            assert resp.json()["full_report"]["phase"] == "full"
+
+
+class TestComparisonPhaseSplit:
+    """issue-local-035: preliminary comparisons omit SIEM-execution-only
+    data; full comparisons behave as before the phase split."""
+
+    @pytest.mark.asyncio
+    async def test_preliminary_event_count_is_none(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value=LLM_RESPONSE),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"], phase="preliminary")
+            assert result["full_report"]["diff_table"][0]["event_count"] is None
+
+    @pytest.mark.asyncio
+    async def test_full_event_count_is_a_number(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value=LLM_RESPONSE),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"], phase="full")
+            assert result["full_report"]["diff_table"][0]["event_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_invalid_phase_raises(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            with pytest.raises(ValueError):
+                await comparison_analyst.compare_runs(pkg["id"], phase="bogus")
+
+    @pytest.mark.asyncio
+    async def test_default_phase_is_full(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", threat_context={"summary": "x"})
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value=LLM_RESPONSE),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"])
+            assert result["full_report"]["phase"] == "full"
+
+    @pytest.mark.asyncio
+    async def test_legacy_report_without_phase_key_surfaces_as_full(
+        self, db_path: Path
+    ) -> None:
+        """Pre-035 comparison reports have no 'phase' key at all — must still
+        surface under get_latest_comparison_report(phase='full')."""
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            legacy_full_report = {"report_kind": "comparison", "hunt_name": "pkg"}
+            await th_db.create_hunt_report(
+                pkg["id"],
+                executive_summary="legacy",
+                full_report=legacy_full_report,
+                run_id=None,
+            )
+            result = await th_db.get_latest_comparison_report(pkg["id"], phase="full")
+            assert result is not None
+            assert result["executive_summary"] == "legacy"
+
+            result_prelim = await th_db.get_latest_comparison_report(pkg["id"], phase="preliminary")
+            assert result_prelim is None

@@ -2528,13 +2528,16 @@ def _decode_report_row(d: dict) -> dict:
 
 
 async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the latest NORMAL (non-comparison) report for a hunt package.
+    """Return the latest NORMAL (non-comparison, non-consolidated) report for
+    a hunt package.
 
     issue-local-020: comparison reports (full_report.report_kind ==
     "comparison") share the hunt_reports table but must never surface here —
     every existing caller of this function expects a single-run/package
     report, so a comparison row (run_id=NULL, same as older pre-run-scoping
     package-level reports) would otherwise silently shadow the real one.
+    issue-local-035: consolidated reports (report_kind == "consolidated")
+    share the same table for the same reason and are excluded the same way.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -2547,7 +2550,10 @@ async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
     for row in rows:
         decoded = _decode_report_row(dict(row))
         full_report = decoded.get("full_report")
-        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+        if isinstance(full_report, dict) and full_report.get("report_kind") in (
+            "comparison",
+            "consolidated",
+        ):
             continue
         return decoded
     return None
@@ -2584,8 +2590,13 @@ async def create_comparison_report(
     executive_summary: str,
     full_report: dict[str, Any],
     created_by: str | None = None,
+    phase: str = "full",
 ) -> dict[str, Any]:
-    full_report = {**full_report, "report_kind": "comparison"}
+    # issue-local-035: "phase" splits comparison reports into two independent
+    # slots per package — "preliminary" (pre-SIEM-execution state) and "full"
+    # (post-SIEM-execution, the only phase that existed before issue-local-035
+    # — see get_latest_comparison_report's back-compat note).
+    full_report = {**full_report, "report_kind": "comparison", "phase": phase}
     await create_hunt_report(
         hunt_package_id,
         executive_summary=executive_summary,
@@ -2593,14 +2604,22 @@ async def create_comparison_report(
         created_by=created_by,
         run_id=None,
     )
-    result = await get_latest_comparison_report(hunt_package_id)
+    result = await get_latest_comparison_report(hunt_package_id, phase=phase)
     return result or {}
 
 
-async def get_latest_comparison_report(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the most recent comparison report for a package, ignoring
-    normal (single-run or package-level) reports — both share the
-    hunt_reports table, distinguished only by full_report.report_kind."""
+async def get_latest_comparison_report(
+    hunt_package_id: str, *, phase: str = "full"
+) -> dict[str, Any] | None:
+    """Return the most recent comparison report of *phase* for a package,
+    ignoring normal (single-run or package-level) reports and the OTHER
+    phase's comparison reports — all three share the hunt_reports table,
+    distinguished only by full_report.report_kind/phase.
+
+    issue-local-035 back-compat: comparison reports created before the phase
+    split have no "phase" key at all — treated as "full" (the only phase that
+    existed then), so pre-035 reports keep surfacing under the Full tab.
+    """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -2614,9 +2633,106 @@ async def get_latest_comparison_report(hunt_package_id: str) -> dict[str, Any] |
     for row in rows:
         decoded = _decode_report_row(dict(row))
         full_report = decoded.get("full_report")
-        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+        if (
+            isinstance(full_report, dict)
+            and full_report.get("report_kind") == "comparison"
+            and full_report.get("phase", "full") == phase
+        ):
             return decoded
     return None
+
+
+# ── Consolidated reports (issue-local-035) ───────────────────────────────────
+# The first of the Recommended Combination card's three actions: "create a
+# consolidated report, no new execution". This snapshots the CURRENT latest
+# comparison report of a phase into its own, separately-persisted
+# hunt_reports row (report_kind="consolidated") — a pure DB copy, no agent
+# call — so it survives the comparison being re-run/overwritten later. Same
+# table, same discriminator pattern as comparison reports above.
+
+
+async def create_consolidated_report(
+    hunt_package_id: str, *, phase: str = "full", created_by: str | None = None
+) -> dict[str, Any]:
+    """Snapshot the latest comparison report of *phase* as a consolidated
+    report. Raises ValueError if no comparison report of that phase exists
+    yet — callers (the route) translate that into an HTTP 404."""
+    source = await get_latest_comparison_report(hunt_package_id, phase=phase)
+    if source is None:
+        raise ValueError(f"No {phase} comparison report to consolidate for this package")
+
+    source_full_report = source.get("full_report") or {}
+    full_report = {**source_full_report, "report_kind": "consolidated", "phase": phase}
+    await create_hunt_report(
+        hunt_package_id,
+        executive_summary=source.get("executive_summary", ""),
+        full_report=full_report,
+        created_by=created_by,
+        run_id=None,
+    )
+    result = await get_latest_consolidated_report(hunt_package_id, phase=phase)
+    return result or {}
+
+
+async def get_latest_consolidated_report(
+    hunt_package_id: str, *, phase: str = "full"
+) -> dict[str, Any] | None:
+    """Return the most recent consolidated report of *phase* for a package."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT * FROM hunt_reports
+               WHERE hunt_package_id = ? AND run_id IS NULL
+               ORDER BY created_at DESC""",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    for row in rows:
+        decoded = _decode_report_row(dict(row))
+        full_report = decoded.get("full_report")
+        if (
+            isinstance(full_report, dict)
+            and full_report.get("report_kind") == "consolidated"
+            and full_report.get("phase", "full") == phase
+        ):
+            return decoded
+    return None
+
+
+# ── Recommended-combination re-run (issue-local-035) ─────────────────────────
+# The 2nd/3rd of the Recommended Combination card's three actions: seed a new
+# hunt package from an existing package's evidence (like clone_hunt_package)
+# plus one synthetic evidence item carrying the comparison's recommended
+# combination — kept-IOC CSV and narrative — so the new run's own IOC
+# extraction picks it straight up through the normal pipeline, no new schema
+# needed. The caller (the route) triggers generation on the returned package.
+
+
+async def create_rerun_package(
+    src_pkg_id: str,
+    new_name: str,
+    *,
+    ioc_csv: str,
+    recommendation_text: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    new_pkg = await clone_hunt_package(src_pkg_id, new_name, created_by)
+    recommendation_text_block = (
+        "Recommended combination (from Comparison Assessment):\n"
+        f"{recommendation_text or 'No narrative recommendation was available.'}\n\n"
+        "Kept IOCs from the compared run(s):\n"
+        f"{ioc_csv or '(no kept IOCs)'}"
+    )
+    await add_evidence_item(
+        new_pkg["id"],
+        item_type="text",
+        label="Recommended combination (from comparison)",
+        extracted_text=recommendation_text_block,
+        parse_status="ok",
+        provenance_notes="issue-local-035: auto-generated from a Comparison Assessment recommendation.",
+    )
+    return await get_hunt_package(new_pkg["id"]) or new_pkg
 
 
 # ── Threat Intelligence analysis (issue-local-020) ───────────────────────────

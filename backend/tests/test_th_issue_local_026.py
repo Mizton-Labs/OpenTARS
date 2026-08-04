@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -112,6 +112,52 @@ class TestUrlToDomainDerivation:
         assert results[0]["ioc_type"] == "ip"
 
 
+class TestBarePathUrlBecomesDomainOnly:
+    """issue-local-035: a URL with no path/query/fragment (just scheme://host
+    or scheme://host/) is stored as domain only — the live case reported was
+    TH67-X03, where a bare domain was stored redundantly as both types."""
+
+    def test_bare_https_no_path_is_domain_only(self):
+        results = extract_iocs_from_text("Beaconing to https://evil-c2.example.com observed.")
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil-c2.example.com") in types
+        assert not any(t == "url" for t, _ in types)
+
+    def test_bare_https_trailing_slash_is_domain_only(self):
+        results = extract_iocs_from_text("Beaconing to https://evil-c2.example.com/ observed.")
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil-c2.example.com") in types
+        assert not any(t == "url" for t, _ in types)
+
+    def test_url_with_real_path_keeps_both_types(self):
+        results = extract_iocs_from_text("Payload at https://evil-c2.example.com/payload.bin")
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil-c2.example.com") in types
+        assert ("url", "evil-c2.example.com/payload.bin") in types
+
+    def test_url_with_only_query_string_keeps_both_types(self):
+        results = extract_iocs_from_text("Beacon at https://evil-c2.example.com?id=1")
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil-c2.example.com") in types
+        assert any(t == "url" for t, _ in types)
+
+    def test_csv_bare_url_row_becomes_domain_only(self):
+        results = normalize_ioc_csv(
+            [{"ioc": "https://evil.example.com", "ioc_type": "url", "ioc_description": ""}]
+        )
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil.example.com") in types
+        assert not any(t == "url" for t, _ in types)
+
+    def test_csv_url_row_with_path_keeps_both_types(self):
+        results = normalize_ioc_csv(
+            [{"ioc": "https://evil.example.com/path", "ioc_type": "url", "ioc_description": ""}]
+        )
+        types = {(r["ioc_type"], r["ioc"]) for r in results}
+        assert ("domain", "evil.example.com") in types
+        assert ("url", "evil.example.com/path") in types
+
+
 def _sanitized_iocs(kept: int, removed: int) -> dict:
     items = [{"ioc": f"k{i}", "ioc_type": "domain", "action": "keep"} for i in range(kept)]
     items += [{"ioc": f"r{i}", "ioc_type": "domain", "action": "remove"} for i in range(removed)]
@@ -140,6 +186,88 @@ class TestComparisonTotalIocCount:
             result = await comparison_analyst.compare_runs(pkg["id"])
             row = result["full_report"]["diff_table"][0]
             assert row["total_ioc_count"] == 0
+
+
+class TestIocOverviewDedup:
+    """issue-local-035: ioc_overview is one row per UNIQUE (ioc_type, ioc)
+    across all compared runs, not one row per (run, ioc) occurrence."""
+
+    @pytest.mark.asyncio
+    async def test_same_ioc_across_runs_collapses_to_one_row(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            shared = {
+                "sanitized_iocs": [
+                    {"ioc": "evil.example.com", "ioc_type": "domain", "action": "keep"},
+                ]
+            }
+            await _seed_run(pkg["id"], "run-1", deep_retrohunt=shared)
+            await _seed_run(pkg["id"], "run-2", deep_retrohunt=shared)
+
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value="{}"),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"])
+
+            overview = result["full_report"]["ioc_overview"]
+            matching = [r for r in overview if r["ioc"] == "evil.example.com"]
+            assert len(matching) == 1
+            row = matching[0]
+            assert row["run_count"] == 2
+            assert {o["run_id"] for o in row["occurrences"]} == {"run-1", "run-2"}
+
+    @pytest.mark.asyncio
+    async def test_conflicting_verdicts_across_runs_both_surfaced(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(
+                pkg["id"],
+                "run-1",
+                deep_retrohunt={
+                    "sanitized_iocs": [
+                        {"ioc": "evil.example.com", "ioc_type": "domain", "action": "keep"}
+                    ]
+                },
+            )
+            await _seed_run(
+                pkg["id"],
+                "run-2",
+                deep_retrohunt={
+                    "sanitized_iocs": [
+                        {"ioc": "evil.example.com", "ioc_type": "domain", "action": "remove"}
+                    ]
+                },
+            )
+
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value="{}"),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"])
+
+            row = next(
+                r for r in result["full_report"]["ioc_overview"] if r["ioc"] == "evil.example.com"
+            )
+            assert row["verdict_summary"] == "kept in 1, removed in 1"
+            verdicts = {o["run_id"]: o["verdict"] for o in row["occurrences"]}
+            assert verdicts == {"run-1": "keep", "run-2": "remove"}
+
+    @pytest.mark.asyncio
+    async def test_distinct_iocs_remain_distinct_rows(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run(pkg["id"], "run-1", deep_retrohunt=_sanitized_iocs(2, 1))
+
+            with patch(
+                "backend.threat_hunting.agents.nodes.comparison_analyst.call_llm",
+                new=AsyncMock(return_value="{}"),
+            ):
+                result = await comparison_analyst.compare_runs(pkg["id"])
+
+            overview = result["full_report"]["ioc_overview"]
+            assert len(overview) == 3
+            assert all(row["run_count"] == 1 for row in overview)
 
 
 class TestComparisonRenderersTotalIocColumn:
