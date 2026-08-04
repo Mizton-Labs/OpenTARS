@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -56,6 +56,9 @@ export default function HuntDetail({
 
   // issue-local-019: cancel-run confirmation
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+
+  // issue-local-034: permanent-package-delete confirmation (admin-only)
+  const [showDeletePackageConfirm, setShowDeletePackageConfirm] = useState(false)
 
   // issue-006-G: re-run dialog state
   const [showRerunDialog, setShowRerunDialog] = useState(false)
@@ -207,6 +210,33 @@ export default function HuntDetail({
     },
   })
 
+  // issue-local-034: Archive/Unarchive the whole package (reversible,
+  // researcher+ — same as every other TH mutation) — reuses the existing
+  // archive/update routes, no dedicated backend endpoint needed.
+  const archivePackageMut = useMutation({
+    mutationFn: async () => {
+      if (pkg?.status === 'archived') {
+        await api.threatHunting.updatePackage(pkgId, { status: 'draft' })
+      } else {
+        await api.threatHunting.archivePackage(pkgId)
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+    },
+  })
+
+  // issue-local-034: permanent, cascading delete — admin-only, irreversible.
+  const deletePackageMut = useMutation({
+    mutationFn: () => api.threatHunting.hardDeletePackage(pkgId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setShowDeletePackageConfirm(false)
+      onBack()
+    },
+  })
+
   const noisyCount = (iocs as THExtractedIOC[]).filter((i) => i.flagged_noisy).length
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
   const removedCount = (iocs as THExtractedIOC[]).filter((i) => i.action === 'remove').length
@@ -249,6 +279,11 @@ export default function HuntDetail({
               <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
             )}
             {pkg?.name ?? '…'}
+            {pkg?.status === 'archived' && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+                Archived
+              </span>
+            )}
           </h1>
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
@@ -285,6 +320,33 @@ export default function HuntDetail({
             <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
               <Plus className="w-4 h-4" />
               Add Item
+            </button>
+          )}
+          {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
+          {isResearcher && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm"
+              disabled={archivePackageMut.isPending}
+              onClick={() => archivePackageMut.mutate()}
+              title={pkg?.status === 'archived' ? 'Unarchive this hunt package' : 'Archive this hunt package'}
+            >
+              {pkg?.status === 'archived' ? (
+                <ArchiveRestore className="w-4 h-4" />
+              ) : (
+                <Archive className="w-4 h-4" />
+              )}
+              {pkg?.status === 'archived' ? 'Unarchive' : 'Archive'}
+            </button>
+          )}
+          {/* issue-local-034: permanent, cascading delete — admin-only */}
+          {isAdmin && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
+              onClick={() => setShowDeletePackageConfirm(true)}
+              title="Permanently delete this hunt package and everything in it"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
             </button>
           )}
         </div>
@@ -367,7 +429,14 @@ export default function HuntDetail({
               Comparison Assessment
             </button>
           </div>
-          <RunsStatusTable pkgId={pkgId} runs={runs} onSelectRun={(runId) => setActiveRunId(runId)} activeRunId={activeRunId} />
+          <RunsStatusTable
+            pkgId={pkgId}
+            runs={runs}
+            onSelectRun={(runId) => setActiveRunId(runId)}
+            activeRunId={activeRunId}
+            isResearcher={isResearcher}
+            isAdmin={isAdmin}
+          />
         </div>
       )}
 
@@ -650,6 +719,17 @@ export default function HuntDetail({
           confirmLabel="Cancel run"
           onConfirm={() => cancelMut.mutate()}
           onCancel={() => setShowCancelConfirm(false)}
+        />
+      )}
+
+      {/* issue-local-034: permanent-package-delete confirmation */}
+      {showDeletePackageConfirm && (
+        <ConfirmDialog
+          title="Permanently Delete Hunt Package?"
+          message={`This permanently deletes ${pkg?.hunt_id_display ?? 'this hunt package'} — every run, evidence item, IOC, task result, report, comment, and threat-intel analysis tied to it. This cannot be undone — use Archive instead if you just want to hide it.`}
+          confirmLabel="Delete Permanently"
+          onConfirm={() => deletePackageMut.mutate()}
+          onCancel={() => setShowDeletePackageConfirm(false)}
         />
       )}
 

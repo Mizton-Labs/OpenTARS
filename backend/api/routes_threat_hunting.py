@@ -40,10 +40,11 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from backend.auth.dependencies import require_admin_when_enabled
 from backend.threat_hunting import db as th_db
 
 # extract_file import removed — file parsing deferred to pipeline (issue-local-011)
@@ -286,6 +287,8 @@ async def add_evidence_url(pkg_id: str, body: AddUrlBody) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid URL: {exc}") from exc
 
+    from backend.threat_hunting.evidence_source import domain_from_url
+
     item = await th_db.add_evidence_item(
         pkg_id,
         item_type="url",
@@ -298,6 +301,9 @@ async def add_evidence_url(pkg_id: str, body: AddUrlBody) -> dict:
         # parse_status="pending" signals that fetch+extract hasn't happened yet
         parse_status="pending",
         parse_warnings=["URL content will be fetched during the analysis pipeline run."],
+        # issue-local-034: the domain is known from the URL itself — no need
+        # to wait for (or depend on the success of) the deferred fetch.
+        source_entity=domain_from_url(body.url),
     )
 
     return item
@@ -319,6 +325,8 @@ async def add_evidence_text(pkg_id: str, body: AddManualTextBody) -> dict:
 
     content_hash = hashlib.sha256(body.text.encode()).hexdigest()
 
+    from backend.threat_hunting.evidence_source import resolve_source_entity_from_text
+
     item = await th_db.add_evidence_item(
         pkg_id,
         item_type="manual_text",
@@ -329,6 +337,8 @@ async def add_evidence_text(pkg_id: str, body: AddManualTextBody) -> dict:
         parser_used="text",
         parser_version="stdlib",
         parse_status="ok",
+        # issue-local-034: best-effort, soft-fail — never blocks adding evidence.
+        source_entity=await resolve_source_entity_from_text(body.text),
     )
 
     # issue-008-2B: IOC extraction moved to intake_classifier.
@@ -398,6 +408,9 @@ async def add_evidence_watcher(pkg_id: str, body: AddWatcherBody) -> dict:
         parser_version="stdlib",
         parse_status="ok",
         watcher_snapshot=snapshot,
+        # issue-local-034: the watcher's own name is a more reliable "source"
+        # than an LLM guess over a blob of JSON events — deterministic, free.
+        source_entity=body.label or f"Watcher {body.watcher_id}",
     )
 
     # issue-008-2B: IOC extraction moved to intake_classifier.
@@ -738,6 +751,60 @@ async def cancel_run(pkg_id: str, run_id: str) -> dict:
         return await _cancel(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class RunArchivedBody(BaseModel):
+    archived: bool
+
+
+@router.put("/packages/{pkg_id}/runs/{run_id}/archived")
+async def set_run_archived_route(pkg_id: str, run_id: str, body: RunArchivedBody) -> dict:
+    """Archive/unarchive a single run (issue-local-034).
+
+    Independent of the run's own generation_status and of the parent
+    package's status — hiding a bad/duplicate run doesn't require touching
+    anything else. Same researcher+admin access as every other Threat
+    Hunting mutation (not destructive, unlike hard delete below).
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    ok = await th_db.set_run_archived(run_id, body.archived)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return {"run_id": run_id, "archived": body.archived}
+
+
+@router.delete("/packages/{pkg_id}/runs/{run_id}", status_code=204)
+async def hard_delete_run_route(
+    pkg_id: str,
+    run_id: str,
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> None:
+    """Permanently delete a single run and everything that references it
+    (issue-local-034). Irreversible — admin-only, unlike every other Threat
+    Hunting mutation (researcher+admin); this is the one action in this
+    router that actually destroys data rather than hiding or reversibly
+    changing it.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    ok = await th_db.hard_delete_run(run_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Run not found.")
+
+
+@router.delete("/packages/{pkg_id}/hard", status_code=204)
+async def hard_delete_package_route(
+    pkg_id: str,
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> None:
+    """Permanently delete a hunt package, every one of its runs, and every
+    row that references either (issue-local-034). Irreversible — admin-only.
+    The existing DELETE /packages/{pkg_id} (archive_package, above) is
+    unchanged and stays the soft-hide every other role already relies on.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    ok = await th_db.hard_delete_package(pkg_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Hunt package not found.")
 
 
 @router.patch("/packages/{pkg_id}/runs/{run_id}/hypotheses/{hypothesis_id}")

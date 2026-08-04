@@ -25,6 +25,7 @@ vi.mock('../api/client', async () => {
       threatHunting: {
         ...actual.api.threatHunting,
         getExplorerRows: vi.fn(),
+        listEvidence: vi.fn(),
       },
     },
   }
@@ -34,6 +35,7 @@ import { api } from '../api/client'
 import DataExplorer from '../pages/threat-hunting/DataExplorer'
 
 const mockGetRows = api.threatHunting.getExplorerRows as unknown as ReturnType<typeof vi.fn>
+const mockListEvidence = api.threatHunting.listEvidence as unknown as ReturnType<typeof vi.fn>
 
 function renderExplorer(initialPath = '/threat-hunting/explorer') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -49,6 +51,7 @@ function renderExplorer(initialPath = '/threat-hunting/explorer') {
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetRows.mockResolvedValue([])
+  mockListEvidence.mockResolvedValue([])
 })
 
 describe('DataExplorer — default tab', () => {
@@ -237,5 +240,129 @@ describe('DataExplorer — pagination (issue-local-034)', () => {
     await waitFor(() => expect(mockGetRows).toHaveBeenLastCalledWith('runs', expect.anything()))
 
     expect(await screen.findByText(/page 1 of/i)).toBeInTheDocument()
+  })
+})
+
+describe('DataExplorer — Run column deep link (issue-local-034)', () => {
+  it('a run row links to its own run, not just the package', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue([
+      { id: 'run-1', hunt_package_id: 'pkg-1', hunt_id_display: 'TH01', run_id_display: 'TH01-X01', llm_model: 'gpt' },
+    ])
+    renderExplorer()
+    await user.click(screen.getByRole('button', { name: /^runs$/i }))
+
+    const runButton = await screen.findByRole('button', { name: 'TH01-X01' })
+    await user.click(runButton)
+
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/pkg-1?run=run-1')
+  })
+
+  it('a hypothesis row links to its own run via a separate Run column', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue([
+      {
+        id: 'h1',
+        hunt_package_id: 'pkg-1',
+        hunt_id_display: 'TH01',
+        run_id: 'run-7',
+        run_id_display: 'TH01-X07',
+        title: 'Phishing',
+      },
+    ])
+    renderExplorer()
+    await user.click(screen.getByRole('button', { name: /^hypotheses$/i }))
+    await screen.findByText('Phishing')
+
+    await user.click(screen.getByRole('button', { name: 'TH01-X07' }))
+    expect(navigate).toHaveBeenCalledWith('/threat-hunting/pkg-1?run=run-7')
+  })
+})
+
+describe('DataExplorer — Feed Sources rebuilt as evidence-source aggregation (issue-local-034)', () => {
+  it('shows Source/Entries/Hunts columns from the new {name, count, sources} shape', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue([
+      {
+        name: 'evil-example.com',
+        count: 3,
+        sources: [{ id: 'pkg-1', name: 'Hunt A', hunt_id_display: 'TH01' }],
+      },
+    ])
+    renderExplorer()
+    await user.click(screen.getByRole('button', { name: /feed sources/i }))
+
+    expect(await screen.findByText('evil-example.com')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'TH01' })).toBeInTheDocument()
+  })
+})
+
+describe('DataExplorer — Archived tag (issue-local-034)', () => {
+  it('shows an Archived badge on an archived hunt package row', async () => {
+    mockGetRows.mockResolvedValue([
+      { id: 'pkg-1', hunt_id_display: 'TH01', name: 'Old hunt', status: 'archived' },
+    ])
+    renderExplorer()
+    expect(await screen.findByText('Archived')).toBeInTheDocument()
+  })
+
+  it('shows an Archived badge on an archived run row', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue([
+      { id: 'run-1', hunt_package_id: 'pkg-1', hunt_id_display: 'TH01', run_id_display: 'TH01-X01', archived: true },
+    ])
+    renderExplorer()
+    await user.click(screen.getByRole('button', { name: /^runs$/i }))
+    expect(await screen.findByText('Archived')).toBeInTheDocument()
+  })
+})
+
+describe('DataExplorer — evidence row preview (issue-local-034)', () => {
+  it('expanding an evidence row lazily fetches and previews the item', async () => {
+    const user = userEvent.setup()
+    mockGetRows.mockResolvedValue([
+      {
+        id: 'ev-1',
+        hunt_package_id: 'pkg-1',
+        hunt_id_display: 'TH01',
+        item_type: 'manual_text',
+        label: 'Analyst note',
+        created_at: '2026-01-01T00:00:00Z',
+      },
+    ])
+    mockListEvidence.mockResolvedValue([
+      {
+        id: 'ev-1',
+        hunt_package_id: 'pkg-1',
+        item_type: 'manual_text',
+        label: 'Analyst note',
+        source_ref: '',
+        content_hash: '',
+        mime_type: '',
+        fetch_url: '',
+        final_url: '',
+        extracted_text: 'The extracted evidence content.',
+        parser_used: 'text',
+        parser_version: 'stdlib',
+        parse_status: 'ok',
+        parse_warnings: [],
+        fetch_metadata: {},
+        created_at: '2026-01-01T00:00:00Z',
+        provenance_notes: '',
+      },
+    ])
+    renderExplorer()
+    await user.click(screen.getByRole('button', { name: /^evidence$/i }))
+    await screen.findByText('Analyst note')
+
+    expect(mockListEvidence).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: /show preview/i }))
+
+    await waitFor(() => expect(mockListEvidence).toHaveBeenCalledWith('pkg-1'))
+    expect(await screen.findByText('The extracted evidence content.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /hide preview/i }))
+    expect(screen.queryByText('The extracted evidence content.')).not.toBeInTheDocument()
   })
 })

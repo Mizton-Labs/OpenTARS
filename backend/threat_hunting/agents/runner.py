@@ -55,12 +55,21 @@ _ACTIVE_JOBS: dict[str, asyncio.Task] = {}
 # status='running' for the same run_id, which a naive handler would race).
 _CANCEL_REQUESTED: set[str] = set()
 
+
 # issue-local-019: wall-clock ceiling for a single LangGraph node (covers
 # every hang scenario uniformly — an unresponsive LLM backend, a stuck
 # Playwright/URL fetch, a hung tool call — rather than threading a timeout
-# into each individual call site. Generous: normal nodes complete in well
-# under a minute even on 'high' effort with retries.
-_NODE_TIMEOUT_SECONDS = 600
+# into each individual call site.
+#
+# issue-local-034: configurable (default 900s, was a hardcoded 600s) —
+# loaded fresh at the point of use rather than cached at import time, same
+# convention llm_bridge.py already uses for th_llm_max_retries/
+# th_llm_retry_backoff_seconds, so an admin's change takes effect on the
+# very next run without a restart.
+def _node_timeout_seconds() -> int:
+    from backend.config.loader import load_th_node_timeout_seconds
+
+    return load_th_node_timeout_seconds()
 
 
 def _utc_now() -> str:
@@ -391,16 +400,18 @@ async def _run_pipeline(
             graph = get_compiled_graph()
 
         # Stream execution so we can persist after each step. Each iteration
-        # is bounded by _NODE_TIMEOUT_SECONDS (issue-local-019) — without
-        # this, a single hung node (unresponsive LLM backend, a stuck
-        # Playwright/URL fetch, ...) leaves the run at 'running' forever,
-        # with no error ever recorded (nothing raises, it just never returns).
+        # is bounded by the configured per-node timeout (issue-local-019,
+        # made configurable in issue-local-034) — without this, a single
+        # hung node (unresponsive LLM backend, a stuck Playwright/URL fetch,
+        # ...) leaves the run at 'running' forever, with no error ever
+        # recorded (nothing raises, it just never returns). Resolved once at
+        # the start of this run, not re-read per node — a config change
+        # takes effect on the next run, not retroactively mid-run.
+        node_timeout = _node_timeout_seconds()
         graph_iter = graph.astream(initial_state).__aiter__()
         while True:
             try:
-                chunk = await asyncio.wait_for(
-                    graph_iter.__anext__(), timeout=_NODE_TIMEOUT_SECONDS
-                )
+                chunk = await asyncio.wait_for(graph_iter.__anext__(), timeout=node_timeout)
             except StopAsyncIteration:
                 break
             for node_name, updates in chunk.items():
@@ -507,7 +518,7 @@ async def _run_pipeline(
         raise
     except TimeoutError:
         msg = (
-            f"Pipeline step timed out after {_NODE_TIMEOUT_SECONDS}s — the LLM backend or a "
+            f"Pipeline step timed out after {node_timeout}s — the LLM backend or a "
             "fetch may be unresponsive"
         )
         log.error("TH pipeline: %s", msg)

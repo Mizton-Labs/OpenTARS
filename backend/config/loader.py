@@ -597,6 +597,59 @@ def save_th_llm_retry_backoff_seconds(value: float) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Threat Hunting pipeline per-node timeout (issue-local-034) ──────────────
+
+# Wall-clock ceiling for a single LangGraph node to yield (runner.py wraps
+# each graph.astream() step in asyncio.wait_for with this value) — covers an
+# unresponsive LLM backend, a stuck fetch, or a hung tool call uniformly.
+# Diagnosed against a real failure (TH67, 4 runs): genuine query_drafting_agent
+# LLM slowness/retries (transport timeouts on both configured providers)
+# pushed past the previous hardcoded 600s. Raised to 900s by default and made
+# configurable rather than raised again blindly next time.
+_TH_NODE_TIMEOUT_SECONDS_DEFAULT = 900
+_TH_NODE_TIMEOUT_SECONDS_MIN = 60
+_TH_NODE_TIMEOUT_SECONDS_MAX = 3600
+
+
+def load_th_node_timeout_seconds() -> int:
+    """Return the configured per-node timeout (seconds) for the TH pipeline."""
+    raw = load_app_config().get("th_node_timeout_seconds", _TH_NODE_TIMEOUT_SECONDS_DEFAULT)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "th_node_timeout_seconds in %s is not an integer (%r); using default %d",
+            APP_CONFIG_PATH,
+            raw,
+            _TH_NODE_TIMEOUT_SECONDS_DEFAULT,
+        )
+        return _TH_NODE_TIMEOUT_SECONDS_DEFAULT
+    if n < _TH_NODE_TIMEOUT_SECONDS_MIN or n > _TH_NODE_TIMEOUT_SECONDS_MAX:
+        logger.warning(
+            "th_node_timeout_seconds=%d is out of range [%d, %d]; using default %d",
+            n,
+            _TH_NODE_TIMEOUT_SECONDS_MIN,
+            _TH_NODE_TIMEOUT_SECONDS_MAX,
+            _TH_NODE_TIMEOUT_SECONDS_DEFAULT,
+        )
+        return _TH_NODE_TIMEOUT_SECONDS_DEFAULT
+    return n
+
+
+def save_th_node_timeout_seconds(value: int) -> None:
+    """Persist the TH pipeline per-node timeout (seconds) to application.yaml."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("th_node_timeout_seconds must be an integer")
+    if value < _TH_NODE_TIMEOUT_SECONDS_MIN or value > _TH_NODE_TIMEOUT_SECONDS_MAX:
+        raise ValueError(
+            f"th_node_timeout_seconds must be between {_TH_NODE_TIMEOUT_SECONDS_MIN} "
+            f"and {_TH_NODE_TIMEOUT_SECONDS_MAX}"
+        )
+    data = load_app_config()
+    data["th_node_timeout_seconds"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Agent workflow verbosity (issue-local-004) ───────────────────────────────
 # Controls how much live pipeline telemetry is surfaced in the UI.
 #   info    — clean summary; show current step only

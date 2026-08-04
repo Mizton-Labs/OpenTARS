@@ -962,6 +962,13 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ th_llm_retry_backoff_seconds: value }),
     }),
+  getThNodeTimeoutSeconds: () =>
+    request<{ th_node_timeout_seconds: number }>('/app/th-node-timeout-seconds'),
+  setThNodeTimeoutSeconds: (value: number) =>
+    request<{ th_node_timeout_seconds: number }>('/app/th-node-timeout-seconds', {
+      method: 'PUT',
+      body: JSON.stringify({ th_node_timeout_seconds: value }),
+    }),
   getThResearchEffort: () => request<{ th_research_effort: string }>('/app/th-research-effort'),
   setThResearchEffort: (value: string) =>
     request<{ th_research_effort: string }>('/app/th-research-effort', {
@@ -1308,6 +1315,13 @@ export const api = {
       request<void>(`/threat-hunting/packages/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       }),
+    // issue-local-034: permanent, cascading delete — admin-only server-side.
+    // Unarchiving reuses updatePackage({status: 'draft'}) — no dedicated
+    // route, the generic package-update endpoint already accepts any status.
+    hardDeletePackage: (id: string) =>
+      request<void>(`/threat-hunting/packages/${encodeURIComponent(id)}/hard`, {
+        method: 'DELETE',
+      }),
     clonePackage: (pkgId: string, name: string) =>
       request<THuntPackage>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/clone`, {
         method: 'POST',
@@ -1487,6 +1501,18 @@ export const api = {
       request<{ generation_status: string }>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/cancel`,
         { method: 'POST' },
+      ),
+    // issue-local-034: archive/unarchive a single run — researcher+admin,
+    // reversible. Independent of hardDeleteRun below (admin-only, irreversible).
+    setRunArchived: (pkgId: string, runId: string, archived: boolean) =>
+      request<{ run_id: string; archived: boolean }>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}/archived`,
+        { method: 'PUT', body: JSON.stringify({ archived }) },
+      ),
+    hardDeleteRun: (pkgId: string, runId: string) =>
+      request<void>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/runs/${encodeURIComponent(runId)}`,
+        { method: 'DELETE' },
       ),
     listRunResults: (pkgId: string, runId: string) =>
       request<THTaskResult[]>(
@@ -2216,6 +2242,10 @@ export interface THuntPackageRun extends THRunSummary {
    *  the owning package's HuntID. Named *_display (not run_id) to avoid
    *  colliding with THGenerationRecord.run_id, which carries the internal UUID. */
   run_id_display?: string
+  /** issue-local-034: independent of generation_status (pipeline execution
+   *  state) and of the parent package's own status — a single run can be
+   *  archived without touching the rest of the package. */
+  archived?: boolean
 }
 
 /** issue-local-018: an analyst's free-text note on a specific run. */
@@ -2674,6 +2704,7 @@ export interface ExplorerRow {
   id?: string
   hunt_package_id?: string
   hunt_id_display?: string
+  run_id?: string
   run_id_display?: string
   hunt_name?: string
   name?: string
@@ -2681,6 +2712,7 @@ export interface ExplorerRow {
   llm_model?: string
   generation_status?: string | null
   research_effort?: string | null
+  archived?: boolean
   item_type?: string
   label?: string
   ioc?: string
@@ -2699,7 +2731,6 @@ export interface ExplorerRow {
   discarded?: boolean
   created_at?: string
   completed_at?: string | null
-  source?: string
   count?: number
   technique_id?: string
   technique_name?: string

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import aiosqlite
 import pytest
@@ -89,13 +89,18 @@ class TestHunts:
         assert rows[0]["name"] == "Lazarus sweep"
 
     @pytest.mark.asyncio
-    async def test_archived_excluded(self, db_path: Path) -> None:
+    async def test_archived_included_and_tagged(self, db_path: Path) -> None:
+        # issue-local-034: Data Explorer is a "see everything, tagged"
+        # surface — unlike the Dashboard/main package list, it no longer
+        # excludes archived packages, it tags them via the status field.
         with patch.object(th_db, "_TH_DB_PATH", db_path):
             pkg = await th_db.create_hunt_package("Archived", "")
             await th_db.update_hunt_package(pkg["id"], status="archived")
             rows = await th_db.list_explorer_rows("hunts")
 
-        assert rows == []
+        assert len(rows) == 1
+        assert rows[0]["id"] == pkg["id"]
+        assert rows[0]["status"] == "archived"
 
 
 class TestRuns:
@@ -122,6 +127,34 @@ class TestRuns:
 
         assert rows[0]["llm_model"] == "unknown"
 
+    @pytest.mark.asyncio
+    async def test_archived_run_included_and_flagged(self, db_path: Path) -> None:
+        # issue-local-034: Explorer includes archived runs too (tagged via
+        # the new per-run `archived` flag), unlike the Dashboard.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            await _seed_run(db_path, pkg["id"], run_id="run-1")
+            ok = await th_db.set_run_archived("run-1", True)
+            rows = await th_db.list_explorer_rows("runs")
+
+        assert ok is True
+        assert rows[0]["archived"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_matches_own_model_not_sibling_package(self, db_path: Path) -> None:
+        # issue-local-034 regression: a run's own llm_model/generation_status
+        # /research_effort were never matched — only coarse package-level
+        # fields were, so "all runs of a matching package" leaked in.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Alpha", "")
+            pkg_b = await th_db.create_hunt_package("Beta", "")
+            await _seed_run(db_path, pkg_a["id"], run_id="run-a", llm_model="claude-opus-5")
+            await _seed_run(db_path, pkg_b["id"], run_id="run-b", llm_model="gpt-5.5")
+            rows = await th_db.list_explorer_rows("runs", search="claude")
+
+        assert len(rows) == 1
+        assert rows[0]["llm_model"] == "claude-opus-5"
+
 
 class TestEvidence:
     @pytest.mark.asyncio
@@ -135,6 +168,75 @@ class TestEvidence:
         assert rows[0]["item_type"] == "file"
         assert rows[0]["label"] == "report.pdf"
         assert rows[0]["hunt_name"] == "Hunt"
+
+    @pytest.mark.asyncio
+    async def test_search_matches_own_label_not_sibling_package(self, db_path: Path) -> None:
+        # issue-local-034 regression: evidence's own label/source_ref/
+        # item_type were never referenced by the package-level match — a
+        # complete no-op beyond incidental package name/description matches.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Alpha", "")
+            pkg_b = await th_db.create_hunt_package("Beta", "")
+            await th_db.add_evidence_item(
+                pkg_a["id"], item_type="file", label="incident-report.pdf"
+            )
+            await th_db.add_evidence_item(pkg_b["id"], item_type="file", label="unrelated.pdf")
+            rows = await th_db.list_explorer_rows("evidence", search="incident")
+
+        assert len(rows) == 1
+        assert rows[0]["label"] == "incident-report.pdf"
+
+
+class TestFeedSources:
+    """issue-local-034: feed_sources was rebuilt from unrelated ingestion-
+    pipeline stats into evidence-source aggregation — hunt-scoped now, not
+    global, grouped by evidence_items.source_entity."""
+
+    @pytest.mark.asyncio
+    async def test_groups_by_source_entity(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            await th_db.add_evidence_item(
+                pkg["id"], item_type="url", label="a", source_entity="evil-example.com"
+            )
+            await th_db.add_evidence_item(
+                pkg["id"], item_type="url", label="b", source_entity="evil-example.com"
+            )
+            await th_db.add_evidence_item(
+                pkg["id"], item_type="manual_text", label="c", source_entity="Acme Corp"
+            )
+            rows = await th_db.list_explorer_rows("feed_sources")
+
+        by_name = {r["name"]: r for r in rows}
+        assert by_name["evil-example.com"]["count"] == 2
+        assert by_name["Acme Corp"]["count"] == 1
+        assert by_name["evil-example.com"]["sources"][0]["id"] == pkg["id"]
+
+    @pytest.mark.asyncio
+    async def test_unresolved_source_entity_falls_back_to_type_bucket(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            await th_db.add_evidence_item(pkg["id"], item_type="file", label="unresolved.pdf")
+            rows = await th_db.list_explorer_rows("feed_sources")
+
+        assert len(rows) == 1
+        assert "unidentified source" in rows[0]["name"].lower()
+        assert rows[0]["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_matches_entity_name(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            await th_db.add_evidence_item(
+                pkg["id"], item_type="url", label="a", source_entity="evil-example.com"
+            )
+            await th_db.add_evidence_item(
+                pkg["id"], item_type="manual_text", label="b", source_entity="Acme Corp"
+            )
+            matched = await th_db.list_explorer_rows("feed_sources", search="acme")
+
+        assert len(matched) == 1
+        assert matched[0]["name"] == "Acme Corp"
 
 
 class TestIocs:
@@ -153,6 +255,52 @@ class TestIocs:
         assert rows[0]["ioc_type"] == "ip"
         assert rows[0]["action"] == "keep"
 
+    @pytest.mark.asyncio
+    async def test_run_id_and_display_exposed(self, db_path: Path) -> None:
+        # issue-local-034: run_id existed on extracted_iocs but was dropped
+        # before reaching the frontend — needed for the Data Explorer Run
+        # column's deep link.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Hunt", "")
+            await _seed_run(db_path, pkg["id"], run_id="run-1")
+            ev = await th_db.add_evidence_item(pkg["id"], item_type="file")
+            await th_db.add_extracted_iocs(
+                pkg["id"],
+                ev["id"],
+                [{"ioc": "1.2.3.4", "ioc_type": "ip", "action": "keep"}],
+                run_id="run-1",
+            )
+            rows = await th_db.list_explorer_rows("iocs")
+
+        assert rows[0]["run_id"] == "run-1"
+        assert rows[0]["run_id_display"]
+
+    @pytest.mark.asyncio
+    async def test_search_matches_own_ioc_not_sibling_package(self, db_path: Path) -> None:
+        # issue-local-034 regression: previously an IOC search only worked
+        # via the PARENT PACKAGE's own broad match — a package with no
+        # name/description/blob match but a genuinely-matching IOC value
+        # would return nothing.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Alpha", "")
+            pkg_b = await th_db.create_hunt_package("Beta", "")
+            ev_a = await th_db.add_evidence_item(pkg_a["id"], item_type="file")
+            ev_b = await th_db.add_evidence_item(pkg_b["id"], item_type="file")
+            await th_db.add_extracted_iocs(
+                pkg_a["id"],
+                ev_a["id"],
+                [{"ioc": "evil.com", "ioc_type": "domain", "action": "keep"}],
+            )
+            await th_db.add_extracted_iocs(
+                pkg_b["id"],
+                ev_b["id"],
+                [{"ioc": "benign.com", "ioc_type": "domain", "action": "keep"}],
+            )
+            rows = await th_db.list_explorer_rows("iocs", search="evil")
+
+        assert len(rows) == 1
+        assert rows[0]["ioc"] == "evil.com"
+
 
 class TestSiemSearches:
     @pytest.mark.asyncio
@@ -165,6 +313,27 @@ class TestSiemSearches:
         assert len(rows) == 1
         assert rows[0]["status"] == "completed"
         assert rows[0]["hunt_name"] == "Hunt"
+
+    @pytest.mark.asyncio
+    async def test_search_matches_own_fields_not_sibling_package(self, db_path: Path) -> None:
+        # issue-local-034 regression: siem_searches had NO fields referenced
+        # by the package-level match at all — search was a complete no-op.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Alpha", "")
+            pkg_b = await th_db.create_hunt_package("Beta", "")
+            await th_db.create_task_result(
+                pkg_a["id"],
+                task_type="siem_search",
+                status="completed",
+                siem_connector="splunk-prod",
+            )
+            await th_db.create_task_result(
+                pkg_b["id"], task_type="siem_search", status="completed", siem_connector="other"
+            )
+            rows = await th_db.list_explorer_rows("siem_searches", search="splunk-prod")
+
+        assert len(rows) == 1
+        assert rows[0]["siem_connector"] == "splunk-prod"
 
 
 class TestHypotheses:
@@ -230,6 +399,35 @@ class TestHuntingLeadsAndQueries:
         assert len(rows) == 1
         assert rows[0]["title"] == "Check DNS logs"
         assert rows[0]["priority"] == "high"
+        assert rows[0]["run_id"] == "run-1"
+        assert rows[0]["run_id_display"]
+
+    @pytest.mark.asyncio
+    async def test_hunting_leads_search_matches_own_title_not_sibling_package(
+        self, db_path: Path
+    ) -> None:
+        # issue-local-034 regression: hunting_leads (r.hunting_leads) was
+        # never referenced by the package-level match at all — a complete
+        # no-op beyond incidental package name/description matches.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg_a = await th_db.create_hunt_package("Alpha", "")
+            pkg_b = await th_db.create_hunt_package("Beta", "")
+            await _seed_run(
+                db_path,
+                pkg_a["id"],
+                run_id="run-a",
+                hunting_leads=[{"id": "L1", "title": "Check DNS logs", "priority": "high"}],
+            )
+            await _seed_run(
+                db_path,
+                pkg_b["id"],
+                run_id="run-b",
+                hunting_leads=[{"id": "L2", "title": "Review firewall rules", "priority": "low"}],
+            )
+            rows = await th_db.list_explorer_rows("hunting_leads", search="DNS")
+
+        assert len(rows) == 1
+        assert rows[0]["title"] == "Check DNS logs"
 
     @pytest.mark.asyncio
     async def test_queries_include_language_and_text(self, db_path: Path) -> None:
@@ -275,22 +473,6 @@ class TestThreatIntelCategories:
         assert len(actors) == 1 and actors[0]["name"] == "APT-Test"
         assert len(families) == 1 and families[0]["name"] == "msaRAT"
         assert campaigns_no_match == []
-
-    @pytest.mark.asyncio
-    async def test_feed_sources_excludes_total_row(self, db_path: Path) -> None:
-        with patch(
-            "backend.db.manager.get_summary",
-            new=AsyncMock(
-                return_value=[
-                    {"source": "feed-a", "count": 10},
-                    {"source": "__total__", "count": 10},
-                ]
-            ),
-        ):
-            with patch.object(th_db, "_TH_DB_PATH", db_path):
-                rows = await th_db.list_explorer_rows("feed_sources")
-
-        assert rows == [{"source": "feed-a", "count": 10}]
 
 
 class TestRoute:

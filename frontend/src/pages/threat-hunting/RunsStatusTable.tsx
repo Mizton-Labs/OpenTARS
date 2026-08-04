@@ -12,11 +12,24 @@
  * per-run extra fetches), unlike PipelineStepper's header usage which
  * reads a live `THGenerationRecord` for the single active run.
  */
-import { CheckCircle, XCircle, Loader2, ArrowRight, FileText, FileCode2, FileJson } from 'lucide-react'
+import { useState } from 'react'
+import {
+  CheckCircle,
+  XCircle,
+  Loader2,
+  ArrowRight,
+  FileText,
+  FileCode2,
+  FileJson,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+} from 'lucide-react'
 import { clsx } from 'clsx'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type THuntPackageRun } from '../../api/client'
 import { runStatusClass } from './runStatusUtils'
+import ConfirmDialog from '../../components/ConfirmDialog'
 
 type PhaseState = 'done' | 'active' | 'error' | 'pending'
 
@@ -209,11 +222,91 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   )
 }
 
+// issue-local-034: archived runs are excluded from nothing today (this table
+// always lists every run of the package) — the badge is the only indicator.
+function ArchivedBadge() {
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 whitespace-nowrap">
+      Archived
+    </span>
+  )
+}
+
+// issue-local-034: Archive/Unarchive (researcher+, reversible) and hard
+// Delete (admin-only, irreversible — cascades through every table that
+// references this run) actions for a single run row.
+function RunActions({
+  pkgId,
+  run,
+  isResearcher,
+  isAdmin,
+}: {
+  pkgId: string
+  run: THuntPackageRun
+  isResearcher: boolean
+  isAdmin: boolean
+}) {
+  const qc = useQueryClient()
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const archiveMut = useMutation({
+    mutationFn: () => api.threatHunting.setRunArchived(pkgId, run.id, !run.archived),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['th-runs', pkgId] }),
+  })
+  const deleteMut = useMutation({
+    mutationFn: () => api.threatHunting.hardDeleteRun(pkgId, run.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
+      setConfirmDelete(false)
+    },
+  })
+
+  if (!isResearcher && !isAdmin) return null
+
+  return (
+    <span className="flex items-center gap-2">
+      {isResearcher && (
+        <button
+          type="button"
+          onClick={() => archiveMut.mutate()}
+          disabled={archiveMut.isPending}
+          className="text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
+          title={run.archived ? 'Unarchive run' : 'Archive run'}
+        >
+          {run.archived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+        </button>
+      )}
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(true)}
+          className="text-gray-500 hover:text-red-400 transition-colors"
+          title="Permanently delete run"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Permanently Delete Run?"
+          message={`This permanently deletes ${run.run_id_display || 'this run'} and every IOC, task result, report, comment, and threat-intel analysis tied to it. This cannot be undone — use Archive instead if you just want to hide it.`}
+          confirmLabel="Delete Permanently"
+          onConfirm={() => deleteMut.mutate()}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+    </span>
+  )
+}
+
 export default function RunsStatusTable({
   pkgId,
   runs,
   onSelectRun,
   activeRunId,
+  isResearcher = false,
+  isAdmin = false,
 }: {
   pkgId: string
   runs: THuntPackageRun[]
@@ -224,10 +317,16 @@ export default function RunsStatusTable({
   /** issue-local-021: when provided, highlights the row matching this run id
    *  as the currently-open/selected run. */
   activeRunId?: string
+  /** issue-local-034: gates the Actions column — Archive/Unarchive needs
+   *  researcher+, permanent Delete needs admin. Both default to false
+   *  (hidden) for read-only call sites that don't pass them. */
+  isResearcher?: boolean
+  isAdmin?: boolean
 }) {
   const defaultModelLabel = useDefaultModelLabel()
   if (runs.length === 0) return null
   const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
+  const showActions = isResearcher || isAdmin
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-800">
       <table className="w-full min-w-[900px]">
@@ -242,6 +341,7 @@ export default function RunsStatusTable({
             <th className="text-left py-1.5 px-2">Report</th>
             <th className="text-left py-1.5 px-2">Created</th>
             <th className="text-left py-1.5 px-2">Created by</th>
+            {showActions && <th className="text-left py-1.5 px-2">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -254,13 +354,16 @@ export default function RunsStatusTable({
               )}
             >
               <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
-                {onSelectRun ? (
-                  <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                    {run.run_id_display || '—'}
-                  </button>
-                ) : (
-                  run.run_id_display || '—'
-                )}
+                <span className="flex items-center gap-1.5">
+                  {onSelectRun ? (
+                    <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                      {run.run_id_display || '—'}
+                    </button>
+                  ) : (
+                    run.run_id_display || '—'
+                  )}
+                  {run.archived && <ArchivedBadge />}
+                </span>
               </td>
               <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
                 {onSelectRun ? (
@@ -295,6 +398,11 @@ export default function RunsStatusTable({
               <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
                 {run.created_by ?? '—'}
               </td>
+              {showActions && (
+                <td className="py-1.5 px-2">
+                  <RunActions pkgId={pkgId} run={run} isResearcher={isResearcher} isAdmin={isAdmin} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

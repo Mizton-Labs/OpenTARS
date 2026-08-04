@@ -29,6 +29,7 @@ from backend.config.loader import (
     load_hunt_id_prefix,
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
+    load_th_node_timeout_seconds,
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
@@ -45,6 +46,7 @@ from backend.config.loader import (
     save_logo_path,
     save_th_llm_max_retries,
     save_th_llm_retry_backoff_seconds,
+    save_th_node_timeout_seconds,
     save_th_report_formats,
     save_th_research_effort,
     save_watcher_max_events,
@@ -316,6 +318,37 @@ async def set_th_llm_retry_backoff_seconds(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"th_llm_retry_backoff_seconds": float(value)}
+
+
+# ── Threat Hunting pipeline per-node timeout (issue-local-034) ───────────────
+
+
+@router.get("/th-node-timeout-seconds")
+async def get_th_node_timeout_seconds() -> dict[str, int]:
+    """Return the per-node timeout (seconds) for the TH pipeline (default 900)."""
+    return {"th_node_timeout_seconds": load_th_node_timeout_seconds()}
+
+
+@router.put("/th-node-timeout-seconds")
+async def set_th_node_timeout_seconds(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the per-node timeout (seconds) for the TH pipeline.
+
+    Body: {"th_node_timeout_seconds": <int in [60, 3600]>}.
+    """
+    value = body.get("th_node_timeout_seconds")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_node_timeout_seconds' as an integer",
+        )
+    try:
+        save_th_node_timeout_seconds(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_node_timeout_seconds": value}
 
 
 # ── Agent workflow verbosity (issue-local-004) ───────────────────────────────

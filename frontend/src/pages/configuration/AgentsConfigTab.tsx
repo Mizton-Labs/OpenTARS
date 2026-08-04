@@ -102,6 +102,11 @@ export default function AgentsConfigTab() {
     queryKey: ['th-llm-retry-backoff-seconds'],
     queryFn: () => api.getThLlmRetryBackoffSeconds(),
   })
+  // issue-local-034: per-node pipeline timeout
+  const { data: nodeTimeoutData, isLoading: nodeTimeoutLoading } = useQuery({
+    queryKey: ['th-node-timeout-seconds'],
+    queryFn: () => api.getThNodeTimeoutSeconds(),
+  })
 
   // Part 4: defaults updated to debug / reactflow
   const [verbosity, setVerbosity] = useState<VerbosityLevel>('debug')
@@ -110,6 +115,7 @@ export default function AgentsConfigTab() {
   const [toolsEnabled, setToolsEnabled] = useState<Record<string, boolean>>({})
   const [maxRetries, setMaxRetries] = useState(3)
   const [backoffSeconds, setBackoffSeconds] = useState(2)
+  const [nodeTimeoutSeconds, setNodeTimeoutSeconds] = useState(900)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -148,6 +154,12 @@ export default function AgentsConfigTab() {
     }
   }, [backoffData])
 
+  useEffect(() => {
+    if (nodeTimeoutData?.th_node_timeout_seconds !== undefined) {
+      setNodeTimeoutSeconds(nodeTimeoutData.th_node_timeout_seconds)
+    }
+  }, [nodeTimeoutData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setAgentVerbosity(verbosity)
@@ -156,6 +168,7 @@ export default function AgentsConfigTab() {
       await api.setAgentTools(toolsEnabled)
       await api.setThLlmMaxRetries(maxRetries)
       await api.setThLlmRetryBackoffSeconds(backoffSeconds)
+      await api.setThNodeTimeoutSeconds(nodeTimeoutSeconds)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agent-verbosity'] })
@@ -164,6 +177,7 @@ export default function AgentsConfigTab() {
       qc.invalidateQueries({ queryKey: ['agent-tools'] })
       qc.invalidateQueries({ queryKey: ['th-llm-max-retries'] })
       qc.invalidateQueries({ queryKey: ['th-llm-retry-backoff-seconds'] })
+      qc.invalidateQueries({ queryKey: ['th-node-timeout-seconds'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
@@ -176,7 +190,8 @@ export default function AgentsConfigTab() {
     toolsLoading ||
     catalogLoading ||
     maxRetriesLoading ||
-    backoffLoading
+    backoffLoading ||
+    nodeTimeoutLoading
 
   // Compare local tools map against server value
   const toolsDirty = Object.keys(toolsEnabled).some(
@@ -190,7 +205,8 @@ export default function AgentsConfigTab() {
     showSubtasksDirty ||
     toolsDirty ||
     maxRetries !== (maxRetriesData?.th_llm_max_retries ?? 3) ||
-    backoffSeconds !== (backoffData?.th_llm_retry_backoff_seconds ?? 2)
+    backoffSeconds !== (backoffData?.th_llm_retry_backoff_seconds ?? 2) ||
+    nodeTimeoutSeconds !== (nodeTimeoutData?.th_node_timeout_seconds ?? 900)
 
   if (isLoading) {
     return (
@@ -527,6 +543,33 @@ export default function AgentsConfigTab() {
             />
           </label>
         </div>
+      </div>
+
+      {/* ── Pipeline step timeout (issue-local-034) ───────────────────────── */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="w-4 h-4 text-brand-400" />
+          <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            Pipeline Step Timeout
+          </p>
+        </div>
+        <p className="text-xs text-gray-500">
+          Wall-clock ceiling for a single agent step to finish (including any retries above)
+          before the run is aborted with a timeout error. Raise this if runs are failing on slow
+          LLM providers rather than a genuine hang — a real hang (an unresponsive backend or a
+          stuck fetch) is caught either way, just later.
+        </p>
+        <label className="block max-w-[calc(50%-0.375rem)]">
+          <span className="text-xs text-gray-400">Timeout (seconds)</span>
+          <input
+            type="number"
+            min={60}
+            max={3600}
+            value={nodeTimeoutSeconds}
+            onChange={(e) => setNodeTimeoutSeconds(Number(e.target.value))}
+            className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800/30 px-3 py-2 text-sm text-gray-200 focus:border-brand-500 focus:outline-none"
+          />
+        </label>
       </div>
 
       {/* Save button */}
