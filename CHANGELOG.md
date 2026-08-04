@@ -43,6 +43,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   timeout is now configurable in Configuration → Agents, default raised to 900 seconds.
 - **Design: the search-drawer trigger now shows a magnifier and a bot icon together**, so it reads
   as "search and assistant" at a glance, not just search.
+- **Data Explorer's category tabs now render in two rows** — Threat Hunting categories (Hunt
+  Packages, Runs, Evidence, Hypotheses, Hunting Leads, Queries Drafted, IOCs Extracted, SIEM
+  Searches, Feed Sources) on the first row, Threat Intel tracking's global categories (Threat
+  Actors, Campaigns, Malware Families, MITRE Techniques) on the second — instead of one long
+  wrapping list.
+
 ### Added — Audit section; fixed unreadable removed-IOC text (issue-local-033)
 
 - **New: an "Audit" sidebar entry**, visible to every signed-in user. Four tabs — Application, User,

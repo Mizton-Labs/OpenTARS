@@ -3,7 +3,7 @@
 **Status:** Complete (Threat Hunting phases 1–6 implemented; global search/SmartSearch,
 Assistant sessions, Threat Hunting Dashboard, and Data Explorer added since)
 Assistant sessions, Threat Hunting Dashboard, Data Explorer, and Audit added since)
-**Last updated:** 2026-07-30
+**Last updated:** 2026-07-31
 
 ---
 
