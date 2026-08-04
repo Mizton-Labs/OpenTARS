@@ -148,7 +148,7 @@ async def build_authorization_url(
         expires_at=expires_at,
     )
 
-    callback_url = _build_callback_url(request_base_url)
+    callback_url = _build_callback_url(request_base_url, cfg.get("callback_base_url", ""))
 
     params: dict[str, str] = {
         "response_type": "code",
@@ -189,7 +189,7 @@ async def handle_callback(
     token_endpoint = discovery["token_endpoint"]
     jwks_uri = discovery.get("jwks_uri", "")
 
-    callback_url = _build_callback_url(request_base_url)
+    callback_url = _build_callback_url(request_base_url, cfg.get("callback_base_url", ""))
 
     # 2. Exchange code for tokens
     async with httpx.AsyncClient(timeout=30) as client:
@@ -417,9 +417,17 @@ async def _upsert_sso_user(
 # ── URL helpers ───────────────────────────────────────────────────────────────
 
 
-def _build_callback_url(request_base_url: str) -> str:
-    """Build the absolute callback URL from the current request's base URL."""
-    parsed = urlparse(request_base_url)
+def _build_callback_url(request_base_url: str, override_base_url: str = "") -> str:
+    """Build the absolute callback URL.
+
+    issue-local-036: *override_base_url*, when set (``sso.yaml``'s
+    ``callback_base_url``), replaces the request-derived scheme+host+path
+    entirely — needed behind a reverse-proxy alias where app_base_prefix
+    isn't/can't be set (see that field's docstring in oidc_config.py for
+    why the two can't just be unified). Empty (the default) preserves the
+    original per-request ``request.base_url``-derived behavior exactly.
+    """
+    parsed = urlparse(override_base_url or request_base_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     root_path = parsed.path.rstrip("/")
     return f"{base}{root_path}/api/auth/oidc/callback"
@@ -439,6 +447,6 @@ def _sanitize_next(next_path: str) -> str:
     return path
 
 
-def get_callback_url_for_display(base_url: str) -> str:
+def get_callback_url_for_display(base_url: str, override_base_url: str = "") -> str:
     """Return the callback URL string for the admin UI 'copy to clipboard' field."""
-    return _build_callback_url(base_url)
+    return _build_callback_url(base_url, override_base_url)

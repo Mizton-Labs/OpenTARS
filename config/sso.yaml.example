@@ -17,6 +17,15 @@
 #   (or include a sub-path prefix if you use app_base_prefix)
 # The exact URL is also shown in Configuration → SSO once you save a config.
 #
+# Behind a reverse-proxy alias where app_base_prefix isn't set (issue-local-036)
+# — e.g. a zero-config alias the app auto-detects client-side for asset
+# loading, but which the backend has no way to know when building the
+# redirect_uri sent to the IdP — set callback_base_url instead:
+#   callback_base_url: "https://<your-host>/<alias>"
+# Configuration → SSO prefills this field with the alias your own browser
+# detected, as a starting point; leave it unset to keep deriving the
+# callback URL from each request the way this app always has.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 # EXAMPLE: Microsoft Entra ID (Azure AD)
 # ─────────────────────────────────────────────────────────────────────────────

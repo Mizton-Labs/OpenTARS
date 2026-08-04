@@ -16,9 +16,10 @@
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Copy, Check, Plus, Trash2, Loader2 } from 'lucide-react'
+import { Copy, Check, Plus, Trash2, Loader2, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type SsoConfig } from '../../api/client'
+import { getAppBasePrefix } from '../../utils/basePrefix'
 
 type UserRole = 'admin' | 'threat-researcher' | 'threat-viewer' | 'feed-sender'
 
@@ -58,6 +59,15 @@ const _EMPTY: SsoConfig = {
   role_mapping: {},
   default_role: 'threat-viewer',
   auto_provision: true,
+  callback_base_url: '',
+}
+
+/** issue-local-036: same client-side alias-detection already used for the
+ *  Push Listener endpoint display (Configuration.tsx's ListenerTab) — the
+ *  browser's own URL is the only place this can be reliably inferred from
+ *  when app_base_prefix isn't set. */
+function detectedCallbackBaseUrl(): string {
+  return `${window.location.origin}${getAppBasePrefix()}`
 }
 
 export default function SsoConfigTab() {
@@ -182,6 +192,45 @@ export default function SsoConfigTab() {
               )}
             </button>
           )}
+        </div>
+
+        {/* issue-local-036: override for reverse-proxy-alias deployments —
+            the URL above is derived from the CURRENT request and won't
+            include an alias segment (e.g. /tars) unless either this field
+            or app_base_prefix is set; app_base_prefix isn't always safe to
+            set (can affect static asset routing under some proxy setups),
+            so this is independent of it. */}
+        <div className="pt-2 border-t border-gray-800 space-y-1.5">
+          <label className="block text-xs text-gray-400">
+            Callback Base URL Override <span className="text-gray-600">(optional)</span>
+          </label>
+          <p className="text-xs text-gray-500">
+            Set this if the app is reachable through a reverse-proxy alias (e.g.{' '}
+            <code className="text-gray-400">https://host/tars</code>) — the callback URL above
+            won't include the alias otherwise, and the IdP will reject the login redirect.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              className="input flex-1 text-xs font-mono"
+              placeholder={detectedCallbackBaseUrl()}
+              value={form.callback_base_url}
+              onChange={(e) => setField('callback_base_url', e.target.value.trim())}
+            />
+            <button
+              type="button"
+              className="btn-ghost p-2 shrink-0 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+              title="Fill with the alias detected from this browser's own URL"
+              onClick={() => setField('callback_base_url', detectedCallbackBaseUrl())}
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              Use detected
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-600">
+            Detected from this browser: <code>{detectedCallbackBaseUrl()}</code>. Leave blank to
+            keep deriving the callback URL from each request (correct if there's no alias).
+          </p>
         </div>
       </div>
 

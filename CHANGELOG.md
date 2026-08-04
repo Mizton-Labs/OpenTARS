@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Configurable SSO callback URL for reverse-proxy-alias deployments (issue-local-036)
+
+- **New: "Callback Base URL Override" field on Configuration → SSO.** The OIDC redirect_uri sent to
+  the identity provider used to always be derived from the current request's own base URL, which
+  never includes a reverse-proxy alias segment (e.g. `/tars`) unless `app_base_prefix` is explicitly
+  configured — and setting `app_base_prefix` can itself break static asset routing under some proxy
+  setups (see the issue-local-035 follow-up). This was a functional bug, not cosmetic: without the
+  alias, the IdP either rejects the redirect_uri outright (exact-match requirement) or redirects the
+  browser to a URL the proxy doesn't route back to the app, breaking login on the affected browsers
+  entirely, not just the one that saved the config.
+  The new field is independent of `app_base_prefix`, prefilled (as a placeholder, not silently
+  auto-saved) with the alias this app's own client-side detection infers from the admin's browser —
+  a "Use detected" button copies it into the field for review before saving. Left blank, behavior is
+  unchanged from before this issue.
+
 ### Added — Data Explorer fixes, hunt package/run delete & archive, configurable pipeline timeout (issue-local-034)
 
 - **Fixed: Data Explorer search didn't actually filter most categories.** Previously, search only

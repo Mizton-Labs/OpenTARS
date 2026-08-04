@@ -309,6 +309,10 @@ class SsoConfigBody(BaseModel):
     role_mapping: dict[str, str] = {}
     default_role: str = "threat-viewer"
     auto_provision: bool = True
+    # issue-local-036: overrides the request-derived scheme+host+path used to
+    # build the redirect_uri sent to the IdP — see oidc_config.py's
+    # _DEFAULTS entry for why this exists separately from app_base_prefix.
+    callback_base_url: str = ""
 
 
 @router.get("/sso/config")
@@ -336,10 +340,21 @@ async def update_sso_config(
 
 @router.get("/sso/callback-url")
 async def get_sso_callback_url(request: Request, _user: dict = Depends(require_admin)) -> dict:
-    """Return the OIDC callback URL that must be registered in the IdP. Admin only."""
-    from backend.auth.oidc import get_callback_url_for_display
+    """Return the OIDC callback URL that must be registered in the IdP. Admin only.
 
-    return {"callback_url": get_callback_url_for_display(str(request.base_url))}
+    issue-local-036: reflects callback_base_url when set, so this always
+    shows the URL actually used by the login/callback flow, not just the
+    current request's own (possibly un-aliased) base URL.
+    """
+    from backend.auth.oidc import get_callback_url_for_display
+    from backend.auth.oidc_config import load_sso_config_for_use
+
+    cfg = load_sso_config_for_use()
+    return {
+        "callback_url": get_callback_url_for_display(
+            str(request.base_url), cfg.get("callback_base_url", "")
+        )
+    }
 
 
 @router.post("/login")
