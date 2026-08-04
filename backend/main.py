@@ -758,51 +758,130 @@ def _strip_tag(html: str, marker: str) -> str:
     return html[:lead] + html[end:]
 
 
+def _strip_block(html: str, marker: str, end_marker: str) -> str:
+    """Like `_strip_tag`, but for a multi-line block (e.g. a whole
+    `<script>...</script>` element) — removes from `marker` through the next
+    occurrence of `end_marker` (inclusive), plus any preceding indent/newline.
+    """
+    if marker not in html:
+        return html
+    start = html.index(marker)
+    end_idx = html.index(end_marker, start)
+    if end_idx == -1:
+        return html
+    end = end_idx + len(end_marker)
+    lead = start
+    while lead > 0 and html[lead - 1] in " \t":
+        lead -= 1
+    if lead > 0 and html[lead - 1] == "\n":
+        lead -= 1
+    return html[:lead] + html[end:]
+
+
+_BASE_DETECT_SCRIPT_ID = "__opentars_base_detect"
+
+# issue-local-035 follow-up (2nd round): when prefix is unset, a STATIC
+# absolute <base href="/"> is only correct if the app is truly mounted at
+# the browser's domain root. It breaks the common zero-config deployment
+# pattern this app is explicitly designed to support without any operator
+# configuration: an nginx (or similar) reverse-proxy alias that forwards a
+# sub-path to this app with NO cooperation from the app (no app_base_prefix
+# set, no trusted forwarded-prefix header — see the /docs relative-URL
+# comment above for why X-Script-Name isn't trusted). In that shape, the
+# browser's address bar — and therefore every relative URL the browser
+# resolves — includes the alias segment (e.g. https://host/tars/...), but
+# the backend has no way to know "tars" is there; only the BROWSER does.
+#
+# This script is therefore the synchronous, browser-side equivalent of
+# frontend/src/utils/basePrefix.ts's getAppBasePrefix() auto-detect tier —
+# same algorithm, duplicated here in vanilla JS because it MUST run before
+# the JS bundle (which contains the real TypeScript implementation) is even
+# requested: it creates the <base> element that the browser will use to
+# resolve the <script type="module" src="./assets/...">/<link href="./assets/...">
+# tags immediately following it in <head>. Keep KNOWN_ROUTES here in sync
+# with basePrefix.ts's KNOWN_ROUTES — frontend/src/__tests__/indexHtmlBaseDetect.test.ts
+# asserts they match so this can't silently drift.
+_BASE_DETECT_SCRIPT = f"""<script id="{_BASE_DETECT_SCRIPT_ID}">
+    (function () {{
+      var KNOWN_ROUTES = ["home","viewer","configuration","normalizer","watchers","threat-hunting","assistant","audit","account","about","login"];
+      function normalise(v) {{
+        var out = v;
+        while (out.length && out.charAt(out.length - 1) === "/") out = out.slice(0, -1);
+        if (out && out.charAt(0) !== "/") out = "/" + out;
+        return out;
+      }}
+      var path = window.location.pathname || "/";
+      var segments = path.split("/").filter(function (s) {{ return s.length > 0; }});
+      var prefix = "";
+      var matched = false;
+      for (var i = 0; i < segments.length; i++) {{
+        if (KNOWN_ROUTES.indexOf(segments[i]) !== -1) {{
+          prefix = normalise("/" + segments.slice(0, i).join("/"));
+          matched = true;
+          break;
+        }}
+      }}
+      if (!matched) prefix = normalise(path);
+      var base = document.createElement("base");
+      base.setAttribute("href", prefix + "/");
+      document.head.appendChild(base);
+    }})();
+  </script>"""
+
+
 def _render_index_html(prefix: str) -> str:
     """Return index.html with link-generation tags injected per the contract.
 
-    Contract (prompts-019, revised issue-local-035 follow-up):
-      prefix == ""     → inject <base href="/">; OMIT the prefix <meta> tag
+    Contract (revised issue-local-035 follow-up, 2nd round):
+      prefix == ""     → inject the client-side base-detect script (see
+                          _BASE_DETECT_SCRIPT); OMIT the prefix <meta> tag
       prefix != ""     → inject <base href="<prefix>/">; inject the <meta> tag
 
     A <base href> makes document-relative URLs in the SPA (asset references,
     API fetches, router-emitted hrefs) resolve consistently regardless of
     which deep route the document is loaded at. Omitting the <meta> when the
-    prefix is empty signals "the prefix machinery is disabled".
+    prefix is empty signals "the prefix machinery is disabled" (server-side —
+    the client-side auto-detect script below still runs regardless).
 
-    issue-local-035 follow-up: the empty-prefix case used to inject a
-    RELATIVE <base href="./">, which resolves against the browser's CURRENT
-    URL, not the app's mount point — correct only when the current URL is
-    exactly one path segment deep. A hard refresh on any nested route (e.g.
-    /threat-hunting/<uuid>, /threat-hunting/tracking) made "./" resolve one
-    directory too deep, so `./assets/...` requested a path the /assets mount
-    doesn't serve, index.html was returned in its place, the browser refused
-    to execute HTML as a JS module, and the app never mounted — a blank
-    page. An ABSOLUTE "/" is depth-independent and correct at any route
-    depth for the true-root-mount case (the only case this branch covers —
-    a real reverse-proxy alias still gets its own absolute
-    "<prefix>/" via the other branch, unchanged).
+    History: this started as a static RELATIVE <base href="./">, which broke
+    on any nested route (e.g. /threat-hunting/<uuid>) because "./" resolves
+    against the browser's CURRENT URL depth, not the app's mount point. That
+    was changed to a static ABSOLUTE <base href="/">, which fixed the
+    true-root-mount case but broke the zero-config reverse-proxy-alias case
+    (e.g. https://host/tars/...) the exact same way in the other direction —
+    the backend doesn't know "tars" is there, so hardcoding "/" silently
+    drops it, and every asset request 404s. Neither a fixed relative nor a
+    fixed absolute value can be correct for both shapes because the backend
+    genuinely cannot know, from prefix="" alone, whether it's at true root
+    or an unconfigured alias — only the BROWSER'S OWN URL knows that. Hence
+    the client-side detection script: it runs before any asset is requested
+    and works out the real answer from window.location itself.
 
-    Idempotent: any prior <base href=...> and prior <meta name="app-base-prefix"...>
-    are stripped before injection, so repeated renders at different prefixes
-    never accumulate stale tags.
+    Idempotent: any prior <base href=...>, prior detect script, and prior
+    <meta name="app-base-prefix"...> are stripped before injection, so
+    repeated renders at different prefixes never accumulate stale tags.
 
     Security: ``prefix`` is validated upstream by ``_APP_PREFIX_RE`` in
     backend.config.loader to characters [A-Za-z0-9._\\-/] only, so direct
     interpolation into HTML attribute values is safe (no XSS sink). Relaxing
-    that validator would require HTML-escaping here.
+    that validator would require HTML-escaping here. The detect script has
+    no user input at all — KNOWN_ROUTES is a fixed literal.
     """
     html = _INDEX_FILE.read_text(encoding="utf-8")
 
     # Strip any prior injections (order-insensitive).
     html = _strip_tag(html, '<meta name="' + _META_PREFIX_NAME + '"')
     html = _strip_tag(html, "<base href=")
+    html = _strip_block(html, f'<script id="{_BASE_DETECT_SCRIPT_ID}"', "</script>")
 
-    base_href = f"{prefix}/" if prefix else "/"
-    base_tag = f'<base href="{base_href}">'
-    meta_tag = f'<meta name="{_META_PREFIX_NAME}" content="{prefix}">' if prefix else ""
+    if prefix:
+        base_tag = f'<base href="{prefix}/">'
+        meta_tag = f'<meta name="{_META_PREFIX_NAME}" content="{prefix}">'
+    else:
+        base_tag = _BASE_DETECT_SCRIPT
+        meta_tag = ""
 
-    # Compose the injection block: <base> first so it scopes any same-document
+    # Compose the injection block: <base>/detect-script first so it scopes any same-document
     # relative URLs that follow; <meta> second if applicable.
     injection = "\n    " + base_tag
     if meta_tag:
