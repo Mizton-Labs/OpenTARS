@@ -1,13 +1,25 @@
 """Tests for the SPA catch-all + base-prefix injection.
 
-Originally added in prompts-017; updated in prompts-019 for the new
-no-prefix-relative contract:
+Originally added in prompts-017; updated in prompts-019 for the (since
+revised) no-prefix-relative contract, then twice more in issue-local-035
+follow-ups: first a static "./" -> static "/" swap (broke zero-config
+reverse-proxy-alias deployments where the browser's URL includes an alias
+segment the backend was never told about), then the CURRENT contract, a
+client-side detection script for the unconfigured case — see
+backend.main._render_index_html's docstring for the full root-cause writeup
+of why neither a fixed relative nor a fixed absolute value can be correct
+for both the true-root-mount and the unconfigured-alias case. Current
+contract:
 
-    prefix == ""   →  inject <base href="./">; OMIT the app-base-prefix <meta>
+    prefix == ""   →  inject the base-detect script (id=__opentars_base_detect);
+                       OMIT the app-base-prefix <meta>
     prefix != ""   →  inject <base href="<prefix>/"> AND the <meta> tag
 """
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import pytest
 import yaml
@@ -57,13 +69,15 @@ def test_spa_index_has_meta_and_base_with_prefix(client_with_prefix):
 
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
-def test_spa_index_empty_prefix_omits_meta_and_uses_relative_base(client_empty_prefix):
-    """Empty prefix → <base href="./"> present, app-base-prefix <meta> ABSENT."""
+def test_spa_index_empty_prefix_omits_meta_and_injects_detect_script(client_empty_prefix):
+    """Empty prefix → base-detect script present, no static <base>, no meta."""
     resp = client_empty_prefix.get("/")
     assert resp.status_code == 200
     body = resp.text
-    assert '<base href="./">' in body
-    # The contract is "no prefix machinery visible in the document".
+    assert '<script id="__opentars_base_detect">' in body
+    assert "<base href=" not in body
+    # The contract is "no prefix machinery visible in the document" for the
+    # server-rendered meta; the script computes the base client-side instead.
     assert 'name="app-base-prefix"' not in body
 
 
@@ -72,8 +86,23 @@ def test_spa_catch_all_serves_index_for_deep_link(client_empty_prefix):
     """A SPA deep-link path returns the index.html shell, not 404."""
     resp = client_empty_prefix.get("/viewer")
     assert resp.status_code == 200
-    # In the empty-prefix case we expect the <base href="./"> marker.
-    assert '<base href="./">' in resp.text
+    assert '<script id="__opentars_base_detect">' in resp.text
+
+
+@pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
+def test_spa_catch_all_serves_index_for_multi_segment_deep_link(client_empty_prefix):
+    """issue-local-035 follow-up regression: a hard refresh on a NESTED SPA
+    route (e.g. /threat-hunting/<uuid>, /threat-hunting/tracking) must still
+    get the base-detect script — a static base href (relative OR absolute)
+    cannot be correct at every route depth for both the true-root-mount and
+    the unconfigured-reverse-proxy-alias case; only client-side detection of
+    the browser's own URL can distinguish them. See _render_index_html's
+    docstring for the two prior, each-wrong-in-a-different-direction fixes."""
+    for path in ("/threat-hunting/abc123", "/threat-hunting/tracking", "/threat-hunting/explorer"):
+        resp = client_empty_prefix.get(path)
+        assert resp.status_code == 200, path
+        assert '<script id="__opentars_base_detect">' in resp.text, path
+        assert "<base href=" not in resp.text, path
 
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
@@ -86,16 +115,19 @@ def test_spa_catch_all_does_not_swallow_api_paths(client_empty_prefix):
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
 def test_spa_injection_is_idempotent_across_prefix_changes():
-    """Re-rendering at different prefixes leaves exactly one <base>/<meta>.
+    """Re-rendering at different prefixes leaves exactly one <base>/<meta>/
+    detect-script — never an accumulation of prior renders' injections.
 
     Also checks that switching from a non-empty prefix to an empty prefix
-    correctly REMOVES the prior <meta> tag.
+    correctly REMOVES the prior <meta> AND <base> tag, replacing them with
+    the detect script (not leaving both present at once).
     """
     from backend.main import _render_index_html
 
     once = _render_index_html("/a")
     assert once.count("<base href=") == 1
     assert once.count('name="app-base-prefix"') == 1
+    assert once.count("__opentars_base_detect") == 0
     assert '<base href="/a/">' in once
 
     twice = _render_index_html("/b")
@@ -104,11 +136,18 @@ def test_spa_injection_is_idempotent_across_prefix_changes():
     assert '<base href="/b/">' in twice
     assert '<base href="/a/">' not in twice
 
-    # Going back to empty must drop the meta tag entirely.
+    # Going back to empty must drop the meta AND static base tag entirely,
+    # replacing them with exactly one copy of the detect script.
     thrice = _render_index_html("")
-    assert thrice.count("<base href=") == 1
-    assert '<base href="./">' in thrice
+    assert thrice.count("<base href=") == 0
+    assert thrice.count("__opentars_base_detect") == 1
     assert 'name="app-base-prefix"' not in thrice
+
+    # And back to non-empty must remove the detect script again.
+    fourth = _render_index_html("/c")
+    assert fourth.count("__opentars_base_detect") == 0
+    assert fourth.count("<base href=") == 1
+    assert '<base href="/c/">' in fourth
 
 
 @pytest.mark.skipif(not _frontend_dist_present(), reason="frontend/dist not built")
@@ -118,8 +157,67 @@ def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
 
     for _ in range(3):
         out = _render_index_html("")
-        assert '<base href="./">' in out
+        assert '<script id="__opentars_base_detect">' in out
         assert 'name="app-base-prefix"' not in out
+
+
+# ── Base-detect script correctness (issue-local-035, 2nd follow-up) ──────────
+#
+# The client-side detect script (backend.main._BASE_DETECT_SCRIPT) exists
+# because NEITHER a fixed relative "./" NOR a fixed absolute "/" base href
+# can be correct at every route depth for both a true-root deployment and an
+# unconfigured (zero-config) reverse-proxy alias — see _render_index_html's
+# docstring. It duplicates frontend/src/utils/basePrefix.ts's KNOWN_ROUTES
+# list and detection algorithm in vanilla JS, because it must run BEFORE the
+# JS bundle (which contains the real TypeScript implementation) is even
+# requested. These tests guard the one real risk of that duplication: the
+# two KNOWN_ROUTES lists silently drifting apart. Behavioral correctness of
+# the detection algorithm itself (does it resolve the right base href for a
+# given URL) is covered on the frontend side, in
+# frontend/src/__tests__/indexHtmlBaseDetect.test.ts, which actually
+# executes the script via jsdom.
+
+
+def _frontend_known_routes() -> list[str]:
+    ts_path = (
+        Path(__file__).resolve().parents[2]
+        / "frontend"
+        / "src"
+        / "utils"
+        / "basePrefix.ts"
+    )
+    src = ts_path.read_text(encoding="utf-8")
+    match = re.search(r"export const KNOWN_ROUTES = \[(.*?)\] as const", src)
+    assert match, "KNOWN_ROUTES literal not found in basePrefix.ts — has it moved?"
+    return re.findall(r"'([^']+)'", match.group(1))
+
+
+def _backend_detect_script_known_routes() -> list[str]:
+    from backend.main import _BASE_DETECT_SCRIPT
+
+    match = re.search(r"var KNOWN_ROUTES = \[(.*?)\];", _BASE_DETECT_SCRIPT)
+    assert match, "KNOWN_ROUTES literal not found in _BASE_DETECT_SCRIPT — has it moved?"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def test_base_detect_script_known_routes_matches_frontend():
+    """The one real drift risk of duplicating this list in vanilla JS: catch
+    it here instead of as a live "some nested route works, others don't"
+    bug like the original one this whole fix addresses."""
+    assert _backend_detect_script_known_routes() == _frontend_known_routes()
+
+
+def test_base_detect_script_has_no_user_input_interpolated():
+    """Security: the script must be a fixed literal, never touched by
+    _render_index_html's per-request `prefix` argument (which IS
+    user-influenced indirectly via config) — confirms the docstring's XSS
+    reasoning by construction rather than just by inspection."""
+    from backend.main import _BASE_DETECT_SCRIPT, _render_index_html
+
+    rendered_empty = _render_index_html("")
+    rendered_other_prefix_still_empty_branch = _render_index_html("")
+    assert _BASE_DETECT_SCRIPT in rendered_empty
+    assert rendered_empty == rendered_other_prefix_still_empty_branch
 
 
 # ── API docs pages under a reverse-proxy alias (issue-local-030) ──────────────
@@ -133,9 +231,14 @@ def test_spa_index_empty_prefix_has_no_meta_after_repeated_renders():
 # other application is mounted there (in the real deployment, the parent app's
 # schema was rendered instead of this app's).
 #
-# The fix is the same document-relative strategy the SPA already uses (see the
-# <base href="./"> tests above): reference `openapi.json` relatively so it
+# The fix: reference `openapi.json` relatively (no leading slash) so it
 # always resolves inside the alias, with or without app_base_prefix set.
+# Safe here specifically because /docs and /redoc are each served at one
+# FIXED, single-segment path — unlike the SPA's own routes (which vary in
+# depth and, per the issue-local-035 follow-up above, need an ABSOLUTE
+# <base href> instead precisely because relative resolution isn't
+# depth-safe), a relative reference from a fixed one-segment page has no
+# depth ambiguity to get wrong.
 
 
 def test_swagger_references_openapi_relatively(client_empty_prefix):

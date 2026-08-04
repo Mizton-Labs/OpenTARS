@@ -6,8 +6,10 @@
  *     basename and root-anchored hrefs under non-empty basename.
  *   - getAppBasePrefix() implements the three-tier precedence:
  *       explicit meta > window.location auto-detect > empty.
- *   - The auto-detect strategy strips known-route suffixes when present
- *     and falls back to trailing-slash strip otherwise.
+ *   - The auto-detect strategy strips everything before the FIRST known
+ *     top-level route segment (wherever it appears, not just at the end —
+ *     issue-local-035 follow-up) and falls back to trailing-slash strip
+ *     when no known route segment appears anywhere in the path.
  */
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
@@ -370,6 +372,36 @@ describe('getAppBasePrefix() three-tier precedence (prompts-020)', () => {
   it('handles multi-segment aliases such as "/proxy/feeds/"', () => {
     setLocationPathname('/proxy/feeds/')
     expect(getAppBasePrefix()).toBe('/proxy/feeds')
+  })
+
+  // issue-local-035 follow-up: nested Threat Hunting routes (a known route
+  // followed by MORE segments — a hunt package id, a sub-tab name) used to
+  // fall through to the trailing-slash-strip fallback and get misdetected
+  // as if the whole path were a reverse-proxy alias, corrupting both the
+  // API client's BASE and React Router's basename on a hard refresh.
+  it('returns "" for a nested Threat Hunting route with no alias (hunt package id)', () => {
+    setLocationPathname('/threat-hunting/abc123')
+    expect(getAppBasePrefix()).toBe('')
+  })
+
+  it('returns "" for the Threat Intel Tracking route with no alias', () => {
+    setLocationPathname('/threat-hunting/tracking')
+    expect(getAppBasePrefix()).toBe('')
+  })
+
+  it('returns "" for the Data Explorer route with no alias', () => {
+    setLocationPathname('/threat-hunting/explorer')
+    expect(getAppBasePrefix()).toBe('')
+  })
+
+  it('returns "" for the Hunt Packages list route with no alias', () => {
+    setLocationPathname('/threat-hunting/packages')
+    expect(getAppBasePrefix()).toBe('')
+  })
+
+  it('auto-detects "/feeds" for a nested Threat Hunting route WITH an alias', () => {
+    setLocationPathname('/feeds/threat-hunting/abc123')
+    expect(getAppBasePrefix()).toBe('/feeds')
   })
 
   it('explicit meta tag overrides auto-detect (forcing override)', () => {

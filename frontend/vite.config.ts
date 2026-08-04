@@ -12,16 +12,17 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Match any request path ending in '/api/...' (or '/api') and rewrite
-      // it to the backend's literal '/api/...'. This supports two cases:
-      //   1. Root mount, relative client: fetch('api/health') from '/'
-      //      resolves to '/api/health' — matched directly.
-      //   2. Deep-route reload, relative client: fetch('api/health') from
-      //      '/configuration' resolves to '/configuration/api/health';
-      //      the rewrite strips the leading segments back to '/api/...'.
-      // Note: Vite does NOT inject a <base href> in dev, so deep-route
-      // reloads in dev rely on this rewrite to reach the backend. In
-      // production the backend injects <base href="./">, so the browser
-      // resolves to '/api/...' without depending on rewrites.
+      // it to the backend's literal '/api/...'.
+      // issue-local-035 follow-up: index.html now carries a root-anchored
+      // <base href="/"> (mirroring what backend/main.py injects in
+      // production — see _render_index_html's docstring), so
+      // fetch('api/health') always resolves to '/api/health' regardless of
+      // which route the page was loaded/refreshed at — this rewrite is now
+      // effectively a no-op safety net (matches and passes '/api/...'
+      // through unchanged) rather than something the app depends on for
+      // deep-route reloads to work, as it previously was when dev had no
+      // <base href> at all and relative fetches resolved against whatever
+      // deep path the browser happened to be on.
       '^.*/api(/.*)?$': {
         target: 'http://localhost:8000',
         changeOrigin: true,

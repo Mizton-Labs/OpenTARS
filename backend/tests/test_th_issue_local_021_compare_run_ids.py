@@ -109,8 +109,9 @@ class TestCompareRunsRunIdsFilter:
                     f"/api/threat-hunting/packages/{pkg['id']}/compare",
                     json={"run_ids": ["run-1"]},
                 )
-            assert resp.status_code == 201, resp.text
-            assert resp.json()["full_report"]["compared_run_ids"] == ["run-1"]
+                assert resp.status_code == 202, resp.text
+                result = await comparison_analyst.compare_runs(pkg["id"], run_ids=["run-1"])
+            assert result["full_report"]["compared_run_ids"] == ["run-1"]
 
     @pytest.mark.asyncio
     async def test_route_omits_run_ids_compares_all(self, db_path: Path) -> None:
@@ -129,5 +130,6 @@ class TestCompareRunsRunIdsFilter:
             ):
                 client = TestClient(app)
                 resp = client.post(f"/api/threat-hunting/packages/{pkg['id']}/compare", json={})
-            assert resp.status_code == 201, resp.text
-            assert set(resp.json()["full_report"]["compared_run_ids"]) == {"run-1", "run-2"}
+                assert resp.status_code == 202, resp.text
+                result = await comparison_analyst.compare_runs(pkg["id"])
+            assert set(result["full_report"]["compared_run_ids"]) == {"run-1", "run-2"}

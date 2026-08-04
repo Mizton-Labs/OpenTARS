@@ -61,6 +61,13 @@ _TOOL_NAMES = ["extract_iocs", "refetch_url"]
 # the model stays focused on one job (spotting noise the deterministic
 # regex/allowlist scorer can't catch) instead of drifting into general
 # threat analysis.
+#
+# issue-local-035: extended to also catch reference/citation-style URLs —
+# links from a source article's "References"/"Further reading"/footnote
+# section rather than the incident's actual infrastructure. The extractor
+# only sees flat text (no DOM/section structure survives HTML extraction —
+# see iocs.py), so this is a best-effort heuristic over each URL's
+# surrounding text snippet, not a structural guarantee.
 _IOC_TRIAGE_SYSTEM_PROMPT = (
     "You are an IOC Triage Analyst. Your ONLY job is to review a list of "
     "already-extracted, already-defanged indicators of compromise and flag "
@@ -74,9 +81,35 @@ _IOC_TRIAGE_SYSTEM_PROMPT = (
     "documentation/example values (example.com, RFC 5737 test ranges "
     "192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), and IOCs that read as "
     "generic infrastructure with no connection to the incident narrative. "
-    "When genuinely unsure, do not flag it — false negatives are cheaper "
-    "than losing a real indicator. Always output valid JSON only."
+    "For 'url' type items, a surrounding text snippet is provided when "
+    "available — flag the URL if that snippet reads as a bibliography/"
+    "citation/footnote entry (e.g. a numbered reference, a 'References' or "
+    "'Further reading' list, a vendor blog/news link cited as a source "
+    "rather than mentioned as attacker infrastructure) instead of inline "
+    "narrative describing attacker activity. When genuinely unsure, do not "
+    "flag it — false negatives are cheaper than losing a real indicator. "
+    "Always output valid JSON only."
 )
+
+# issue-local-035: chars of context captured on each side of a URL's first
+# occurrence in the evidence corpus, for the citation/reference heuristic
+# above. Small on purpose — enough to see "[12] " or "References:" prefixes
+# without ballooning prompt size on evidence-heavy runs.
+_URL_CONTEXT_RADIUS = 150
+
+
+def _url_context_snippet(url: str, corpus: str) -> str:
+    """Best-effort surrounding text for *url*'s first occurrence in *corpus*.
+
+    Returns "" if not found — callers must treat a missing snippet as "no
+    extra signal available", never as an error.
+    """
+    idx = corpus.find(url)
+    if idx == -1:
+        return ""
+    start = max(0, idx - _URL_CONTEXT_RADIUS)
+    end = min(len(corpus), idx + len(url) + _URL_CONTEXT_RADIUS)
+    return corpus[start:end].replace("\n", " ").strip()
 
 
 async def _llm_triage_iocs(
@@ -84,10 +117,15 @@ async def _llm_triage_iocs(
     *,
     provider_name: str | None,
     model_name: str | None,
+    evidence_text_corpus: str = "",
 ) -> list[dict[str, str]]:
     """Ask the LLM to flag additional noisy/irrelevant IOCs the deterministic
     scorer missed. Returns a list of {ioc, ioc_type, reason} dicts for items
     to flag — never raises; callers treat this as best-effort enrichment.
+
+    issue-local-035: *evidence_text_corpus*, when provided, is used to give
+    url-type candidates a short surrounding-text snippet so the LLM can spot
+    reference/citation-style links (see _IOC_TRIAGE_SYSTEM_PROMPT).
     """
     from backend.threat_hunting.agents.llm_bridge import build_prompt, call_llm, parse_json_response
 
@@ -97,14 +135,21 @@ async def _llm_triage_iocs(
     if not candidates:
         return []
 
-    ioc_lines = "\n".join(
-        f"- type={i.get('ioc_type')} value={i.get('ioc')}" for i in candidates[:200]
-    )
+    lines = []
+    for i in candidates[:200]:
+        line = f"- type={i.get('ioc_type')} value={i.get('ioc')}"
+        if i.get("ioc_type") == "url" and evidence_text_corpus:
+            snippet = _url_context_snippet(str(i.get("ioc", "")), evidence_text_corpus)
+            if snippet:
+                line += f" context=\"...{snippet}...\""
+        lines.append(line)
+    ioc_lines = "\n".join(lines)
     system, user = build_prompt(
         system=_IOC_TRIAGE_SYSTEM_PROMPT,
         task_description=(
             "Review this list of extracted IOCs and identify any that are generic, "
-            "placeholder, or unrelated to a real threat and should be flagged as noisy."
+            "placeholder, unrelated to a real threat, or (for URLs) a citation/reference "
+            "link rather than attacker infrastructure, and should be flagged as noisy."
         ),
         context_sections=[("Extracted IOCs (not yet flagged noisy)", ioc_lines)],
         output_format=(
@@ -407,6 +452,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                     all_iocs,
                     provider_name=state.get("provider_name"),
                     model_name=state.get("model_name"),
+                    evidence_text_corpus=evidence_text_corpus,
                 )
                 triaged = 0
                 for flag in flags:

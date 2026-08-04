@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
@@ -1401,37 +1402,116 @@ class CompareRunsBody(BaseModel):
     # (the "Assess & Compare" dialog's run picker). None = compare all runs,
     # unchanged from issue-local-020.
     run_ids: list[str] | None = None
+    # issue-local-035: which of the two independent comparison slots to
+    # write — "preliminary" (pre-SIEM-execution) or "full" (post-execution,
+    # the only phase that existed before issue-local-035).
+    phase: Literal["preliminary", "full"] = "full"
 
 
-@router.post("/packages/{pkg_id}/compare", status_code=201)
-async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Request) -> dict:
-    """Compare all runs of this hunt package (any status) and persist a
-    comparison report. Synchronous — a single LLM call, matching the
-    existing manual report-generation pattern."""
-    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+async def _run_comparison_job(
+    job_id: str,
+    pkg_id: str,
+    *,
+    run_ids: list[str] | None,
+    provider_name: str | None,
+    model_name: str | None,
+    created_by: str | None,
+    phase: str,
+) -> None:
+    """Background task: run the comparison and report progress via *job_id*.
+
+    issue-local-035 follow-up: this is what makes "Assess & Compare" survive
+    the triggering dialog closing or the tab navigating away — it runs
+    detached from the request/response cycle that started it, unlike the
+    prior synchronous `await compare_runs(...)` directly inside the route
+    (which Starlette would cancel if the client disconnected mid-request).
+    """
+    from backend.threat_hunting.agents.logging_utils import get_run_logger
     from backend.threat_hunting.agents.nodes.comparison_analyst import compare_runs
+
+    log = get_run_logger(__name__, pkg_id, None)
+    try:
+        await compare_runs(
+            pkg_id,
+            run_ids=run_ids,
+            provider_name=provider_name,
+            model_name=model_name,
+            created_by=created_by,
+            phase=phase,
+            job_id=job_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("comparison job %s failed: %s", job_id[:8], exc)
+        await th_db.update_comparison_job(job_id, status="error", error_message=str(exc))
+
+
+@router.post("/packages/{pkg_id}/compare", status_code=202)
+async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Request) -> dict:
+    """Start a background comparison job for this hunt package's runs and
+    return immediately with the job's initial (running) status.
+
+    issue-local-035 follow-up: previously synchronous (a single LLM call
+    awaited inline), which meant closing the "Assess & Compare" dialog or
+    navigating away mid-request killed the comparison. Now fire-and-forget,
+    matching /generate's pattern — poll GET /compare/status for progress.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+
+    # Cheap, synchronous validation up front — same check compare_runs()
+    # itself does, duplicated here so a bad request still gets an immediate
+    # 400 instead of a job that's created only to fail a moment later.
+    runs_summary = await th_db.list_generation_runs(pkg_id)
+    if body.run_ids is not None:
+        wanted = set(body.run_ids)
+        runs_summary = [r for r in runs_summary if r["id"] in wanted]
+    if not runs_summary:
+        raise HTTPException(status_code=400, detail="No runs to compare for this hunt package")
 
     created_by = None
     if hasattr(request.state, "user") and request.state.user:
         created_by = request.state.user.get("username")
 
-    try:
-        return await compare_runs(
+    job = await th_db.create_comparison_job(
+        pkg_id,
+        phase=body.phase,
+        run_ids=body.run_ids,
+        provider_name=body.provider_name,
+        model_name=body.model_name,
+        created_by=created_by,
+    )
+    asyncio.create_task(
+        _run_comparison_job(
+            job["id"],
             pkg_id,
             run_ids=body.run_ids,
             provider_name=body.provider_name,
             model_name=body.model_name,
             created_by=created_by,
+            phase=body.phase,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    )
+    return job
+
+
+@router.get("/packages/{pkg_id}/compare/status")
+async def get_comparison_job_status(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> dict:
+    """Poll the latest comparison job's status for this package/phase."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    job = await th_db.get_latest_comparison_job(pkg_id, phase=phase)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No comparison job found.")
+    return job
 
 
 @router.get("/packages/{pkg_id}/comparison")
-async def get_package_comparison(pkg_id: str) -> dict:
-    """Get the latest comparison report for a package."""
+async def get_package_comparison(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> dict:
+    """Get the latest comparison report of *phase* for a package."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
-    report = await th_db.get_latest_comparison_report(pkg_id)
+    report = await th_db.get_latest_comparison_report(pkg_id, phase=phase)
     if report is None:
         raise HTTPException(status_code=404, detail="No comparison report found.")
     return report
@@ -1450,10 +1530,12 @@ def _decode_full_report(report: dict) -> dict:
 
 
 @router.get("/packages/{pkg_id}/comparison/markdown")
-async def download_comparison_markdown(pkg_id: str) -> Response:
-    """Download the latest comparison report as a Markdown document."""
+async def download_comparison_markdown(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> Response:
+    """Download the latest comparison report of *phase* as a Markdown document."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
-    report = await th_db.get_latest_comparison_report(pkg_id)
+    report = await th_db.get_latest_comparison_report(pkg_id, phase=phase)
     if report is None:
         raise HTTPException(status_code=404, detail="No comparison report found.")
 
@@ -1474,10 +1556,12 @@ async def download_comparison_markdown(pkg_id: str) -> Response:
 
 
 @router.get("/packages/{pkg_id}/comparison/pdf")
-async def download_comparison_pdf(pkg_id: str) -> StreamingResponse:
-    """Download the latest comparison report as a PDF document (generated on demand)."""
+async def download_comparison_pdf(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> StreamingResponse:
+    """Download the latest comparison report of *phase* as a PDF document (generated on demand)."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
-    report = await th_db.get_latest_comparison_report(pkg_id)
+    report = await th_db.get_latest_comparison_report(pkg_id, phase=phase)
     if report is None:
         raise HTTPException(status_code=404, detail="No comparison report found.")
 
@@ -1505,6 +1589,194 @@ async def download_comparison_pdf(pkg_id: str) -> StreamingResponse:
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Recommended-combination actions (issue-local-035) ────────────────────────
+# The Comparison Assessment's "Recommended Combination" card offers three
+# actions: (1) snapshot the current comparison as a standalone consolidated
+# report, no new execution; (2)/(3) re-run generation on a new package seeded
+# from this package's evidence plus the recommendation, either for all
+# compared runs or a user-picked subset.
+
+
+class ConsolidateBody(BaseModel):
+    phase: Literal["preliminary", "full"] = "full"
+
+
+@router.post("/packages/{pkg_id}/compare/consolidate", status_code=201)
+async def consolidate_comparison(pkg_id: str, body: ConsolidateBody, request: Request) -> dict:
+    """Snapshot the latest comparison report of *phase* as a standalone
+    consolidated report — a pure DB copy, no agent execution."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    try:
+        return await th_db.create_consolidated_report(
+            pkg_id, phase=body.phase, created_by=created_by
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/consolidated")
+async def get_package_consolidated(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> dict:
+    """Get the latest consolidated report of *phase* for a package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_consolidated_report(pkg_id, phase=phase)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No consolidated report found.")
+    return report
+
+
+@router.get("/packages/{pkg_id}/consolidated/markdown")
+async def download_consolidated_markdown(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> Response:
+    """Download the latest consolidated report of *phase* as Markdown."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_consolidated_report(pkg_id, phase=phase)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No consolidated report found.")
+
+    full_report = _decode_full_report(report)
+    markdown_content = full_report.get("_markdown")
+    if not markdown_content:
+        from backend.threat_hunting.agents.nodes.report_writer import render_comparison_markdown
+
+        markdown_content = render_comparison_markdown(full_report)
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_consolidated_{hunt_name}.md"
+    return Response(
+        content=markdown_content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/packages/{pkg_id}/consolidated/pdf")
+async def download_consolidated_pdf(
+    pkg_id: str, phase: Literal["preliminary", "full"] = Query("full")
+) -> StreamingResponse:
+    """Download the latest consolidated report of *phase* as a PDF (generated on demand)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    report = await th_db.get_latest_consolidated_report(pkg_id, phase=phase)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No consolidated report found.")
+
+    full_report = _decode_full_report(report)
+    try:
+        from backend.threat_hunting.agents.nodes.report_writer import render_comparison_pdf
+
+        pdf_bytes = render_comparison_pdf(full_report)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="PDF generation requires reportlab. Install it with: pip install reportlab",
+        )
+    except Exception as exc:
+        logger.exception("Consolidated PDF render failed for %s: %s", pkg_id[:8], exc)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    hunt_name = (full_report.get("hunt_name") or pkg_id[:8]).replace(" ", "_")
+    filename = f"hunt_consolidated_{hunt_name}.pdf"
+    from io import BytesIO
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class RerunFromRecommendationBody(BaseModel):
+    new_package_name: str | None = None
+    # None = use every run the source comparison covered; otherwise narrow
+    # to a user-picked subset (option 3's run picker).
+    run_ids: list[str] | None = None
+    phase: Literal["preliminary", "full"] = "full"
+    provider_name: str | None = None
+    model_name: str | None = None
+    research_effort: str | None = None
+
+
+def _kept_ioc_csv_for_runs(ioc_overview: list[dict], run_ids: set[str]) -> str:
+    """Build the canonical IOC CSV from a comparison's ioc_overview, limited
+    to occurrences within *run_ids* and kept (non-'remove') in at least one
+    of them."""
+    from backend.threat_hunting.agents.nodes.deep_retrohunt_planner import _build_ioc_csv
+
+    sanitized = []
+    for row in ioc_overview:
+        occurrences = [o for o in (row.get("occurrences") or []) if o.get("run_id") in run_ids]
+        if not occurrences:
+            continue
+        if any(o.get("verdict") != "remove" for o in occurrences):
+            sanitized.append(
+                {
+                    "ioc": row.get("ioc", ""),
+                    "ioc_type": row.get("ioc_type", ""),
+                    "ioc_description": "",
+                }
+            )
+    return _build_ioc_csv(sanitized)
+
+
+@router.post("/packages/{pkg_id}/compare/rerun", status_code=202)
+async def rerun_from_recommendation(
+    pkg_id: str, body: RerunFromRecommendationBody, request: Request
+) -> dict:
+    """Create a new hunt package seeded from this package's evidence plus the
+    comparison's recommended combination, then trigger generation on it.
+
+    Options 2/3 of the Recommended Combination card: *run_ids*=None uses
+    every compared run (option 2); a specific list narrows to a user-picked
+    subset (option 3).
+    """
+    pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    source = await th_db.get_latest_comparison_report(pkg_id, phase=body.phase)
+    if source is None:
+        raise HTTPException(
+            status_code=404, detail=f"No {body.phase} comparison report to re-run from."
+        )
+    full_report = _decode_full_report(source)
+    compared_run_ids = full_report.get("compared_run_ids") or []
+    wanted_run_ids = set(body.run_ids) if body.run_ids is not None else set(compared_run_ids)
+    if not wanted_run_ids:
+        raise HTTPException(status_code=400, detail="No runs selected to re-run from.")
+
+    ioc_csv = _kept_ioc_csv_for_runs(full_report.get("ioc_overview") or [], wanted_run_ids)
+    recommendation_text = full_report.get("recommended_combination") or ""
+
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
+    new_name = body.new_package_name or f"{pkg.get('name', 'Hunt')} (recommended combination)"
+    new_pkg = await th_db.create_rerun_package(
+        pkg_id,
+        new_name,
+        ioc_csv=ioc_csv,
+        recommendation_text=recommendation_text,
+        created_by=created_by,
+    )
+
+    from backend.config.loader import load_th_research_effort
+    from backend.threat_hunting.agents.runner import start_generation as _start
+
+    effort = body.research_effort or load_th_research_effort()
+    record = await _start(
+        new_pkg["id"],
+        provider_name=body.provider_name,
+        model_name=body.model_name,
+        research_effort=effort,
+        run_config={},
+        created_by=created_by,
+    )
+    return {"package": new_pkg, "generation": record}
 
 
 # ── Run Comments (issue-local-018) ────────────────────────────────────────────

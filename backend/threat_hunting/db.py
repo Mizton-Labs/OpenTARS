@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 12
+_TH_SCHEMA_VERSION = 13
 
 
 def _utc_now_iso() -> str:
@@ -215,6 +215,33 @@ CREATE TABLE IF NOT EXISTS siem_connectors (
     verified        INTEGER DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
+);
+"""
+
+# issue-local-035 follow-up: comparison ("Assess & Compare") used to run
+# synchronously inside the POST /compare request/response cycle — the LLM
+# narrative call could take tens of seconds, and Starlette cancels an
+# in-flight request's task if the client disconnects (dialog closed, tab
+# navigated away, browser refresh), silently killing the comparison. This
+# table tracks a comparison run as its own background job (same shape as
+# hunting_packages' generation_status/current_step tracking for the main
+# pipeline), decoupled from the HTTP connection, so the frontend can poll
+# progress independent of whether the triggering dialog/tab stays open.
+CREATE_COMPARISON_JOBS_TABLE = """
+CREATE TABLE IF NOT EXISTS comparison_jobs (
+    id               TEXT PRIMARY KEY,
+    hunt_package_id  TEXT NOT NULL REFERENCES hunt_packages(id),
+    phase            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    current_step     TEXT,
+    error_message    TEXT,
+    run_ids          TEXT,
+    provider_name    TEXT,
+    model_name       TEXT,
+    report_id        TEXT,
+    created_by       TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
 );
 """
 
@@ -483,6 +510,12 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
             "Migrated threat_hunting.db to schema v12 "
             "(added hunting_packages.archived, evidence_items.source_entity)"
         )
+    if current_version < 13:
+        # v13 (issue-local-035 follow-up): comparison_jobs table — see its
+        # CREATE_COMPARISON_JOBS_TABLE docstring for why comparison runs
+        # needed to become a trackable background job.
+        await db.execute(CREATE_COMPARISON_JOBS_TABLE)
+        logger.info("Migrated threat_hunting.db to schema v13 (added comparison_jobs table)")
 
 
 async def init_threat_hunting_db() -> None:
@@ -500,6 +533,7 @@ async def init_threat_hunting_db() -> None:
         await db.execute(CREATE_RUN_COMMENTS_TABLE)
         await db.execute(CREATE_SIEM_CONNECTORS_TABLE)
         await db.execute(CREATE_THREAT_INTEL_ANALYSIS_TABLE)
+        await db.execute(CREATE_COMPARISON_JOBS_TABLE)
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_extracted_iocs_ioc ON extracted_iocs(ioc)"
@@ -2516,6 +2550,86 @@ async def create_hunt_report(
     return await get_hunt_report(hunt_package_id)  # type: ignore[return-value]
 
 
+def _migrate_legacy_ioc_overview(rows: list[Any]) -> list[dict[str, Any]]:
+    """issue-local-035 follow-up: comparison/consolidated reports persisted
+    before the IOC-overview dedup shipped have ``ioc_overview`` as one row
+    per (run, ioc) — ``{ioc, ioc_type, run_id, run_id_display, model,
+    confidence_pct, verdict, hypotheses}`` — with no "occurrences" key. The
+    frontend table only understands the new, deduplicated shape (one row per
+    unique ioc, with an "occurrences" list) and crashes on the old one
+    (``row.occurrences.map`` on undefined). Regroup old rows into the new
+    shape here, at read time, so every already-persisted report renders
+    correctly without a DB migration or losing old data.
+    """
+    if not rows or not isinstance(rows, list):
+        return rows if isinstance(rows, list) else []
+    if all(isinstance(r, dict) and "occurrences" in r for r in rows):
+        return rows  # already new shape (or empty) — nothing to do
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if "occurrences" in row:
+            # Mixed shape shouldn't happen in practice, but don't drop a
+            # row that's already correct just because a sibling isn't.
+            key = (row.get("ioc_type", ""), row.get("ioc", ""))
+            if key not in grouped:
+                order.append(key)
+                grouped[key] = dict(row)
+            continue
+        key = (row.get("ioc_type", ""), row.get("ioc", ""))
+        if key not in grouped:
+            order.append(key)
+            grouped[key] = {
+                "ioc": row.get("ioc", ""),
+                "ioc_type": row.get("ioc_type", ""),
+                "occurrences": [],
+                "hypotheses": [],
+            }
+        entry = grouped[key]
+        entry["occurrences"].append(
+            {
+                "run_id": row.get("run_id", ""),
+                "run_id_display": row.get("run_id_display", ""),
+                "model": row.get("model", ""),
+                "confidence_pct": row.get("confidence_pct"),
+                "verdict": row.get("verdict") or "keep",
+            }
+        )
+        for h in row.get("hypotheses") or []:
+            if h not in entry["hypotheses"]:
+                entry["hypotheses"].append(h)
+
+    result: list[dict[str, Any]] = []
+    for key in order:
+        entry = grouped[key]
+        if "occurrences" not in entry:
+            result.append(entry)
+            continue
+        occurrences = entry["occurrences"]
+        kept = sum(1 for o in occurrences if o["verdict"] != "remove")
+        removed = sum(1 for o in occurrences if o["verdict"] == "remove")
+        if kept and removed:
+            verdict_summary = f"kept in {kept}, removed in {removed}"
+        elif removed:
+            verdict_summary = f"removed in {removed}"
+        else:
+            verdict_summary = f"kept in {kept}"
+        result.append(
+            {
+                "ioc": entry["ioc"],
+                "ioc_type": entry["ioc_type"],
+                "run_count": len(occurrences),
+                "verdict_summary": verdict_summary,
+                "occurrences": occurrences,
+                "hypotheses": entry["hypotheses"],
+            }
+        )
+    return result
+
+
 def _decode_report_row(d: dict) -> dict:
     import json as _json
 
@@ -2524,17 +2638,27 @@ def _decode_report_row(d: dict) -> dict:
             d["full_report"] = _json.loads(d["full_report"])
         except Exception:
             pass
+    full_report = d.get("full_report")
+    if (
+        isinstance(full_report, dict)
+        and full_report.get("report_kind") in ("comparison", "consolidated")
+        and isinstance(full_report.get("ioc_overview"), list)
+    ):
+        full_report["ioc_overview"] = _migrate_legacy_ioc_overview(full_report["ioc_overview"])
     return d
 
 
 async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the latest NORMAL (non-comparison) report for a hunt package.
+    """Return the latest NORMAL (non-comparison, non-consolidated) report for
+    a hunt package.
 
     issue-local-020: comparison reports (full_report.report_kind ==
     "comparison") share the hunt_reports table but must never surface here —
     every existing caller of this function expects a single-run/package
     report, so a comparison row (run_id=NULL, same as older pre-run-scoping
     package-level reports) would otherwise silently shadow the real one.
+    issue-local-035: consolidated reports (report_kind == "consolidated")
+    share the same table for the same reason and are excluded the same way.
     """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -2547,7 +2671,10 @@ async def get_hunt_report(hunt_package_id: str) -> dict[str, Any] | None:
     for row in rows:
         decoded = _decode_report_row(dict(row))
         full_report = decoded.get("full_report")
-        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+        if isinstance(full_report, dict) and full_report.get("report_kind") in (
+            "comparison",
+            "consolidated",
+        ):
             continue
         return decoded
     return None
@@ -2584,8 +2711,13 @@ async def create_comparison_report(
     executive_summary: str,
     full_report: dict[str, Any],
     created_by: str | None = None,
+    phase: str = "full",
 ) -> dict[str, Any]:
-    full_report = {**full_report, "report_kind": "comparison"}
+    # issue-local-035: "phase" splits comparison reports into two independent
+    # slots per package — "preliminary" (pre-SIEM-execution state) and "full"
+    # (post-SIEM-execution, the only phase that existed before issue-local-035
+    # — see get_latest_comparison_report's back-compat note).
+    full_report = {**full_report, "report_kind": "comparison", "phase": phase}
     await create_hunt_report(
         hunt_package_id,
         executive_summary=executive_summary,
@@ -2593,14 +2725,22 @@ async def create_comparison_report(
         created_by=created_by,
         run_id=None,
     )
-    result = await get_latest_comparison_report(hunt_package_id)
+    result = await get_latest_comparison_report(hunt_package_id, phase=phase)
     return result or {}
 
 
-async def get_latest_comparison_report(hunt_package_id: str) -> dict[str, Any] | None:
-    """Return the most recent comparison report for a package, ignoring
-    normal (single-run or package-level) reports — both share the
-    hunt_reports table, distinguished only by full_report.report_kind."""
+async def get_latest_comparison_report(
+    hunt_package_id: str, *, phase: str = "full"
+) -> dict[str, Any] | None:
+    """Return the most recent comparison report of *phase* for a package,
+    ignoring normal (single-run or package-level) reports and the OTHER
+    phase's comparison reports — all three share the hunt_reports table,
+    distinguished only by full_report.report_kind/phase.
+
+    issue-local-035 back-compat: comparison reports created before the phase
+    split have no "phase" key at all — treated as "full" (the only phase that
+    existed then), so pre-035 reports keep surfacing under the Full tab.
+    """
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -2614,9 +2754,229 @@ async def get_latest_comparison_report(hunt_package_id: str) -> dict[str, Any] |
     for row in rows:
         decoded = _decode_report_row(dict(row))
         full_report = decoded.get("full_report")
-        if isinstance(full_report, dict) and full_report.get("report_kind") == "comparison":
+        if (
+            isinstance(full_report, dict)
+            and full_report.get("report_kind") == "comparison"
+            and full_report.get("phase", "full") == phase
+        ):
             return decoded
     return None
+
+
+# ── Consolidated reports (issue-local-035) ───────────────────────────────────
+# The first of the Recommended Combination card's three actions: "create a
+# consolidated report, no new execution". This snapshots the CURRENT latest
+# comparison report of a phase into its own, separately-persisted
+# hunt_reports row (report_kind="consolidated") — a pure DB copy, no agent
+# call — so it survives the comparison being re-run/overwritten later. Same
+# table, same discriminator pattern as comparison reports above.
+
+
+async def create_consolidated_report(
+    hunt_package_id: str, *, phase: str = "full", created_by: str | None = None
+) -> dict[str, Any]:
+    """Snapshot the latest comparison report of *phase* as a consolidated
+    report. Raises ValueError if no comparison report of that phase exists
+    yet — callers (the route) translate that into an HTTP 404."""
+    source = await get_latest_comparison_report(hunt_package_id, phase=phase)
+    if source is None:
+        raise ValueError(f"No {phase} comparison report to consolidate for this package")
+
+    source_full_report = source.get("full_report") or {}
+    full_report = {**source_full_report, "report_kind": "consolidated", "phase": phase}
+    await create_hunt_report(
+        hunt_package_id,
+        executive_summary=source.get("executive_summary", ""),
+        full_report=full_report,
+        created_by=created_by,
+        run_id=None,
+    )
+    result = await get_latest_consolidated_report(hunt_package_id, phase=phase)
+    return result or {}
+
+
+async def get_latest_consolidated_report(
+    hunt_package_id: str, *, phase: str = "full"
+) -> dict[str, Any] | None:
+    """Return the most recent consolidated report of *phase* for a package."""
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT * FROM hunt_reports
+               WHERE hunt_package_id = ? AND run_id IS NULL
+               ORDER BY created_at DESC""",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    for row in rows:
+        decoded = _decode_report_row(dict(row))
+        full_report = decoded.get("full_report")
+        if (
+            isinstance(full_report, dict)
+            and full_report.get("report_kind") == "consolidated"
+            and full_report.get("phase", "full") == phase
+        ):
+            return decoded
+    return None
+
+
+# ── Recommended-combination re-run (issue-local-035) ─────────────────────────
+# The 2nd/3rd of the Recommended Combination card's three actions: seed a new
+# hunt package from an existing package's evidence (like clone_hunt_package)
+# plus one synthetic evidence item carrying the comparison's recommended
+# combination — kept-IOC CSV and narrative — so the new run's own IOC
+# extraction picks it straight up through the normal pipeline, no new schema
+# needed. The caller (the route) triggers generation on the returned package.
+
+
+async def create_rerun_package(
+    src_pkg_id: str,
+    new_name: str,
+    *,
+    ioc_csv: str,
+    recommendation_text: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    new_pkg = await clone_hunt_package(src_pkg_id, new_name, created_by)
+    recommendation_text_block = (
+        "Recommended combination (from Comparison Assessment):\n"
+        f"{recommendation_text or 'No narrative recommendation was available.'}\n\n"
+        "Kept IOCs from the compared run(s):\n"
+        f"{ioc_csv or '(no kept IOCs)'}"
+    )
+    await add_evidence_item(
+        new_pkg["id"],
+        item_type="text",
+        label="Recommended combination (from comparison)",
+        extracted_text=recommendation_text_block,
+        parse_status="ok",
+        provenance_notes="issue-local-035: auto-generated from a Comparison Assessment recommendation.",
+    )
+    return await get_hunt_package(new_pkg["id"]) or new_pkg
+
+
+# ── Comparison jobs (issue-local-035 follow-up) ───────────────────────────────
+# Background-job tracking for "Assess & Compare" — see CREATE_COMPARISON_JOBS_TABLE
+# for why this exists (decoupling the comparison run from the HTTP request that
+# triggered it). One job row per POST /compare call; the LATEST job for a
+# (hunt_package_id, phase) pair is what the frontend polls.
+
+
+def _new_job_id() -> str:
+    return str(uuid.uuid4())
+
+
+async def create_comparison_job(
+    hunt_package_id: str,
+    *,
+    phase: str,
+    run_ids: list[str] | None = None,
+    provider_name: str | None = None,
+    model_name: str | None = None,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    import json as _json
+
+    job_id = _new_job_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO comparison_jobs
+              (id, hunt_package_id, phase, status, current_step, error_message,
+               run_ids, provider_name, model_name, report_id, created_by,
+               created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                job_id,
+                hunt_package_id,
+                phase,
+                "running",
+                "loading_runs",
+                None,
+                _json.dumps(run_ids) if run_ids is not None else None,
+                provider_name,
+                model_name,
+                None,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_comparison_job(job_id) or {}
+
+
+async def update_comparison_job(
+    job_id: str,
+    *,
+    current_step: str | None = None,
+    status: str | None = None,
+    error_message: str | None = None,
+    report_id: str | None = None,
+) -> None:
+    fields: list[str] = []
+    values: list[Any] = []
+    if current_step is not None:
+        fields.append("current_step = ?")
+        values.append(current_step)
+    if status is not None:
+        fields.append("status = ?")
+        values.append(status)
+    if error_message is not None:
+        fields.append("error_message = ?")
+        values.append(error_message)
+    if report_id is not None:
+        fields.append("report_id = ?")
+        values.append(report_id)
+    if not fields:
+        return
+    fields.append("updated_at = ?")
+    values.append(_utc_now_iso())
+    values.append(job_id)
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            f"UPDATE comparison_jobs SET {', '.join(fields)} WHERE id = ?",  # noqa: S608
+            values,
+        )
+        await db.commit()
+
+
+async def get_comparison_job(job_id: str) -> dict[str, Any] | None:
+    import json as _json
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM comparison_jobs WHERE id = ?", (job_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    d = dict(row)
+    if d.get("run_ids"):
+        try:
+            d["run_ids"] = _json.loads(d["run_ids"])
+        except Exception:
+            d["run_ids"] = None
+    return d
+
+
+async def get_latest_comparison_job(hunt_package_id: str, *, phase: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT id FROM comparison_jobs
+               WHERE hunt_package_id = ? AND phase = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (hunt_package_id, phase),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return await get_comparison_job(row["id"])
 
 
 # ── Threat Intelligence analysis (issue-local-020) ───────────────────────────
