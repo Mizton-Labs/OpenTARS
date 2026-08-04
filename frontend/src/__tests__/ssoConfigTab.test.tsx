@@ -109,7 +109,7 @@ describe('SsoConfigTab callback_base_url override (issue-local-036)', () => {
     const input = await screen.findByPlaceholderText(/^http:\/\/localhost/)
     fireEvent.change(input, { target: { value: 'https://host.example.com/tars' } })
 
-    fireEvent.click(await screen.findByRole('button', { name: /^save/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^save sso configuration/i }))
 
     await waitFor(() =>
       expect(api.auth.updateSsoConfig).toHaveBeenCalledWith(
@@ -126,12 +126,88 @@ describe('SsoConfigTab callback_base_url override (issue-local-036)', () => {
     vi.mocked(api.auth.updateSsoConfig).mockResolvedValue(makeConfig())
     renderTab()
 
-    fireEvent.click(await screen.findByRole('button', { name: /^save/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^save sso configuration/i }))
 
     await waitFor(() =>
       expect(api.auth.updateSsoConfig).toHaveBeenCalledWith(
         expect.objectContaining({ callback_base_url: '' }),
       ),
+    )
+  })
+
+  it('"Use detected" updates the displayed callback URL immediately, before any save', async () => {
+    vi.mocked(api.auth.getSsoConfig).mockResolvedValue(makeConfig())
+    vi.mocked(api.auth.getSsoCallbackUrl).mockResolvedValue({
+      callback_url: 'http://localhost/api/auth/oidc/callback',
+    })
+    renderTab()
+
+    await screen.findByRole('button', { name: /use detected/i })
+    fireEvent.click(screen.getByRole('button', { name: /use detected/i }))
+
+    // The top "Redirect / Callback URL" box must reflect the override
+    // right away — this is the whole point of the follow-up fix.
+    expect(
+      await screen.findByText(/^http:\/\/localhost:\d+\/api\/auth\/oidc\/callback$/),
+    ).toBeInTheDocument()
+    expect(api.auth.updateSsoConfig).not.toHaveBeenCalled()
+  })
+
+  it('typing an override live-updates the displayed callback URL without saving', async () => {
+    vi.mocked(api.auth.getSsoConfig).mockResolvedValue(makeConfig())
+    vi.mocked(api.auth.getSsoCallbackUrl).mockResolvedValue({
+      callback_url: 'http://localhost/api/auth/oidc/callback',
+    })
+    renderTab()
+
+    const input = await screen.findByPlaceholderText(/^http:\/\/localhost/)
+    fireEvent.change(input, { target: { value: 'https://host.example.com/tars' } })
+
+    expect(
+      await screen.findByText('https://host.example.com/tars/api/auth/oidc/callback'),
+    ).toBeInTheDocument()
+    expect(api.auth.updateSsoConfig).not.toHaveBeenCalled()
+  })
+
+  it('the local "Save Callback URL" button is disabled until the override actually changes', async () => {
+    vi.mocked(api.auth.getSsoConfig).mockResolvedValue(makeConfig())
+    vi.mocked(api.auth.getSsoCallbackUrl).mockResolvedValue({
+      callback_url: 'http://localhost/api/auth/oidc/callback',
+    })
+    renderTab()
+
+    const saveOverrideBtn = await screen.findByRole('button', { name: /^save callback url/i })
+    expect(saveOverrideBtn).toBeDisabled()
+
+    const input = await screen.findByPlaceholderText(/^http:\/\/localhost/)
+    fireEvent.change(input, { target: { value: 'https://host.example.com/tars' } })
+
+    expect(saveOverrideBtn).toBeEnabled()
+  })
+
+  it('clicking "Save Callback URL" saves just the override, independent of the main Save button', async () => {
+    vi.mocked(api.auth.getSsoConfig).mockResolvedValue(makeConfig())
+    vi.mocked(api.auth.getSsoCallbackUrl).mockResolvedValue({
+      callback_url: 'http://localhost/api/auth/oidc/callback',
+    })
+    vi.mocked(api.auth.updateSsoConfig).mockResolvedValue(
+      makeConfig({ callback_base_url: 'https://host.example.com/tars' }),
+    )
+    renderTab()
+
+    const input = await screen.findByPlaceholderText(/^http:\/\/localhost/)
+    fireEvent.change(input, { target: { value: 'https://host.example.com/tars' } })
+    fireEvent.click(await screen.findByRole('button', { name: /^save callback url/i }))
+
+    await waitFor(() =>
+      expect(api.auth.updateSsoConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ callback_base_url: 'https://host.example.com/tars' }),
+      ),
+    )
+    // Once saved, the "unsaved preview" hint must clear and the button go
+    // back to disabled (form now matches the freshly-saved config).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^save callback url|^saved$/i })).toBeDisabled(),
     )
   })
 })
