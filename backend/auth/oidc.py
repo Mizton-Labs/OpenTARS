@@ -45,6 +45,7 @@ import httpx
 
 from backend.auth import db as auth_db
 from backend.auth.oidc_config import load_sso_config_for_use, map_claims_to_role
+from backend.auth.organizations import domain_of_email
 from backend.auth.service import create_session_for_user, hash_password
 
 logger = logging.getLogger(__name__)
@@ -171,8 +172,12 @@ async def handle_callback(
     code: str,
     state: str,
     request_base_url: str,
-) -> tuple[int, str, str]:
-    """Exchange code → tokens → session.  Returns (user_id, raw_token, next_path).
+) -> tuple[dict[str, Any], str, str]:
+    """Exchange code → tokens → session.  Returns (user, raw_token, next_path).
+
+    *user* is the full user dict (as returned by db.get_user_by_id), not just
+    its id — the caller needs username/role to record the sign-in audit event
+    without an extra DB round trip.
 
     Raises ValueError on any OIDC/auth error (caller converts to HTTP 400/401).
     """
@@ -263,7 +268,7 @@ async def handle_callback(
 
     # 7. Mint session
     raw_token = await create_session_for_user(user["id"])
-    return user["id"], raw_token, flow["next_path"]
+    return user, raw_token, flow["next_path"]
 
 
 # ── ID token verification ──────────────────────────────────────────────────────
@@ -354,7 +359,13 @@ async def _upsert_sso_user(
 
     On each successful SSO login the user's role is updated to match the
     current IdP claim mapping (so role changes in the IdP take effect on
-    next login without manual admin action).
+    next login without manual admin action). issue-local-037: org_id is
+    resynced the same way, best-effort matching the SSO username's email
+    domain against configured organizations — but the username itself is
+    NEVER touched here (unlike the admin-driven org-change route), since
+    silently rewriting a user's login identifier as a side effect of an
+    automated background login step would be surprising in a way an
+    explicit admin action isn't.
     """
     # 1. Match by external_id (most stable)
     user: dict[str, Any] | None = None
@@ -364,6 +375,10 @@ async def _upsert_sso_user(
     # 2. Match by username
     if user is None:
         user = await auth_db.get_user_by_username(username)
+
+    domain = domain_of_email(username)
+    matched_org = await auth_db.get_organization_by_domain(domain) if domain else None
+    org_id = matched_org["id"] if matched_org else None
 
     if user is not None:
         # Update role if IdP mapping changed, stamp idp/external_id if missing,
@@ -378,19 +393,21 @@ async def _upsert_sso_user(
             or user.get("idp") != idp
             or user.get("external_id") != sub
             or user.get("must_change_password")  # always clear on SSO login
+            or user.get("org_id") != org_id
         )
         if updates_needed:
             async with __import__("aiosqlite").connect(auth_db._USERS_DB_PATH) as _db:
                 await _db.execute(
                     "UPDATE users SET role = ?, idp = ?, external_id = ?, "
-                    "must_change_password = 0 WHERE id = ?",
-                    (role, idp, sub, user["id"]),
+                    "must_change_password = 0, org_id = ? WHERE id = ?",
+                    (role, idp, sub, org_id, user["id"]),
                 )
                 await _db.commit()
             user["role"] = role
             user["idp"] = idp
             user["external_id"] = sub
             user["must_change_password"] = False
+            user["org_id"] = org_id
         return user
 
     # 3. Auto-provision
@@ -407,6 +424,7 @@ async def _upsert_sso_user(
             must_change_password=False,
             idp=idp,
             external_id=sub,
+            org_id=org_id,
         )
         return await auth_db.get_user_by_id(user_id)
     except Exception as exc:
@@ -431,6 +449,30 @@ def _build_callback_url(request_base_url: str, override_base_url: str = "") -> s
     base = f"{parsed.scheme}://{parsed.netloc}"
     root_path = parsed.path.rstrip("/")
     return f"{base}{root_path}/api/auth/oidc/callback"
+
+
+def build_redirect_path(path: str, override_base_url: str = "") -> str:
+    """Return the path the browser should be 302-redirected to after an SSO
+    flow step (success or error).
+
+    *path* is already a same-origin, path-only string (either
+    ``_sanitize_next``'s output or a fixed literal like ``"/login"``).
+    Without ``callback_base_url`` configured this is returned unchanged —
+    correct when the app is mounted at the domain root, matching the
+    behavior before this existed.
+
+    With ``callback_base_url`` configured (issue-local-036: reverse-proxy
+    alias deployments, where the backend can't otherwise learn its own
+    external mount point — see ``_build_callback_url``), the alias segment
+    it encodes is prepended. A bare 302 ``Location: /viewer`` is resolved by
+    the browser against the domain ROOT, not the alias, so without this the
+    post-login redirect lands in whatever OTHER application the reverse
+    proxy serves at the root — this fix is what keeps it inside the alias.
+    """
+    if not override_base_url:
+        return path
+    prefix = urlparse(override_base_url).path.rstrip("/")
+    return f"{prefix}{path}"
 
 
 def _sanitize_next(next_path: str) -> str:

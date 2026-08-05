@@ -19,9 +19,11 @@ vi.mock('../api/client', async () => {
       auth: {
         changePassword: vi.fn(),
         listUsers: vi.fn(),
+        listOrganizations: vi.fn().mockResolvedValue([]),
         createUser: vi.fn(),
         setUserRole: vi.fn(),
         setUserEnabled: vi.fn(),
+        setUserOrganization: vi.fn(),
         resetUserPassword: vi.fn(),
         deleteUser: vi.fn(),
       },
@@ -143,6 +145,7 @@ describe('UserManagementTab (prompts-045)', () => {
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
         username: 'newbie', password: 'Secret123', role: 'threat-viewer',
+        org_id: null, use_email_username: true,
       })
     })
   })
@@ -163,6 +166,7 @@ describe('UserManagementTab (prompts-045)', () => {
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
         username: 'bot', password: 'Secret123', role: 'feed-sender',
+        org_id: null, use_email_username: true,
       })
     })
   })

@@ -9,6 +9,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — SSO sign-ins missing from the audit log; post-login redirect broke out of a reverse-proxy alias
+
+- **Fixed: SSO sign-ins were invisible in the audit log.** Only the local-password `/login` route
+  ever recorded a "Signed in" / "Failed sign-in attempt" event — the OIDC callback route never did,
+  so every SSO-authenticated session (success or failure) left no trail. The callback now records
+  the same events the local login path always has, including the IdP name.
+- **Fixed: after SSO login, the browser could land in a different application.** The callback's
+  post-login and error redirects (`Location: /viewer`, `Location: /login?sso_error=...`) were plain
+  root-relative paths, which the browser resolves against the domain ROOT — behind a reverse-proxy
+  alias (`callback_base_url`, issue-local-036) that is a *different* upstream application, not this
+  one. Every redirect issued from the callback now carries the same alias prefix already used to
+  build the `redirect_uri` sent to the IdP, so it lands back inside the app.
+
+### Added — User Organizations and org-derived usernames (issue-local-037)
+
+- **New: Organizations.** A "Org Management" tab (Configuration → General) lets admins add, list,
+  edit, and delete Organizations — each a `(name, email domain)` pair. Deleting an organization that
+  still has users assigned is rejected (409) rather than silently orphaning them.
+- **New: per-user Organization on Create/Change.** Creating a user now offers an Organization
+  dropdown ("Local user" if none selected) and a checkbox, enabled by default, to make the stored
+  username the full email (`local-part@org-domain`) rather than the bare local part. The final
+  username is always built server-side from the admin-typed local part plus the organization's own
+  trusted email domain — never from a client-supplied string — so a stored username can never drift
+  from what's actually configured for that org. Existing users can be moved between organizations
+  from their row in User Management, which recomputes the username from their current local part; a
+  notice always confirms the actual resulting username after any add or change.
+- **New: SSO auto-match by email domain.** On every SSO login, a user's organization is best-effort
+  resynced (like their role already was) by matching their IdP-supplied username against configured
+  organizations' email domains — but unlike the admin-driven change flow, the username itself is
+  never touched by an SSO login.
+
 ### Added — Configurable SSO callback URL for reverse-proxy-alias deployments (issue-local-036)
 
 - **New: "Callback Base URL Override" field on Configuration → SSO.** The OIDC redirect_uri sent to

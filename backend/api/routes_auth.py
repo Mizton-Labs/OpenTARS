@@ -16,7 +16,14 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/role
   PUT    /api/auth/users/{user_id}/enabled
   PUT    /api/auth/users/{user_id}/password
+  PUT    /api/auth/users/{user_id}/organization
   DELETE /api/auth/users/{user_id}
+
+Admin only (organization management — issue-local-037):
+  GET    /api/auth/organizations
+  POST   /api/auth/organizations
+  PUT    /api/auth/organizations/{org_id}
+  DELETE /api/auth/organizations/{org_id}
 
 Admin only (API access keys — issue-local-029):
   GET    /api/auth/api-keys/config
@@ -35,6 +42,7 @@ import logging
 import re
 import secrets
 
+import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
@@ -48,6 +56,7 @@ from backend.auth.dependencies import (
     set_session_cookie,
 )
 from backend.auth.oidc_config import load_sso_config, save_sso_config
+from backend.auth.organizations import build_username, local_part_of, validate_organization
 from backend.auth.service import (
     SESSION_COOKIE_NAME,
     SESSION_TTL,
@@ -107,9 +116,15 @@ class ThemeBody(BaseModel):
 
 
 class CreateUserBody(BaseModel):
+    # issue-local-037: `username` is always the LOCAL PART — never a full
+    # email typed by the admin. See backend.auth.organizations.build_username
+    # for why the "@org-domain" suffix (when applicable) is always
+    # constructed server-side instead.
     username: str
     password: str
     role: str = "threat-viewer"
+    org_id: int | None = None
+    use_email_username: bool = True
 
 
 class RoleBody(BaseModel):
@@ -118,6 +133,16 @@ class RoleBody(BaseModel):
 
 class EnabledBody(BaseModel):
     enabled: bool
+
+
+class OrganizationBody(BaseModel):
+    name: str
+    email_domain: str
+
+
+class SetUserOrganizationBody(BaseModel):
+    org_id: int | None = None
+    use_email_username: bool = True
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -191,6 +216,11 @@ def _public_user(user: dict) -> dict:
         # issue-local-016: personal theme override, or None to use the
         # instance-wide default (GET /api/app/theme).
         "theme": user.get("theme") or None,
+        # issue-local-037: organization FK, or None ("Local user"). The
+        # frontend resolves this to a name/domain against the organizations
+        # list it already fetches for the Create/Change-Organization
+        # dropdown — no separate org lookup/join needed here.
+        "org_id": user.get("org_id"),
     }
 
 
@@ -258,37 +288,77 @@ async def oidc_callback(
     On success: mints a session cookie and redirects to the SPA.
     On failure: redirects to the login page with an error parameter.
     Public — no session required.
+
+    Instrumented with the same audit trail as the local /login route (SSO
+    sign-ins were previously invisible in the audit log — only the local-
+    password path recorded anything), and every redirect target is routed
+    through ``build_redirect_path`` so a reverse-proxy alias
+    (``callback_base_url``, issue-local-036) is preserved — a bare
+    ``Location: /viewer`` is resolved by the browser against the domain
+    ROOT, not the alias, landing in a different application entirely.
     """
     from fastapi.responses import RedirectResponse
 
-    from backend.auth.oidc import handle_callback
+    from backend.auth.oidc import build_redirect_path, handle_callback
     from backend.auth.service import SESSION_TTL
+
+    cfg = load_sso_config()
+    override_base_url = cfg.get("callback_base_url", "")
+
+    def _redirect(path: str) -> RedirectResponse:
+        return RedirectResponse(url=build_redirect_path(path, override_base_url), status_code=302)
+
+    async def _record_failure(summary: str, **detail: object) -> None:
+        try:
+            await record_event(
+                "user",
+                "Failed sign-in attempt",
+                summary=summary,
+                detail={"ip": _client_ip(request), **detail},
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+            logger.warning("oidc_callback: audit record_event failed: %s", exc)
 
     # IdP returned an error
     if error:
         logger.warning("OIDC callback error from IdP: %s — %s", error, error_description)
-        return RedirectResponse(
-            url=f"/login?sso_error={_safe_error_param(error)}",
-            status_code=302,
+        await _record_failure(
+            f"SSO sign-in failed: {error}", error=error, error_description=error_description
         )
+        return _redirect(f"/login?sso_error={_safe_error_param(error)}")
 
     if not code or not state:
-        return RedirectResponse(url="/login?sso_error=missing_params", status_code=302)
+        await _record_failure("SSO sign-in failed: callback missing code/state")
+        return _redirect("/login?sso_error=missing_params")
 
     try:
-        _user_id, raw_token, next_path = await handle_callback(
+        user, raw_token, next_path = await handle_callback(
             code=code,
             state=state,
             request_base_url=str(request.base_url),
         )
     except ValueError as exc:
         logger.warning("OIDC callback rejected: %s", exc)
-        return RedirectResponse(url="/login?sso_error=auth_failed", status_code=302)
+        await _record_failure(f"SSO sign-in rejected: {exc}")
+        return _redirect("/login?sso_error=auth_failed")
     except Exception as exc:
         logger.exception("OIDC callback unexpected error: %s", exc)
-        return RedirectResponse(url="/login?sso_error=server_error", status_code=302)
+        await _record_failure(f"SSO sign-in failed: server error ({exc})")
+        return _redirect("/login?sso_error=server_error")
 
-    redirect = RedirectResponse(url=next_path or "/viewer", status_code=302)
+    try:
+        await record_event(
+            "user",
+            "Signed in",
+            username=user["username"],
+            role=user.get("role"),
+            summary=f"'{user['username']}' logged in via SSO ({user.get('idp') or 'sso'})",
+            detail={"ip": _client_ip(request), "idp": user.get("idp")},
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+        logger.warning("oidc_callback: audit record_event failed: %s", exc)
+
+    redirect = _redirect(next_path or "/viewer")
     set_session_cookie(request, redirect, raw_token, max_age=int(SESSION_TTL.total_seconds()))
     return redirect
 
@@ -465,11 +535,19 @@ async def set_own_theme(body: ThemeBody, user: dict = Depends(get_current_user))
 
 @router.get("/users")
 async def list_users(admin: dict = Depends(require_admin)) -> list[dict]:
-    return await db.list_users()
+    # issue-local-037 follow-up: this used to return db.list_users()'s raw
+    # dicts directly, which — unlike every other endpoint on this router —
+    # leaked `external_id` (the SSO subject claim) since it isn't part of
+    # _public_user's curated shape. Routing through _public_user here too
+    # fixes that pre-existing inconsistency and is what makes the new
+    # org_id field show up in the list the same way it does everywhere else.
+    return [_public_user(u) for u in await db.list_users()]
 
 
 @router.post("/users")
 async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)) -> dict:
+    # body.username is always the LOCAL PART (see CreateUserBody) — validated
+    # as such regardless of whether an org suffix ends up appended below.
     _validate_username(body.username)
     _validate_password(body.password)
     if body.role not in db.VALID_ROLES:
@@ -477,16 +555,23 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
             status_code=400,
             detail="role must be 'admin', 'threat-researcher', 'threat-viewer', or 'feed-sender'",
         )
-    if await db.get_user_by_username(body.username) is not None:
+    org = None
+    if body.org_id is not None:
+        org = await db.get_organization(body.org_id)
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+    final_username = build_username(body.username, org, body.use_email_username)
+    if await db.get_user_by_username(final_username) is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
     # An admin-supplied password is, from the new user's perspective, the
     # same trust situation as an admin reset (issue-local-016) — force it to
     # be changed on first login rather than trusting it stays private.
     uid = await db.create_user(
-        body.username,
+        final_username,
         hash_password(body.password),
         role=body.role,
         must_change_password=True,
+        org_id=body.org_id,
     )
     created = await db.get_user_by_id(uid)
     return _public_user(created)
@@ -560,11 +645,111 @@ async def delete_user(user_id: int, admin: dict = Depends(require_admin)) -> dic
     return {"status": "deleted", "id": user_id}
 
 
+@router.put("/users/{user_id}/organization")
+async def set_user_organization(
+    user_id: int, body: SetUserOrganizationBody, admin: dict = Depends(require_admin)
+) -> dict:
+    """Move a user to a different (or no) organization (issue-local-037).
+
+    The username is recomputed from the user's EXISTING local-part (whatever
+    they already log in with) + the newly selected org/checkbox — never from
+    a client-typed string — so it stays consistent with build_username's
+    single source of truth. Raises 409 if the recomputed username collides
+    with a different existing user.
+    """
+    target = await _require_user(user_id)
+    org = None
+    if body.org_id is not None:
+        org = await db.get_organization(body.org_id)
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+    local_part = local_part_of(target["username"])
+    final_username = build_username(local_part, org, body.use_email_username)
+    existing = await db.get_user_by_username(final_username)
+    if existing is not None and existing["id"] != user_id:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    if final_username != target["username"] or body.org_id != target.get("org_id"):
+        ok = await db.set_user_username_and_org(user_id, final_username, body.org_id)
+        if not ok:
+            raise HTTPException(status_code=409, detail="Username already exists")
+    return _public_user(await db.get_user_by_id(user_id))
+
+
 async def _require_user(user_id: int) -> dict:
     user = await db.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+# ── Organization management (issue-local-037) ───────────────────────────────
+
+
+def _public_organization(org: dict) -> dict:
+    return {
+        "id": org["id"],
+        "name": org["name"],
+        "email_domain": org["email_domain"],
+        "created_at": org.get("created_at"),
+        "user_count": org.get("user_count", 0),
+    }
+
+
+@router.get("/organizations")
+async def list_organizations(admin: dict = Depends(require_admin)) -> list[dict]:
+    return [_public_organization(o) for o in await db.list_organizations()]
+
+
+@router.post("/organizations", status_code=201)
+async def create_organization(
+    body: OrganizationBody, admin: dict = Depends(require_admin)
+) -> dict:
+    try:
+        name, email_domain = validate_organization(body.name, body.email_domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        org_id = await db.create_organization(name, email_domain)
+    except aiosqlite.IntegrityError as exc:
+        raise HTTPException(
+            status_code=409, detail="Organization name or email domain already exists"
+        ) from exc
+    return _public_organization(await db.get_organization(org_id))
+
+
+@router.put("/organizations/{org_id}")
+async def update_organization(
+    org_id: int, body: OrganizationBody, admin: dict = Depends(require_admin)
+) -> dict:
+    if await db.get_organization(org_id) is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    try:
+        name, email_domain = validate_organization(body.name, body.email_domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        ok = await db.update_organization(org_id, name, email_domain)
+    except aiosqlite.IntegrityError as exc:
+        raise HTTPException(
+            status_code=409, detail="Organization name or email domain already exists"
+        ) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return _public_organization(await db.get_organization(org_id))
+
+
+@router.delete("/organizations/{org_id}")
+async def delete_organization(org_id: int, admin: dict = Depends(require_admin)) -> dict:
+    if await db.get_organization(org_id) is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    count = await db.count_users_in_org(org_id)
+    if count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete: {count} user(s) are assigned to this organization",
+        )
+    await db.delete_organization(org_id)
+    return {"status": "deleted", "id": org_id}
 
 
 # ── API access keys (issue-local-029) ─────────────────────────────────────────
