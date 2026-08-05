@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — SSO sign-ins missing from the audit log; post-login redirect broke out of a reverse-proxy alias
+
+- **Fixed: SSO sign-ins were invisible in the audit log.** Only the local-password `/login` route
+  ever recorded a "Signed in" / "Failed sign-in attempt" event — the OIDC callback route never did,
+  so every SSO-authenticated session (success or failure) left no trail. The callback now records
+  the same events the local login path always has, including the IdP name.
+- **Fixed: after SSO login, the browser could land in a different application.** The callback's
+  post-login and error redirects (`Location: /viewer`, `Location: /login?sso_error=...`) were plain
+  root-relative paths, which the browser resolves against the domain ROOT — behind a reverse-proxy
+  alias (`callback_base_url`, issue-local-036) that is a *different* upstream application, not this
+  one. Every redirect issued from the callback now carries the same alias prefix already used to
+  build the `redirect_uri` sent to the IdP, so it lands back inside the app.
+
 ### Added — User Organizations and org-derived usernames (issue-local-037)
 
 - **New: Organizations.** A "Org Management" tab (Configuration → General) lets admins add, list,

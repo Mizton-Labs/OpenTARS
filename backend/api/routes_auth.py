@@ -288,37 +288,77 @@ async def oidc_callback(
     On success: mints a session cookie and redirects to the SPA.
     On failure: redirects to the login page with an error parameter.
     Public — no session required.
+
+    Instrumented with the same audit trail as the local /login route (SSO
+    sign-ins were previously invisible in the audit log — only the local-
+    password path recorded anything), and every redirect target is routed
+    through ``build_redirect_path`` so a reverse-proxy alias
+    (``callback_base_url``, issue-local-036) is preserved — a bare
+    ``Location: /viewer`` is resolved by the browser against the domain
+    ROOT, not the alias, landing in a different application entirely.
     """
     from fastapi.responses import RedirectResponse
 
-    from backend.auth.oidc import handle_callback
+    from backend.auth.oidc import build_redirect_path, handle_callback
     from backend.auth.service import SESSION_TTL
+
+    cfg = load_sso_config()
+    override_base_url = cfg.get("callback_base_url", "")
+
+    def _redirect(path: str) -> RedirectResponse:
+        return RedirectResponse(url=build_redirect_path(path, override_base_url), status_code=302)
+
+    async def _record_failure(summary: str, **detail: object) -> None:
+        try:
+            await record_event(
+                "user",
+                "Failed sign-in attempt",
+                summary=summary,
+                detail={"ip": _client_ip(request), **detail},
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+            logger.warning("oidc_callback: audit record_event failed: %s", exc)
 
     # IdP returned an error
     if error:
         logger.warning("OIDC callback error from IdP: %s — %s", error, error_description)
-        return RedirectResponse(
-            url=f"/login?sso_error={_safe_error_param(error)}",
-            status_code=302,
+        await _record_failure(
+            f"SSO sign-in failed: {error}", error=error, error_description=error_description
         )
+        return _redirect(f"/login?sso_error={_safe_error_param(error)}")
 
     if not code or not state:
-        return RedirectResponse(url="/login?sso_error=missing_params", status_code=302)
+        await _record_failure("SSO sign-in failed: callback missing code/state")
+        return _redirect("/login?sso_error=missing_params")
 
     try:
-        _user_id, raw_token, next_path = await handle_callback(
+        user, raw_token, next_path = await handle_callback(
             code=code,
             state=state,
             request_base_url=str(request.base_url),
         )
     except ValueError as exc:
         logger.warning("OIDC callback rejected: %s", exc)
-        return RedirectResponse(url="/login?sso_error=auth_failed", status_code=302)
+        await _record_failure(f"SSO sign-in rejected: {exc}")
+        return _redirect("/login?sso_error=auth_failed")
     except Exception as exc:
         logger.exception("OIDC callback unexpected error: %s", exc)
-        return RedirectResponse(url="/login?sso_error=server_error", status_code=302)
+        await _record_failure(f"SSO sign-in failed: server error ({exc})")
+        return _redirect("/login?sso_error=server_error")
 
-    redirect = RedirectResponse(url=next_path or "/viewer", status_code=302)
+    try:
+        await record_event(
+            "user",
+            "Signed in",
+            username=user["username"],
+            role=user.get("role"),
+            summary=f"'{user['username']}' logged in via SSO ({user.get('idp') or 'sso'})",
+            detail={"ip": _client_ip(request), "idp": user.get("idp")},
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never break login
+        logger.warning("oidc_callback: audit record_event failed: %s", exc)
+
+    redirect = _redirect(next_path or "/viewer")
     set_session_cookie(request, redirect, raw_token, max_age=int(SESSION_TTL.total_seconds()))
     return redirect
 
