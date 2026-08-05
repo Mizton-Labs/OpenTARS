@@ -108,7 +108,7 @@ export default function Account() {
   const { user } = useAuth()
 
   return (
-    <div className="p-6 max-w-md space-y-6">
+    <div className="p-6 max-w-xl space-y-6">
       <div>
         <h1 className="text-lg font-semibold text-gray-100">Account</h1>
         <p className="text-sm text-gray-500">Your sign-in identity, password, and theme.</p>
@@ -116,13 +116,17 @@ export default function Account() {
 
       <div className="card space-y-5">
         <div className="grid grid-cols-2 gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="label">Username</p>
-            <p className="text-sm text-gray-200 font-mono">{user?.username ?? '—'}</p>
+            {/* issue-local-037: usernames can be full emails (local-part@org-domain) —
+                truncate with a title tooltip instead of overflowing into the Role column. */}
+            <p className="text-sm text-gray-200 font-mono truncate" title={user?.username}>
+              {user?.username ?? '—'}
+            </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="label">Role</p>
-            <p className="text-sm text-gray-200 capitalize">{user?.role ?? '—'}</p>
+            <p className="text-sm text-gray-200 capitalize truncate">{user?.role ?? '—'}</p>
           </div>
         </div>
 

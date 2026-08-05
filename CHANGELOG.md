@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — SSO login silently reverted admin-assigned roles; Account page role hidden behind a long username
+
+- **Fixed: SSO login could silently overwrite an admin-assigned role.** On every SSO login,
+  `_upsert_sso_user` unconditionally wrote the role computed from the IdP's claims — falling back to
+  the SSO config's `default_role` whenever no claim matched — over the existing user's role. An admin
+  who manually promoted or demoted a user via User Management would have that change reverted back to
+  `default_role` on the user's very next SSO login. Role is now treated as admin-owned, the same as
+  username: only ever set at Create or via the role dropdown, never touched by a login. The mapped
+  role is still applied when auto-provisioning a brand-new account, where no admin assignment exists
+  yet to protect.
+- **Fixed: the Account page's Role value could be visually hidden behind Username.** With org-derived
+  full-email usernames (`local-part@org-domain`, issue-local-037) the two-column layout at the page's
+  previous `max-w-md` width let a long username overflow into the Role column. The page is now wider
+  (`max-w-xl`) and both cells truncate instead of overflowing.
+
 ### Fixed — SSO sign-ins missing from the audit log; post-login redirect broke out of a reverse-proxy alias
 
 - **Fixed: SSO sign-ins were invisible in the audit log.** Only the local-password `/login` route
