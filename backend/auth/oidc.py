@@ -171,8 +171,12 @@ async def handle_callback(
     code: str,
     state: str,
     request_base_url: str,
-) -> tuple[int, str, str]:
-    """Exchange code → tokens → session.  Returns (user_id, raw_token, next_path).
+) -> tuple[dict[str, Any], str, str]:
+    """Exchange code → tokens → session.  Returns (user, raw_token, next_path).
+
+    *user* is the full user dict (as returned by db.get_user_by_id), not just
+    its id — the caller needs username/role to record the sign-in audit event
+    without an extra DB round trip.
 
     Raises ValueError on any OIDC/auth error (caller converts to HTTP 400/401).
     """
@@ -263,7 +267,7 @@ async def handle_callback(
 
     # 7. Mint session
     raw_token = await create_session_for_user(user["id"])
-    return user["id"], raw_token, flow["next_path"]
+    return user, raw_token, flow["next_path"]
 
 
 # ── ID token verification ──────────────────────────────────────────────────────
@@ -431,6 +435,30 @@ def _build_callback_url(request_base_url: str, override_base_url: str = "") -> s
     base = f"{parsed.scheme}://{parsed.netloc}"
     root_path = parsed.path.rstrip("/")
     return f"{base}{root_path}/api/auth/oidc/callback"
+
+
+def build_redirect_path(path: str, override_base_url: str = "") -> str:
+    """Return the path the browser should be 302-redirected to after an SSO
+    flow step (success or error).
+
+    *path* is already a same-origin, path-only string (either
+    ``_sanitize_next``'s output or a fixed literal like ``"/login"``).
+    Without ``callback_base_url`` configured this is returned unchanged —
+    correct when the app is mounted at the domain root, matching the
+    behavior before this existed.
+
+    With ``callback_base_url`` configured (issue-local-036: reverse-proxy
+    alias deployments, where the backend can't otherwise learn its own
+    external mount point — see ``_build_callback_url``), the alias segment
+    it encodes is prepended. A bare 302 ``Location: /viewer`` is resolved by
+    the browser against the domain ROOT, not the alias, so without this the
+    post-login redirect lands in whatever OTHER application the reverse
+    proxy serves at the root — this fix is what keeps it inside the alias.
+    """
+    if not override_base_url:
+        return path
+    prefix = urlparse(override_base_url).path.rstrip("/")
+    return f"{prefix}{path}"
 
 
 def _sanitize_next(next_path: str) -> str:
