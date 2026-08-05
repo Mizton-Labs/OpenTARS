@@ -477,6 +477,117 @@ def test_get_callback_url_for_display() -> None:
     assert url.startswith("https://")
 
 
+# ── 3b. callback_base_url override (issue-local-036) ─────────────────────────
+
+
+def test_build_callback_url_override_replaces_request_base_entirely() -> None:
+    """The override wins outright — not just its path, its scheme+host too —
+    since a TLS-terminating proxy can mean the request the backend sees
+    doesn't even carry the externally-correct scheme."""
+    from backend.auth.oidc import _build_callback_url
+
+    url = _build_callback_url(
+        "http://127.0.0.1:8003/", override_base_url="https://host.example.com/tars"
+    )
+    assert url == "https://host.example.com/tars/api/auth/oidc/callback"
+
+
+def test_build_callback_url_override_trailing_slash_normalised() -> None:
+    from backend.auth.oidc import _build_callback_url
+
+    url = _build_callback_url("http://127.0.0.1:8003/", override_base_url="https://host/tars/")
+    assert url == "https://host/tars/api/auth/oidc/callback"
+
+
+def test_build_callback_url_empty_override_falls_back_to_request(monkeypatch) -> None:
+    """Regression: an unset override must behave EXACTLY as before this
+    feature existed — every pre-issue-local-036 test above must keep
+    passing unmodified, which they do; this just makes the fallback
+    explicit for the two-argument call shape."""
+    from backend.auth.oidc import _build_callback_url
+
+    url = _build_callback_url("https://example.com/opentars/", override_base_url="")
+    assert url == "https://example.com/opentars/api/auth/oidc/callback"
+
+
+def test_get_callback_url_for_display_with_override() -> None:
+    from backend.auth.oidc import get_callback_url_for_display
+
+    url = get_callback_url_for_display("http://127.0.0.1:8003/", "https://host.example.com/tars")
+    assert url == "https://host.example.com/tars/api/auth/oidc/callback"
+
+
+def test_validate_sso_config_rejects_callback_base_url_without_scheme() -> None:
+    from backend.auth.oidc_config import validate_sso_config
+
+    with pytest.raises(ValueError, match="callback_base_url"):
+        validate_sso_config(
+            {
+                "enabled": False,
+                "default_role": "threat-viewer",
+                "callback_base_url": "host.example.com/tars",
+            }
+        )
+
+
+def test_validate_sso_config_rejects_callback_base_url_without_host() -> None:
+    from backend.auth.oidc_config import validate_sso_config
+
+    with pytest.raises(ValueError, match="callback_base_url"):
+        validate_sso_config(
+            {
+                "enabled": False,
+                "default_role": "threat-viewer",
+                "callback_base_url": "https://",
+            }
+        )
+
+
+def test_validate_sso_config_accepts_http_callback_base_url_for_dev() -> None:
+    """Mirrors the existing issuer allowance — same rationale, same wording."""
+    from backend.auth.oidc_config import validate_sso_config
+
+    validate_sso_config(
+        {
+            "enabled": False,
+            "default_role": "threat-viewer",
+            "callback_base_url": "http://localhost:8003",
+        }
+    )
+
+
+def test_validate_sso_config_empty_callback_base_url_is_valid() -> None:
+    """The default — empty — must remain valid (existing zero-config behavior)."""
+    from backend.auth.oidc_config import validate_sso_config
+
+    validate_sso_config(
+        {"enabled": False, "default_role": "threat-viewer", "callback_base_url": ""}
+    )
+
+
+def test_load_sso_config_defaults_include_empty_callback_base_url(tmp_path, monkeypatch) -> None:
+    from backend.auth import oidc_config
+
+    monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
+    cfg = oidc_config.load_sso_config()
+    assert cfg["callback_base_url"] == ""
+
+
+def test_save_and_load_sso_config_roundtrips_callback_base_url(tmp_path, monkeypatch) -> None:
+    from backend.auth import oidc_config
+
+    monkeypatch.setattr(oidc_config, "_SSO_CONFIG_PATH", tmp_path / "sso.yaml")
+    oidc_config.save_sso_config(
+        {
+            "enabled": False,
+            "default_role": "threat-viewer",
+            "callback_base_url": "https://host.example.com/tars",
+        }
+    )
+    cfg = oidc_config.load_sso_config_for_use()
+    assert cfg["callback_base_url"] == "https://host.example.com/tars"
+
+
 # ── 5. routes: /api/auth/status SSO fields ───────────────────────────────────
 
 

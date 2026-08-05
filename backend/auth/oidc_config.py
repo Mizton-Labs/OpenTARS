@@ -43,6 +43,10 @@ Example ``config/sso.yaml``::
       OpenTARS-Viewer: threat-viewer
     default_role: threat-viewer
     auto_provision: true
+    # Optional (issue-local-036) — set when behind a reverse-proxy alias so
+    # the redirect_uri sent to the IdP is externally reachable. Leave unset
+    # to keep deriving it from each request's own base URL.
+    callback_base_url: "https://host.example.com/tars"
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -128,6 +133,14 @@ _DEFAULTS: dict[str, Any] = {
     "role_mapping": {},
     "default_role": "threat-viewer",
     "auto_provision": True,
+    # issue-local-036: overrides the scheme+host+path-prefix used to build
+    # the OIDC redirect_uri, for deployments behind a reverse-proxy alias
+    # that app_base_prefix can't safely cover (setting app_base_prefix also
+    # changes ASGI root_path, which can break this app's own StaticFiles
+    # asset mount when the proxy strips the alias before forwarding — see
+    # issue-local-035 follow-up). "" (default) keeps the existing
+    # per-request request.base_url-derived behavior unchanged.
+    "callback_base_url": "",
 }
 
 
@@ -230,6 +243,15 @@ def validate_sso_config(cfg: dict[str, Any]) -> None:
             raise ValueError("issuer is required when SSO is enabled")
         if not issuer.startswith(("https://", "http://")):
             raise ValueError("issuer must be a URL starting with https:// (or http:// for dev)")
+
+    callback_base_url = cfg.get("callback_base_url", "") or ""
+    if callback_base_url:
+        if not callback_base_url.startswith(("https://", "http://")):
+            raise ValueError(
+                "callback_base_url must be a URL starting with https:// (or http:// for dev)"
+            )
+        if not urlparse(callback_base_url).netloc:
+            raise ValueError("callback_base_url must include a host")
 
     default_role = cfg.get("default_role", "threat-viewer")
     if default_role not in _VALID_ROLES:

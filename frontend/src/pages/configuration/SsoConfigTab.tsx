@@ -16,9 +16,10 @@
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Copy, Check, Plus, Trash2, Loader2 } from 'lucide-react'
+import { Copy, Check, Plus, Trash2, Loader2, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type SsoConfig } from '../../api/client'
+import { getAppBasePrefix } from '../../utils/basePrefix'
 
 type UserRole = 'admin' | 'threat-researcher' | 'threat-viewer' | 'feed-sender'
 
@@ -58,6 +59,33 @@ const _EMPTY: SsoConfig = {
   role_mapping: {},
   default_role: 'threat-viewer',
   auto_provision: true,
+  callback_base_url: '',
+}
+
+/** issue-local-036: same client-side alias-detection already used for the
+ *  Push Listener endpoint display (Configuration.tsx's ListenerTab) — the
+ *  browser's own URL is the only place this can be reliably inferred from
+ *  when app_base_prefix isn't set. */
+function detectedCallbackBaseUrl(): string {
+  return `${window.location.origin}${getAppBasePrefix()}`
+}
+
+/** Mirrors backend.auth.oidc._build_callback_url's suffix logic exactly
+ *  (scheme://host + path-prefix-with-trailing-slash-stripped +
+ *  "/api/auth/oidc/callback") so the override field can preview the
+ *  EXACT URL the backend will compute, before the admin ever saves —
+ *  the whole point of this follow-up (issue-local-036). Returns null for
+ *  a not-yet-valid/partial URL (e.g. mid-typing) rather than throwing, so
+ *  callers can fall back to the last-known-good value instead of flashing
+ *  something broken on every keystroke. */
+function buildCallbackUrl(baseUrl: string): string | null {
+  try {
+    const u = new URL(baseUrl)
+    const path = u.pathname.replace(/\/$/, '')
+    return `${u.origin}${path}/api/auth/oidc/callback`
+  } catch {
+    return null
+  }
 }
 
 export default function SsoConfigTab() {
@@ -94,6 +122,11 @@ export default function SsoConfigTab() {
     mutationFn: (cfg: Partial<SsoConfig>) => api.auth.updateSsoConfig(cfg),
     onSuccess: (updated) => {
       qc.setQueryData(['sso-config'], updated)
+      // issue-local-036 follow-up: this query was never invalidated after
+      // save, so the "Redirect / Callback URL" box only ever updated on the
+      // next incidental refetch (window focus, remount) — not visibly tied
+      // to the save that actually changed it.
+      qc.invalidateQueries({ queryKey: ['sso-callback-url'] })
       setSaved(true)
       setError(null)
       setSecretDirty(false)
@@ -142,10 +175,35 @@ export default function SsoConfigTab() {
   }
 
   function handleCopyCallback() {
-    if (!callbackData?.callback_url) return
-    navigator.clipboard.writeText(callbackData.callback_url).then(() => {
+    if (!effectiveCallbackUrl) return
+    navigator.clipboard.writeText(effectiveCallbackUrl).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  /** Saves just callback_base_url — reuses handleSave's full-form-save
+   *  mechanism (this endpoint has no partial-update mode) but is a
+   *  separate mutation so its own pending/success state doesn't fight
+   *  with the main "Save SSO Configuration" button's. */
+  const saveOverrideMut = useMutation({
+    mutationFn: (cfg: Partial<SsoConfig>) => api.auth.updateSsoConfig(cfg),
+    onSuccess: (updated) => {
+      qc.setQueryData(['sso-config'], updated)
+      qc.invalidateQueries({ queryKey: ['sso-callback-url'] })
+      setSecretDirty(false)
+    },
+  })
+
+  function handleSaveOverride() {
+    const role_mapping: Record<string, string> = {}
+    for (const row of roleRows) {
+      if (row.claim.trim() && row.role) role_mapping[row.claim.trim()] = row.role
+    }
+    saveOverrideMut.mutate({
+      ...form,
+      role_mapping,
+      client_secret: secretDirty ? form.client_secret : '***',
     })
   }
 
@@ -153,7 +211,16 @@ export default function SsoConfigTab() {
     return <p className="text-sm text-gray-500">Loading SSO configuration…</p>
   }
 
-  const callbackUrl = callbackData?.callback_url ?? ''
+  // issue-local-036 follow-up: preview the EXACT effect of the override
+  // field live, from current (possibly unsaved) form state — previously
+  // this box only ever showed the last-SAVED value, so picking "Use
+  // detected" (or typing a value) appeared to do nothing until the admin
+  // found and clicked the unrelated Save button at the bottom of the page.
+  const liveOverridePreview = form.callback_base_url
+    ? buildCallbackUrl(form.callback_base_url)
+    : null
+  const effectiveCallbackUrl = liveOverridePreview ?? callbackData?.callback_url ?? ''
+  const overrideUnsaved = form.callback_base_url !== (savedCfg?.callback_base_url ?? '')
 
   return (
     <div className="space-y-8">
@@ -166,9 +233,9 @@ export default function SsoConfigTab() {
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 text-xs font-mono bg-gray-800 text-brand-300 px-3 py-2 rounded border border-gray-700 break-all">
-            {callbackUrl || '(save config to compute URL)'}
+            {effectiveCallbackUrl || '(save config to compute URL)'}
           </code>
-          {callbackUrl && (
+          {effectiveCallbackUrl && (
             <button
               type="button"
               className="btn-ghost p-2 shrink-0"
@@ -182,6 +249,75 @@ export default function SsoConfigTab() {
               )}
             </button>
           )}
+        </div>
+        {overrideUnsaved && (
+          <p className="text-[11px] text-amber-400">
+            Preview of the override below — not saved yet. Click Save in that section (or Save
+            SSO Configuration) to register this as the real callback URL.
+          </p>
+        )}
+
+        {/* issue-local-036: override for reverse-proxy-alias deployments —
+            the URL above is derived from the CURRENT request and won't
+            include an alias segment (e.g. /tars) unless either this field
+            or app_base_prefix is set; app_base_prefix isn't always safe to
+            set (can affect static asset routing under some proxy setups),
+            so this is independent of it. */}
+        <div className="pt-2 border-t border-gray-800 space-y-1.5">
+          <label className="block text-xs text-gray-400">
+            Callback Base URL Override <span className="text-gray-600">(optional)</span>
+          </label>
+          <p className="text-xs text-gray-500">
+            Set this if the app is reachable through a reverse-proxy alias (e.g.{' '}
+            <code className="text-gray-400">https://host/tars</code>) — the callback URL above
+            won't include the alias otherwise, and the IdP will reject the login redirect.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              className="input flex-1 text-xs font-mono"
+              placeholder={detectedCallbackBaseUrl()}
+              value={form.callback_base_url}
+              onChange={(e) => setField('callback_base_url', e.target.value.trim())}
+            />
+            <button
+              type="button"
+              className="btn-ghost p-2 shrink-0 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+              title="Fill with the alias detected from this browser's own URL"
+              onClick={() => setField('callback_base_url', detectedCallbackBaseUrl())}
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              Use detected
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-600">
+            Detected from this browser: <code>{detectedCallbackBaseUrl()}</code>. Leave blank to
+            keep deriving the callback URL from each request (correct if there's no alias). The
+            box above updates as you type or click "Use detected" — nothing is saved until you
+            click Save.
+          </p>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              className="btn-secondary text-xs flex items-center gap-1.5"
+              disabled={saveOverrideMut.isPending || !overrideUnsaved}
+              onClick={handleSaveOverride}
+            >
+              {saveOverrideMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {saveOverrideMut.isPending
+                ? 'Saving…'
+                : saveOverrideMut.isSuccess && !overrideUnsaved
+                  ? 'Saved'
+                  : 'Save Callback URL'}
+            </button>
+            {saveOverrideMut.isError && (
+              <span className="text-[11px] text-red-400">
+                {saveOverrideMut.error instanceof Error
+                  ? saveOverrideMut.error.message
+                  : 'Save failed'}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

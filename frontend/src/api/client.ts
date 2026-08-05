@@ -531,6 +531,11 @@ export interface SsoConfig {
   role_mapping: Record<string, string>
   default_role: string
   auto_provision: boolean
+  /** issue-local-036: overrides the scheme+host+path used to build the
+   *  redirect_uri sent to the IdP — for reverse-proxy-alias deployments
+   *  where app_base_prefix isn't/can't be set. "" = auto-derive per request
+   *  (existing behavior). */
+  callback_base_url: string
 }
 
 export const api = {
