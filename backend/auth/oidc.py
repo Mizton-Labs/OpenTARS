@@ -45,6 +45,7 @@ import httpx
 
 from backend.auth import db as auth_db
 from backend.auth.oidc_config import load_sso_config_for_use, map_claims_to_role
+from backend.auth.organizations import domain_of_email
 from backend.auth.service import create_session_for_user, hash_password
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,13 @@ async def _upsert_sso_user(
 
     On each successful SSO login the user's role is updated to match the
     current IdP claim mapping (so role changes in the IdP take effect on
-    next login without manual admin action).
+    next login without manual admin action). issue-local-037: org_id is
+    resynced the same way, best-effort matching the SSO username's email
+    domain against configured organizations — but the username itself is
+    NEVER touched here (unlike the admin-driven org-change route), since
+    silently rewriting a user's login identifier as a side effect of an
+    automated background login step would be surprising in a way an
+    explicit admin action isn't.
     """
     # 1. Match by external_id (most stable)
     user: dict[str, Any] | None = None
@@ -364,6 +371,10 @@ async def _upsert_sso_user(
     # 2. Match by username
     if user is None:
         user = await auth_db.get_user_by_username(username)
+
+    domain = domain_of_email(username)
+    matched_org = await auth_db.get_organization_by_domain(domain) if domain else None
+    org_id = matched_org["id"] if matched_org else None
 
     if user is not None:
         # Update role if IdP mapping changed, stamp idp/external_id if missing,
@@ -378,19 +389,21 @@ async def _upsert_sso_user(
             or user.get("idp") != idp
             or user.get("external_id") != sub
             or user.get("must_change_password")  # always clear on SSO login
+            or user.get("org_id") != org_id
         )
         if updates_needed:
             async with __import__("aiosqlite").connect(auth_db._USERS_DB_PATH) as _db:
                 await _db.execute(
                     "UPDATE users SET role = ?, idp = ?, external_id = ?, "
-                    "must_change_password = 0 WHERE id = ?",
-                    (role, idp, sub, user["id"]),
+                    "must_change_password = 0, org_id = ? WHERE id = ?",
+                    (role, idp, sub, org_id, user["id"]),
                 )
                 await _db.commit()
             user["role"] = role
             user["idp"] = idp
             user["external_id"] = sub
             user["must_change_password"] = False
+            user["org_id"] = org_id
         return user
 
     # 3. Auto-provision
@@ -407,6 +420,7 @@ async def _upsert_sso_user(
             must_change_password=False,
             idp=idp,
             external_id=sub,
+            org_id=org_id,
         )
         return await auth_db.get_user_by_id(user_id)
     except Exception as exc:

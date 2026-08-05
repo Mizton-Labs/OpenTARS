@@ -15,13 +15,22 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trash2, KeyRound, Plus, X, Copy, Check, AlertTriangle } from 'lucide-react'
-import { api, type AuthUser, type UserRole } from '../../api/client'
+import { api, type AuthUser, type Organization, type UserRole } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import Toggle from '../../components/Toggle'
 import { describePasswordPolicy, validatePassword } from '../../utils/passwordPolicy'
 
 const USERS_KEY = ['auth-users'] as const
+// issue-local-037: shared with OrgManagementTab so both tabs invalidate the
+// same cache entry after any org add/edit/delete.
+export const ORGS_KEY = ['auth-organizations'] as const
 const USERNAME_RE = /^[A-Za-z0-9._-]{1,40}$/
+
+/** "Local user" (no org) resolves to this label; otherwise the org's name. */
+function orgLabel(orgId: number | null | undefined, organizations: Organization[]): string {
+  if (orgId == null) return 'Local user'
+  return organizations.find((o) => o.id === orgId)?.name ?? 'Local user'
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -31,6 +40,10 @@ export default function UserManagementTab() {
   const qc = useQueryClient()
   const { user: self } = useAuth()
   const [actionError, setActionError] = useState<string | null>(null)
+  // issue-local-037: after any add/change, always surface the actual
+  // generated/updated username — the org+checkbox combination makes it easy
+  // to guess wrong otherwise.
+  const [notice, setNotice] = useState<string | null>(null)
   const [resetFor, setResetFor] = useState<AuthUser | null>(null)
   // prompts-049: armed inline delete confirmation (mirrors the provider-delete
   // pattern) — the trash button arms it; the actual delete only fires from the
@@ -40,6 +53,10 @@ export default function UserManagementTab() {
   const { data: users = [], isLoading } = useQuery({
     queryKey: USERS_KEY,
     queryFn: api.auth.listUsers,
+  })
+  const { data: organizations = [] } = useQuery({
+    queryKey: ORGS_KEY,
+    queryFn: api.auth.listOrganizations,
   })
 
   const invalidate = () => qc.invalidateQueries({ queryKey: USERS_KEY })
@@ -60,6 +77,21 @@ export default function UserManagementTab() {
     onSuccess: () => { setActionError(null); setConfirmDeleteId(null); invalidate() },
     onError: (e) => { setConfirmDeleteId(null); setActionError(errorMessage(e)) },
   })
+  // issue-local-037: change (or clear) a user's organization. Defaults to
+  // the same "use full email as username" behavior as create — the org
+  // change flow has no separate checkbox, so it always builds the email-
+  // shaped username when moving INTO an org (clearing org_id always drops
+  // back to the bare local-part regardless, per build_username).
+  const orgMut = useMutation({
+    mutationFn: ({ id, org_id }: { id: number; org_id: number | null }) =>
+      api.auth.setUserOrganization(id, { org_id, use_email_username: true }),
+    onSuccess: (updated) => {
+      setActionError(null)
+      setNotice(`Username is now "${updated.username}".`)
+      invalidate()
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  })
 
   if (isLoading) return <div className="text-sm text-gray-500">Loading…</div>
 
@@ -78,6 +110,9 @@ export default function UserManagementTab() {
       {actionError !== null && (
         <p role="alert" className="text-xs text-red-400">{actionError}</p>
       )}
+      {notice !== null && (
+        <p className="text-xs text-green-400">{notice}</p>
+      )}
 
       <div className="space-y-2">
         {users.map((u) => {
@@ -95,9 +130,28 @@ export default function UserManagementTab() {
                     {isSelf && <span className="ml-2 text-[10px] text-gray-500">(you)</span>}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {u.enabled ? 'Active' : 'Disabled'}
+                    {u.enabled ? 'Active' : 'Disabled'} · {orgLabel(u.org_id, organizations)}
                   </p>
                 </div>
+
+                {/* Organization selector */}
+                <select
+                  className="input w-32 text-xs"
+                  aria-label={`Organization for ${u.username}`}
+                  value={u.org_id ?? ''}
+                  disabled={orgMut.isPending}
+                  onChange={(e) =>
+                    orgMut.mutate({
+                      id: u.id,
+                      org_id: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                >
+                  <option value="">Local user</option>
+                  {organizations.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
 
                 {/* Role selector */}
                 <select
@@ -174,7 +228,11 @@ export default function UserManagementTab() {
         })}
       </div>
 
-      <CreateUserForm onCreated={invalidate} onError={setActionError} />
+      <CreateUserForm
+        organizations={organizations}
+        onCreated={(username) => { invalidate(); setNotice(`User "${username}" created.`) }}
+        onError={setActionError}
+      />
 
       {resetFor !== null && (
         <ResetPasswordModal
@@ -189,10 +247,12 @@ export default function UserManagementTab() {
 // ── Create user ───────────────────────────────────────────────────────────────
 
 function CreateUserForm({
+  organizations,
   onCreated,
   onError,
 }: {
-  onCreated: () => void
+  organizations: Organization[]
+  onCreated: (username: string) => void
   onError: (msg: string | null) => void
 }) {
   const { passwordPolicy } = useAuth()
@@ -201,17 +261,30 @@ function CreateUserForm({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [role, setRole] = useState<UserRole>('threat-viewer')
+  const [orgId, setOrgId] = useState<number | ''>('')
+  // issue-local-037: enabled by default — the whole point of the checkbox
+  // is opting OUT of the email-shaped username, not into it.
+  const [useEmailUsername, setUseEmailUsername] = useState(true)
 
   const mutation = useMutation({
-    mutationFn: () => api.auth.createUser({ username, password, role }),
-    onSuccess: () => {
+    mutationFn: () =>
+      api.auth.createUser({
+        username,
+        password,
+        role,
+        org_id: orgId === '' ? null : orgId,
+        use_email_username: useEmailUsername,
+      }),
+    onSuccess: (created) => {
       onError(null)
       setUsername('')
       setPassword('')
       setConfirm('')
       setRole('threat-viewer')
+      setOrgId('')
+      setUseEmailUsername(true)
       setOpen(false)
-      onCreated()
+      onCreated(created.username)
     },
     onError: (e) => onError(errorMessage(e)),
   })
@@ -221,6 +294,8 @@ function CreateUserForm({
     setUsername('')
     setPassword('')
     setConfirm('')
+    setOrgId('')
+    setUseEmailUsername(true)
     onError(null)
   }
 
@@ -243,6 +318,12 @@ function CreateUserForm({
     policyError === null &&
     confirmError === null &&
     !mutation.isPending
+
+  const selectedOrg = orgId === '' ? null : organizations.find((o) => o.id === orgId) ?? null
+  const previewUsername =
+    usernameValid && selectedOrg !== null && useEmailUsername
+      ? `${username}@${selectedOrg.email_domain}`
+      : username
 
   return (
     <div className="rounded-lg border border-brand-700/40 bg-brand-900/10 p-3 space-y-3">
@@ -273,6 +354,36 @@ function CreateUserForm({
           </select>
         </div>
       </div>
+      <div>
+        <label htmlFor="new-user-org" className="label">Organization</label>
+        <select
+          id="new-user-org"
+          className="input"
+          value={orgId}
+          onChange={(e) => setOrgId(e.target.value === '' ? '' : Number(e.target.value))}
+        >
+          <option value="">Local user (no organization)</option>
+          {organizations.map((o) => (
+            <option key={o.id} value={o.id}>{o.name} ({o.email_domain})</option>
+          ))}
+        </select>
+      </div>
+      {selectedOrg !== null && (
+        <label htmlFor="new-user-use-email" className="flex items-center gap-2 text-xs text-gray-300">
+          <input
+            id="new-user-use-email"
+            type="checkbox"
+            checked={useEmailUsername}
+            onChange={(e) => setUseEmailUsername(e.target.checked)}
+          />
+          Use full email as username ({selectedOrg.email_domain})
+        </label>
+      )}
+      {usernameValid && (
+        <p className="text-xs text-gray-500">
+          Username will be <span className="font-mono text-gray-300">{previewUsername}</span>.
+        </p>
+      )}
       <div>
         <label htmlFor="new-user-password" className="label">Password</label>
         <input

@@ -21,6 +21,7 @@ import Toggle from '../components/Toggle'
 import ThreatIntelCatalog from '../components/ThreatIntelCatalog'
 import BrandLogo from '../components/BrandLogo'
 import UserManagementTab from './configuration/UserManagementTab'
+import OrgManagementTab from './configuration/OrgManagementTab'
 import ApiAccessTab from './configuration/ApiAccessTab'
 import LLMProvidersTab from './configuration/LLMProvidersTab'
 import SiemConnectorsTab from './configuration/SiemConnectorsTab'
@@ -47,6 +48,7 @@ type Tab =
   | 'global-fields'
   | 'llm-providers'
   | 'user-management'
+  | 'org-management'
   | 'api-access'
   | 'general-ti'
   | 'siem-connectors'
@@ -113,6 +115,7 @@ export default function Configuration() {
     ...(authEnabled && isAdmin
       ? [
           { id: 'user-management' as Tab, label: 'User Management' },
+          { id: 'org-management' as Tab, label: 'Org Management' },
           { id: 'api-access' as Tab, label: 'API Access' },
         ]
       : []),
@@ -214,6 +217,7 @@ export default function Configuration() {
         {activeTab === 'global-fields'   && <GlobalFieldsTab />}
         {activeTab === 'llm-providers'    && <div className="max-w-3xl"><LLMProvidersTab /></div>}
         {activeTab === 'user-management'  && <UserManagementTab />}
+        {activeTab === 'org-management'   && <OrgManagementTab />}
         {activeTab === 'api-access'       && <ApiAccessTab />}
         {activeTab === 'general-ti'       && <GeneralTISettingsTab />}
         {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}

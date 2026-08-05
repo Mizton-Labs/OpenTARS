@@ -384,12 +384,39 @@ export interface AuthUser {
    * the instance default" (see `getDefaultTheme`/`setDefaultTheme`).
    */
   theme?: 'classic' | 'energy' | 'light' | 'ocean' | null
+  /**
+   * Organization FK (issue-local-037), or null for a "Local user" — a user
+   * with no organization assigned. Resolve against `Organization[]` (from
+   * `api.auth.listOrganizations`) for the display name/domain.
+   */
+  org_id?: number | null
 }
 
 export interface CreateUserPayload {
+  // issue-local-037: always the LOCAL PART — the final stored username
+  // (with an "@org-domain" suffix, when applicable) is always computed
+  // server-side. See backend.auth.organizations.build_username.
   username: string
   password: string
   role: UserRole
+  org_id?: number | null
+  use_email_username?: boolean
+}
+
+/** An Organization (issue-local-037) — used to populate the org dropdown on
+ *  user create/change, and managed from its own "Org Management" tab. */
+export interface Organization {
+  id: number
+  name: string
+  email_domain: string
+  created_at?: string
+  /** How many users currently reference this org — drives the delete guard. */
+  user_count: number
+}
+
+export interface OrganizationPayload {
+  name: string
+  email_domain: string
 }
 
 /** A defined API-key scope (issue-local-029) — the wizard's toggle list
@@ -589,6 +616,32 @@ export const api = {
       ),
     deleteUser: (id: number) =>
       request<{ status: string; id: number }>(`/auth/users/${id}`, { method: 'DELETE' }),
+    // issue-local-037: change (or clear) a user's organization — the
+    // backend recomputes the username from the user's existing local-part.
+    setUserOrganization: (
+      id: number,
+      payload: { org_id: number | null; use_email_username?: boolean },
+    ) =>
+      request<AuthUser>(`/auth/users/${id}/organization`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    // Organization management (issue-local-037) — admin only
+    listOrganizations: () => request<Organization[]>('/auth/organizations'),
+    createOrganization: (payload: OrganizationPayload) =>
+      request<Organization>('/auth/organizations', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    updateOrganization: (id: number, payload: OrganizationPayload) =>
+      request<Organization>(`/auth/organizations/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    deleteOrganization: (id: number) =>
+      request<{ status: string; id: number }>(`/auth/organizations/${id}`, {
+        method: 'DELETE',
+      }),
     // SSO config (issue-local-010) — admin only
     getSsoConfig: () => request<SsoConfig>('/auth/sso/config'),
     updateSsoConfig: (cfg: Partial<SsoConfig>) =>

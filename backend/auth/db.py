@@ -90,7 +90,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 6
+_USERS_SCHEMA_VERSION = 7
 
 # Canonical role set (issue-local-002): expanded for the Threat Hunting module.
 # Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
@@ -160,6 +160,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 """
 
+# issue-local-037: Organizations — users.org_id (added in the v6->v7
+# migration below) references this table. NULL org_id means "Local user"
+# (no organization), which is why org_id has no NOT NULL constraint.
+CREATE_ORGANIZATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS organizations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL UNIQUE,
+    email_domain  TEXT    NOT NULL UNIQUE,
+    created_at    TEXT    NOT NULL
+);
+"""
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -179,6 +191,7 @@ async def init_users_db() -> None:
         await db.execute(CREATE_SCHEMA_VERSION_TABLE)
         await db.execute(CREATE_OIDC_FLOWS_TABLE)
         await db.execute(CREATE_API_KEYS_TABLE)
+        await db.execute(CREATE_ORGANIZATIONS_TABLE)
         await _migrate_users_schema(db)
         cur = await db.execute("SELECT version FROM schema_version LIMIT 1")
         row = await cur.fetchone()
@@ -225,6 +238,17 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
         `CREATE TABLE IF NOT EXISTS` alone is idempotent for both fresh and
         upgrading databases; listed here for documentation completeness, same
         as the v3->v4 oidc_flows entry above).
+
+    v6 -> v7 (issue-local-037): Organizations.
+      - Ensure the ``organizations`` table exists (handled by
+        CREATE_ORGANIZATIONS_TABLE in init_users_db; listed here for
+        documentation completeness, same as v5->v6 above).
+      - Add nullable ``org_id`` column on ``users`` (no FK enforcement — SQLite
+        FKs are off by default and this codebase doesn't turn them on
+        elsewhere; referential integrity for org deletion is enforced at the
+        application layer in delete_organization instead, same
+        check-before-delete approach as count_admins/last-admin guards).
+        NULL means "Local user" (no organization).
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -258,6 +282,9 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
     if "theme" not in cols:
         logger.info("Migrating users schema v4->v5: adding theme column")
         await db.execute("ALTER TABLE users ADD COLUMN theme TEXT")
+    if "org_id" not in cols:
+        logger.info("Migrating users schema v6->v7: adding org_id column")
+        await db.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
 
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
@@ -277,12 +304,15 @@ def _user_row_to_dict(row: Any) -> dict[str, Any]:
         "external_id": row[8] if len(row) > 8 else None,
         # issue-local-016: per-user theme override (may be absent in old rows)
         "theme": row[9] if len(row) > 9 else None,
+        # issue-local-037: organization FK (NULL = "Local user"); may be
+        # absent in old rows read before migration.
+        "org_id": row[10] if len(row) > 10 else None,
     }
 
 
 _USER_COLS = (
     "id, username, password_hash, role, enabled, created_at, must_change_password, "
-    "idp, external_id, theme"
+    "idp, external_id, theme, org_id"
 )
 
 
@@ -294,11 +324,15 @@ async def create_user(
     must_change_password: bool = False,
     idp: str | None = None,
     external_id: str | None = None,
+    org_id: int | None = None,
 ) -> int:
     """Insert a new user; return its id. Raises on duplicate username.
 
     *idp* and *external_id* are set for SSO-provisioned accounts (issue-local-010).
-    Local accounts leave both as NULL.
+    Local accounts leave both as NULL. *org_id* (issue-local-037) is NULL for
+    a "Local user" (no organization) — callers are responsible for resolving
+    the final *username* (whether it includes an "@org-domain" suffix) before
+    calling this function; it stores whatever it's given verbatim.
     """
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r}")
@@ -306,8 +340,8 @@ async def create_user(
         cur = await db.execute(
             "INSERT INTO users "
             "(username, password_hash, role, enabled, created_at, must_change_password, "
-            " idp, external_id) "
-            "VALUES (?, ?, ?, 1, ?, ?, ?, ?)",
+            " idp, external_id, org_id) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
             (
                 username,
                 password_hash,
@@ -316,6 +350,7 @@ async def create_user(
                 1 if must_change_password else 0,
                 idp,
                 external_id,
+                org_id,
             ),
         )
         await db.commit()
@@ -464,6 +499,134 @@ async def delete_user(user_id: int) -> bool:
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
         await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_user_username_and_org(user_id: int, username: str, org_id: int | None) -> bool:
+    """Update a user's username and org_id together (issue-local-037).
+
+    These two columns are always written together — a username change is
+    only ever a *consequence* of an organization change (see
+    backend.auth.organizations.build_username), never independent — so this
+    is one function, not a set_username() + set_org() pair that callers
+    could accidentally call out of sync. Raises the underlying
+    ``aiosqlite.IntegrityError`` on a username collision (same as
+    create_user); callers translate that to HTTP 409, matching the existing
+    duplicate-username convention.
+    """
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET username = ?, org_id = ? WHERE id = ?",
+            (username, org_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ── Organizations (issue-local-037) ──────────────────────────────────────────
+
+
+def _org_row_to_dict(row: Any) -> dict[str, Any]:
+    return {"id": row[0], "name": row[1], "email_domain": row[2], "created_at": row[3]}
+
+
+_ORG_COLS = "id, name, email_domain, created_at"
+
+
+async def create_organization(name: str, email_domain: str) -> int:
+    """Insert a new organization; return its id. Raises on duplicate
+    name/email_domain (both UNIQUE)."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO organizations (name, email_domain, created_at) VALUES (?, ?, ?)",
+            (name, email_domain, _utc_now_iso()),
+        )
+        await db.commit()
+        return int(cur.lastrowid)
+
+
+async def get_organization(org_id: int) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            f"SELECT {_ORG_COLS} FROM organizations WHERE id = ?", (org_id,)  # noqa: S608
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    return _org_row_to_dict(row) if row else None
+
+
+async def get_organization_by_domain(email_domain: str) -> dict[str, Any] | None:
+    """Case-insensitive lookup — email domains are stored lower-cased at
+    validation time (backend.auth.organizations.validate_organization), but
+    this also tolerates any pre-validation legacy rows."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            f"SELECT {_ORG_COLS} FROM organizations WHERE lower(email_domain) = lower(?)",  # noqa: S608
+            (email_domain,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    return _org_row_to_dict(row) if row else None
+
+
+async def list_organizations() -> list[dict[str, Any]]:
+    """Return all organizations ordered by name, each with a ``user_count``
+    (how many users currently reference it) — the count is what
+    delete_organization's guard also uses, and the admin UI needs it to
+    explain *why* a delete is blocked without a second round trip."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            f"SELECT {_ORG_COLS} FROM organizations ORDER BY name"  # noqa: S608
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+        out = []
+        for row in rows:
+            d = _org_row_to_dict(row)
+            cur2 = await db.execute(
+                "SELECT COUNT(*) FROM users WHERE org_id = ?", (d["id"],)
+            )
+            count_row = await cur2.fetchone()
+            await cur2.close()
+            d["user_count"] = int(count_row[0]) if count_row else 0
+            out.append(d)
+    return out
+
+
+async def update_organization(org_id: int, name: str, email_domain: str) -> bool:
+    """Rename/re-domain an existing organization. Raises on a collision with
+    a DIFFERENT org's name/email_domain (UNIQUE constraints exclude self
+    naturally since we're updating that same row)."""
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE organizations SET name = ?, email_domain = ? WHERE id = ?",
+            (name, email_domain, org_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def count_users_in_org(org_id: int) -> int:
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM users WHERE org_id = ?", (org_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return int(row[0]) if row else 0
+
+
+async def delete_organization(org_id: int) -> bool:
+    """Delete an organization. Returns True if removed.
+
+    Callers MUST check count_users_in_org(org_id) == 0 first (routes_auth.py
+    does, returning 409 otherwise) — enforced at the application layer since
+    this codebase doesn't turn on SQLite FK constraints (see
+    CREATE_ORGANIZATIONS_TABLE's docstring). This function itself does not
+    re-check, to keep the check-then-act messaging in one place (the route)
+    rather than two different error shapes for the same condition.
+    """
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
         await db.commit()
         return cur.rowcount > 0
 
