@@ -26,6 +26,7 @@ vi.mock('../api/client', async () => {
         setUserEnabled: vi.fn(),
         deleteUser: vi.fn(),
         resetUserPassword: vi.fn(),
+        setUserOnboarded: vi.fn(),
       },
     },
   }
@@ -46,6 +47,7 @@ const mockedAuth = api.auth as unknown as {
   setUserEnabled: ReturnType<typeof vi.fn>
   deleteUser: ReturnType<typeof vi.fn>
   resetUserPassword: ReturnType<typeof vi.fn>
+  setUserOnboarded: ReturnType<typeof vi.fn>
 }
 
 const selfUser: AuthUser = { id: 1, username: 'admin', role: 'admin', enabled: true, org_id: null }
@@ -127,13 +129,14 @@ describe('UserManagementTab organizations', () => {
   })
 
   it('create form: no org selected submits org_id null and shows the created username notice', async () => {
-    mockedAuth.createUser.mockResolvedValue(user({ username: 'carol', org_id: null }))
+    mockedAuth.createUser.mockResolvedValue({
+      ...user({ username: 'carol', org_id: null }),
+      generated_password: 'generated-pw-1',
+    })
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
 
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'carol' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Validpass1' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Validpass1' } })
     fireEvent.click(screen.getByRole('button', { name: /^create/i }))
 
     await waitFor(() =>
@@ -145,14 +148,15 @@ describe('UserManagementTab organizations', () => {
   })
 
   it('create form: org selected submits the chosen org_id and use_email_username flag', async () => {
-    mockedAuth.createUser.mockResolvedValue(user({ username: 'bob@acme.com', org_id: acme.id }))
+    mockedAuth.createUser.mockResolvedValue({
+      ...user({ username: 'bob@acme.com', org_id: acme.id }),
+      generated_password: 'generated-pw-2',
+    })
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
 
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'bob' } })
     fireEvent.change(screen.getByLabelText('Organization'), { target: { value: String(acme.id) } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Validpass1' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Validpass1' } })
     fireEvent.click(screen.getByRole('button', { name: /^create/i }))
 
     await waitFor(() =>
@@ -163,7 +167,7 @@ describe('UserManagementTab organizations', () => {
     expect(await screen.findByText(/User "bob@acme.com" created\./)).toBeInTheDocument()
   })
 
-  it('changing a row\'s organization calls setUserOrganization and shows the updated-username notice', async () => {
+  it('changing a row\'s organization stages it behind Save, then calls setUserOrganization and shows the updated-username notice', async () => {
     mockedAuth.listUsers.mockResolvedValue([user({ id: 2, username: 'alice', org_id: null })])
     mockedAuth.setUserOrganization.mockResolvedValue(
       user({ id: 2, username: 'alice@acme.com', org_id: acme.id }),
@@ -172,6 +176,10 @@ describe('UserManagementTab organizations', () => {
 
     const orgSelect = await screen.findByLabelText('Organization for alice')
     fireEvent.change(orgSelect, { target: { value: String(acme.id) } })
+
+    // issue-local-038: staged — not applied until the row's Save button is clicked.
+    expect(mockedAuth.setUserOrganization).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }))
 
     await waitFor(() =>
       expect(mockedAuth.setUserOrganization).toHaveBeenCalledWith(2, {
@@ -189,6 +197,7 @@ describe('UserManagementTab organizations', () => {
 
     const orgSelect = await screen.findByLabelText('Organization for alice@acme.com')
     fireEvent.change(orgSelect, { target: { value: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }))
 
     await waitFor(() =>
       expect(mockedAuth.setUserOrganization).toHaveBeenCalledWith(2, {
@@ -196,5 +205,21 @@ describe('UserManagementTab organizations', () => {
         use_email_username: true,
       }),
     )
+  })
+})
+
+describe('UserManagementTab first-login wizard trigger (issue-local-038)', () => {
+  it('clicking "First-login wizard" resets the onboarded flag and shows a notice', async () => {
+    mockedAuth.listUsers.mockResolvedValue([user({ id: 2, username: 'alice' })])
+    mockedAuth.setUserOnboarded.mockResolvedValue(user({ id: 2, username: 'alice', onboarded: false }))
+    renderTab()
+
+    const btn = await screen.findByRole('button', { name: /first-login wizard/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(mockedAuth.setUserOnboarded).toHaveBeenCalledWith(2, false))
+    expect(
+      await screen.findByText(/First-login wizard will show for "alice" on their next login\./),
+    ).toBeInTheDocument()
   })
 })

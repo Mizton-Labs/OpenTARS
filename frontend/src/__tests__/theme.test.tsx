@@ -99,6 +99,21 @@ describe('ThemeProvider (issue-local-016)', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('light')
   })
 
+  it('accepts "redhunter" as a valid instance default (issue-local-038)', async () => {
+    vi.mocked(api.getDefaultTheme).mockResolvedValue({ theme: 'redhunter' })
+    mockUser({ id: 1, username: 'bob', role: 'threat-viewer', enabled: true, theme: null })
+
+    render(
+      <ThemeProvider>
+        <Probe />
+      </ThemeProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('default')).toHaveTextContent('redhunter'))
+    expect(screen.getByTestId('theme')).toHaveTextContent('redhunter')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('redhunter')
+  })
+
   it('accepts "ocean" as a valid instance default (issue-local-018 follow-up)', async () => {
     vi.mocked(api.getDefaultTheme).mockResolvedValue({ theme: 'ocean' })
     mockUser({ id: 1, username: 'bob', role: 'threat-viewer', enabled: true, theme: null })

@@ -14,7 +14,8 @@ export default function Home() {
     <div className="p-8 flex flex-col items-center">
       <div className="text-center mb-8">
         <h1 className="text-2xl font-bold text-gray-100">OpenTARS</h1>
-        <p className="text-sm text-gray-400 mt-2">Choose a module to get started</p>
+        <p className="text-sm text-gray-500 mt-1">Threat Agentic Research System</p>
+        <p className="text-sm text-gray-400 mt-4">Choose a module to get started</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto mt-8 w-full">

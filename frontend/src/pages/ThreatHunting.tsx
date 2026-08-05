@@ -431,10 +431,12 @@ function PackageCard({
           {/* issue-local-016/017: per-run compact status chips — shown for
               every package that has at least one run (including a
               single-run package, so its model/status is visible without
-              opening the detail view), in BOTH density modes (only the
-              heavier stage rail below is gated by density). Clicking a chip
-              selects that run for this card's stage rail. */}
-          {runs.length > 0 && (
+              opening the detail view), in compact/detailed density (only
+              the heavier stage rail below is gated by density). Clicking a
+              chip selects that run for this card's stage rail. issue-
+              local-038: 'simple' density replaces this whole row with a
+              one-line run count instead — see below. */}
+          {density !== 'simple' && runs.length > 0 && (
             <div
               className="flex items-end gap-1.5 mt-2 border-b border-gray-700 flex-wrap"
               onClick={(e) => e.stopPropagation()}
@@ -451,6 +453,14 @@ function PackageCard({
                 />
               ))}
             </div>
+          )}
+
+          {/* issue-local-038: 'simple' density — same as compact, minus the
+              runs chip row above, replaced with a brief count. */}
+          {density === 'simple' && (
+            <p className="text-xs text-gray-500 mt-2">
+              {runs.length === 0 ? 'No runs yet' : `${runs.length} run${runs.length !== 1 ? 's' : ''}`}
+            </p>
           )}
 
           {density === 'detailed' && <ProcessArrow run={resolvedRun} />}
@@ -606,14 +616,28 @@ export default function ThreatHunting() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* issue-local-016/017/018: Compact/Detailed/Table density toggle
-              (the separate Classic/Modern card-color toggle was removed —
-              Classic is now the only card design). Compact hides the
-              per-stage ProcessArrow rail; Table replaces the card list with
-              each package's all-runs table (the same RunsStatusTable
-              HuntDetail uses); the per-run chip row (when a package has
-              multiple runs) shows in both card modes. */}
+          {/* issue-local-016/017/018/038: Simple/Compact/Detailed/Table
+              density toggle (the separate Classic/Modern card-color toggle
+              was removed — Classic is now the only card design). Compact
+              hides the per-stage ProcessArrow rail; Simple additionally
+              replaces the per-run chip row with a one-line run count; Table
+              replaces the card list with each package's all-runs table (the
+              same RunsStatusTable HuntDetail uses); the per-run chip row
+              (when a package has multiple runs) shows in both card modes
+              except Simple. */}
           <div className="flex items-center rounded-lg overflow-hidden border border-gray-700 text-sm">
+            <button
+              className={clsx(
+                'px-2.5 py-1.5 transition-colors',
+                density === 'simple'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-transparent text-gray-500 hover:text-gray-300',
+              )}
+              onClick={() => setDensity('simple')}
+              title="Simple view"
+            >
+              Simple
+            </button>
             <button
               className={clsx(
                 'px-2.5 py-1.5 transition-colors',

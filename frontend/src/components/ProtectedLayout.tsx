@@ -10,6 +10,9 @@
  *   - auth enabled AND the user must change a default password (prompts-047) →
  *     render a full-screen forced change-password step (no shell, logout only)
  *     until the flag clears. Mirrors the server-side middleware gate.
+ *   - auth enabled AND the user hasn't seen the first-login wizard yet
+ *     (issue-local-038) → render it full-screen (after the password gate
+ *     above, so a forced password change always comes first).
  *   - auth disabled (open app) OR user present → render the shell.
  */
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
@@ -18,6 +21,7 @@ import Sidebar from './Sidebar'
 import ChangePasswordCard from './ChangePasswordCard'
 import ConfigDriftBanner from './ConfigDriftBanner'
 import SmartSearchDrawer from './SmartSearchDrawer'
+import OnboardingWizard from './OnboardingWizard'
 import { AssistantSessionProvider } from './AssistantSessionProvider'
 import { useAuth } from '../auth/useAuth'
 
@@ -69,6 +73,14 @@ export default function ProtectedLayout() {
         </div>
       </div>
     )
+  }
+
+  // issue-local-038: shown once per user, after the forced-password gate
+  // above resolves. `onboarded` defaults to true when absent (pre-refresh
+  // /me responses, or a genuinely pre-existing account) so this never
+  // flashes for an established user before the real value loads.
+  if (authEnabled && user !== null && user.onboarded === false) {
+    return <OnboardingWizard onDone={() => void refresh()} />
   }
 
   return (

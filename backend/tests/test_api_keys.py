@@ -326,18 +326,17 @@ class TestApiKeyMiddleware:
 class TestApiKeyRoutes:
     def test_non_admin_cannot_manage_keys(self, auth_env):
         c = _login("admin", "Adminpass1")
-        c.post(
+        created = c.post(
             "/api/auth/users",
             json={
                 "username": "researcher1",
-                "password": "Researchpass1",
                 "role": "threat-researcher",
             },
-        )
-        nc = _login("researcher1", "Researchpass1")
+        ).json()
+        nc = _login("researcher1", created["generated_password"])
         nc.put(
             "/api/auth/password",
-            json={"current_password": "Researchpass1", "new_password": "Researchpass2"},
+            json={"current_password": created["generated_password"], "new_password": "Researchpass2"},
         )
         assert nc.get("/api/auth/api-keys").status_code == 403
         assert nc.post("/api/auth/api-keys", json={"name": "x", "scopes": []}).status_code == 403

@@ -383,13 +383,21 @@ export interface AuthUser {
    * Per-user theme override (issue-local-016). `null`/`undefined` means "use
    * the instance default" (see `getDefaultTheme`/`setDefaultTheme`).
    */
-  theme?: 'classic' | 'energy' | 'light' | 'ocean' | null
+  theme?: 'classic' | 'energy' | 'light' | 'ocean' | 'redhunter' | null
   /**
    * Organization FK (issue-local-037), or null for a "Local user" — a user
    * with no organization assigned. Resolve against `Organization[]` (from
    * `api.auth.listOrganizations`) for the display name/domain.
    */
   org_id?: number | null
+  /**
+   * Whether this user has already seen/dismissed the first-login onboarding
+   * wizard (issue-local-038). ProtectedLayout gates the wizard on this being
+   * false, after the must_change_password gate above resolves. Defaults to
+   * true when absent (older cached responses), matching the backend's own
+   * grandfather-existing-rows default.
+   */
+  onboarded?: boolean
 }
 
 export interface CreateUserPayload {
@@ -397,7 +405,9 @@ export interface CreateUserPayload {
   // (with an "@org-domain" suffix, when applicable) is always computed
   // server-side. See backend.auth.organizations.build_username.
   username: string
-  password: string
+  // issue-local-038: no password field — the backend always generates one
+  // (see AuthUser response's generated_password, same pattern as
+  // resetUserPassword) and returns it once for the admin to hand off.
   role: UserRole
   org_id?: number | null
   use_email_username?: boolean
@@ -587,15 +597,23 @@ export const api = {
     // issue-local-016: any authenticated user may set their own theme
     // override. `theme: null` clears the override (falls back to the
     // instance default set via setDefaultTheme).
-    setOwnTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean' | null) =>
+    setOwnTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean' | 'redhunter' | null) =>
       request<AuthUser>('/auth/me/theme', {
         method: 'PUT',
         body: JSON.stringify({ theme }),
       }),
+    // issue-local-038: dismiss the caller's own first-login onboarding wizard.
+    completeOwnOnboarding: () =>
+      request<AuthUser>('/auth/me/onboarding', { method: 'PUT' }),
     // Admin: user management
     listUsers: () => request<AuthUser[]>('/auth/users'),
+    // issue-local-038: response is the created user plus a one-time
+    // generated_password (server-generated, never admin-supplied).
     createUser: (payload: CreateUserPayload) =>
-      request<AuthUser>('/auth/users', { method: 'POST', body: JSON.stringify(payload) }),
+      request<AuthUser & { generated_password: string }>('/auth/users', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     setUserRole: (id: number, role: UserRole) =>
       request<AuthUser>(`/auth/users/${id}/role`, {
         method: 'PUT',
@@ -625,6 +643,13 @@ export const api = {
       request<AuthUser>(`/auth/users/${id}/organization`, {
         method: 'PUT',
         body: JSON.stringify(payload),
+      }),
+    // issue-local-038: admin resets a user's onboarded flag — false forces
+    // the first-login wizard to show again on that user's next login.
+    setUserOnboarded: (id: number, onboarded: boolean) =>
+      request<AuthUser>(`/auth/users/${id}/onboarding`, {
+        method: 'PUT',
+        body: JSON.stringify({ onboarded }),
       }),
     // Organization management (issue-local-037) — admin only
     listOrganizations: () => request<Organization[]>('/auth/organizations'),
@@ -964,7 +989,7 @@ export const api = {
   // Application — instance-wide default UI theme (issue-local-016). Public
   // GET (needed so the login screen, pre-auth, can apply it); admin-gated PUT.
   getDefaultTheme: () => request<{ theme: string }>('/app/theme'),
-  setDefaultTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean') =>
+  setDefaultTheme: (theme: 'classic' | 'energy' | 'light' | 'ocean' | 'redhunter') =>
     request<{ theme: string }>('/app/theme', {
       method: 'PUT',
       body: JSON.stringify({ theme }),
@@ -2582,6 +2607,10 @@ export interface THFullReport {
   hunt_id: string
   generated_at: string
   generated_by: string | null
+  /** issue-local-038: the OpenTARS version/commit the report was generated
+   *  with. Optional — reports generated before this existed won't have it. */
+  app_version?: string
+  app_commit?: string
   package_status: string
   evidence_summary: THReportEvidenceSummary
   threat_context: Record<string, unknown> | null

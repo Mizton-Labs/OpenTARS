@@ -83,9 +83,9 @@ beforeEach(() => {
 })
 
 describe('useHuntDensity', () => {
-  it('defaults to detailed', () => {
+  it('defaults to table (issue-local-038)', () => {
     const { result } = renderHook(() => useHuntDensity())
-    expect(result.current.density).toBe('detailed')
+    expect(result.current.density).toBe('table')
   })
 
   it('persists the selection to localStorage', () => {
@@ -182,15 +182,17 @@ describe('runStatusUtils', () => {
 })
 
 describe('ThreatHunting list — density toggle + run chips (issue-local-016)', () => {
-  it('renders the Compact/Detailed/Table toggle', async () => {
+  it('renders the Simple/Compact/Detailed/Table toggle', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([])
     renderList()
-    expect(await screen.findByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^simple$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^detailed$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^compact$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^table$/i })).toBeInTheDocument()
   })
 
-  it('shows the stage rail by default (detailed) and hides it in compact mode', async () => {
+  it('shows the stage rail in detailed mode and hides it in compact mode', async () => {
+    localStorage.setItem('sfi.th.cardDensity', 'detailed')
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([makePkg()])
     renderList()
     await screen.findByText('Test Package')
@@ -222,6 +224,7 @@ describe('ThreatHunting list — density toggle + run chips (issue-local-016)', 
   })
 
   it('shows a run chip per run for a multi-run package, in both density modes, and switches the rail on click', async () => {
+    localStorage.setItem('sfi.th.cardDensity', 'detailed')
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
       makePkg({
         runs: [
@@ -267,8 +270,50 @@ describe('ThreatHunting list — density toggle + run chips (issue-local-016)', 
   })
 })
 
+describe('ThreatHunting list — Simple density mode (issue-local-038)', () => {
+  it('hides the runs chip row and shows a brief run count instead', async () => {
+    localStorage.setItem('sfi.th.cardDensity', 'simple')
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        runs: [
+          { id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' },
+          { id: 'r2', hunt_package_id: 'pkg-1', generation_status: 'error', created_at: '2026-01-02T00:00:00Z' },
+        ],
+        run_count: 2,
+      }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+
+    expect(screen.queryByText('Runs')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /completed/ })).not.toBeInTheDocument()
+    expect(screen.getByText('2 runs')).toBeInTheDocument()
+  })
+
+  it('shows "No runs yet" in simple mode for a package with zero runs', async () => {
+    localStorage.setItem('sfi.th.cardDensity', 'simple')
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([makePkg({ runs: [], run_count: 0 })])
+    renderList()
+    await screen.findByText('Test Package')
+
+    expect(screen.getByText('No runs yet')).toBeInTheDocument()
+  })
+
+  it('never shows the detailed stage rail in simple mode', async () => {
+    localStorage.setItem('sfi.th.cardDensity', 'simple')
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([makePkg()])
+    renderList()
+    await screen.findByText('Test Package')
+
+    expect(screen.queryByText('Intake')).not.toBeInTheDocument()
+  })
+})
+
 describe('ThreatHunting list — Table density mode (issue-local-017)', () => {
   it('switching to Table mode replaces the card list with a per-package runs table', async () => {
+    // Start from a card mode — Table is the default since issue-local-038,
+    // so this test explicitly exercises the compact->table transition.
+    localStorage.setItem('sfi.th.cardDensity', 'detailed')
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
       makePkg({
         name: 'Test Package',

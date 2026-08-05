@@ -89,14 +89,19 @@
     --color-gray-300: 55 65 81;
     --color-gray-400: 75 85 99;
     --color-gray-500: 107 114 128;
-    /* issue-local-019: nudged 600-950 a bit darker than a straight Classic
-     * mirror — the original values read as washed-out/plain-white. Text
-     * stops (50-500) are unchanged since their contrast is already tuned. */
+    /* issue-local-038: gray-950 (the page background, via `body`'s
+     * unconditional `bg-gray-950`) is now near-white — previously it was a
+     * light GREY and `.card` below was the near-white surface, which read
+     * backwards ("clear white and grey inverted" per the issue). Page is
+     * now the near-white base; `.card` gets the grey contrast instead (see
+     * its override below). 600-800 stay as issue-local-019 left them
+     * (still used by borders/secondary surfaces elsewhere); only the two
+     * extremes that back page-vs-card swapped. */
     --color-gray-600: 140 147 159;
     --color-gray-700: 188 193 200;
     --color-gray-800: 206 209 214;
     --color-gray-900: 219 222 226;
-    --color-gray-950: 227 230 233;
+    --color-gray-950: 250 251 253;
 
     --color-brand-50:  240 244 255;
     --color-brand-100: 221 230 255;
@@ -140,6 +145,41 @@
     --color-brand-700: 3 105 161;
     --color-brand-800: 7 89 133;
     --color-brand-900: 12 74 110;
+  }
+
+  /* issue-local-038: RedHunter — a dark theme built around an intense,
+   * professional red accent. The gray ramp stays fully NEUTRAL (R=G=B, near
+   * black) rather than red-tinted — Energy's own comment already documents
+   * why tinting every gray reads as muddy/sepia instead of "intense": the
+   * accent alone (on buttons/active-tab/toggle/focus-ring, same idiom as
+   * every other theme) carries the theme's identity, same as Energy's
+   * yellow. brand-* uses Tailwind's "rose" scale (not "red") specifically
+   * so the accent is visually distinguishable from the app's stock
+   * red-600/red-700 danger/error color, which stays unchanged everywhere —
+   * an intense-but-distinct ruby rather than colliding with error states. */
+  :root[data-theme='redhunter'] {
+    --color-gray-50:  245 245 245;
+    --color-gray-100: 229 229 229;
+    --color-gray-200: 200 200 200;
+    --color-gray-300: 163 163 163;
+    --color-gray-400: 115 115 115;
+    --color-gray-500: 82 82 82;
+    --color-gray-600: 58 58 58;
+    --color-gray-700: 38 38 38;
+    --color-gray-800: 23 23 23;
+    --color-gray-900: 14 14 14;
+    --color-gray-950: 8 8 8;
+
+    --color-brand-50:  255 241 242;
+    --color-brand-100: 255 228 230;
+    --color-brand-200: 254 205 211;
+    --color-brand-300: 253 164 175;
+    --color-brand-400: 251 113 133;
+    --color-brand-500: 244 63 94;
+    --color-brand-600: 225 29 72;
+    --color-brand-700: 190 18 60;
+    --color-brand-800: 159 18 57;
+    --color-brand-900: 136 19 55;
   }
 
   :root {
@@ -288,18 +328,31 @@
   box-shadow: inset 0 0 0 1px rgba(127, 29, 29, 0.45);
 }
 
-/* issue-local-018/019: Light theme's `.card` had no override at all — it
- * fell through to the mirrored `gray-900`, nearly indistinguishable from the
- * page background. Since issue-local-019 darkened the page background
- * (gray-950/900) a bit, cards now read as a crisp near-white surface sitting
- * ON that slightly-darker page — the inverse of Energy's "lighter card on
- * dark page" bump, same idea. */
+/* issue-local-038: RedHunter's ".card" ring — same idiom as Energy's above,
+ * but deliberately more pronounced at rest (not just on hover), since an
+ * "intense" red contrast is the whole point of this theme rather than a
+ * subtle decorative touch. */
+:root[data-theme='redhunter'] .card {
+  background-color: rgb(20 20 20);
+  box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.3);
+}
+:root[data-theme='redhunter'] .card:hover {
+  background-color: rgb(26 26 26);
+  box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.7);
+}
+
+/* issue-local-038: page background is now near-white (gray-950 above), so
+ * `.card` needs its OWN override to read as a distinct surface again — the
+ * inverse of the issue-local-018/019 version of this comment, which had it
+ * backwards (near-white card on a grey page). Cards are now the grey
+ * surface sitting on the near-white page, same relationship Energy's
+ * "lighter card on dark page" bump has, just mirrored for a light theme. */
 :root[data-theme='light'] .card {
-  background-color: rgb(250 251 253);
+  background-color: rgb(227 230 233);
   border-color: rgb(203 213 225);
 }
 :root[data-theme='light'] .card:hover {
-  background-color: rgb(240 244 249);
+  background-color: rgb(219 222 226);
 }
 
 /* Sidebar module-group box (Threat Intel + Threat Hunting), separating the

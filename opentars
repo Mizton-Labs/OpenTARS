@@ -352,6 +352,13 @@ DOCLING_PREFETCH
     # Build the env-var override array for uvicorn. Empty when the flag was
     # not passed, so the backend reads application.yaml as usual.
     local env_overrides=()
+    # Computed here (before either uvicorn launch below) so the BACKEND process
+    # itself learns its own commit — previously GIT_COMMIT was only exported to
+    # the frontend build subprocess, computed after prod mode had already
+    # started uvicorn, so the backend had no way to log/report its commit.
+    local git_commit
+    git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    env_overrides+=("GIT_COMMIT=${git_commit}")
     if [ "${cli_base_prefix_set}" = true ]; then
         env_overrides+=("OPENTARS_BASE_PREFIX=${cli_base_prefix}")
         log "Base URL prefix override: '${cli_base_prefix:-<root>}' (OPENTARS_BASE_PREFIX)"
@@ -409,8 +416,8 @@ sys.exit(asyncio.run(_main()))
         log "Building frontend..."
         log "Installing/syncing frontend dependencies..."
         npm --prefix "${FRONTEND_DIR}" install
-        local git_commit git_branch git_commit_date
-        git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+        # git_commit already computed above (env_overrides) and reused here.
+        local git_branch git_commit_date
         git_branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
         git_commit_date="$(git -C "${SCRIPT_DIR}" log -1 --format=%cI HEAD 2>/dev/null || echo 'unknown')"
         GIT_COMMIT="${git_commit}" GIT_BRANCH="${git_branch}" GIT_COMMIT_DATE="${git_commit_date}" npm --prefix "${FRONTEND_DIR}" run build
@@ -458,8 +465,8 @@ sys.exit(asyncio.run(_main()))
     log "Building frontend..."
     log "Installing/syncing frontend dependencies..."
     npm --prefix "${FRONTEND_DIR}" install
-    local git_commit git_branch git_commit_date
-    git_commit="$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    # git_commit already computed above (env_overrides) and reused here.
+    local git_branch git_commit_date
     git_branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
     git_commit_date="$(git -C "${SCRIPT_DIR}" log -1 --format=%cI HEAD 2>/dev/null || echo 'unknown')"
     GIT_COMMIT="${git_commit}" GIT_BRANCH="${git_branch}" GIT_COMMIT_DATE="${git_commit_date}" npm --prefix "${FRONTEND_DIR}" run build

@@ -291,6 +291,14 @@ def test_put_default_theme_accepts_ocean(client):
     assert client.get("/api/app/theme").json() == {"theme": "ocean"}
 
 
+def test_put_default_theme_accepts_redhunter(client):
+    """issue-local-038: 'redhunter' is a valid fifth instance-default theme."""
+    resp = client.put("/api/app/theme", json={"theme": "redhunter"})
+    assert resp.status_code == 200
+    assert resp.json() == {"theme": "redhunter"}
+    assert client.get("/api/app/theme").json() == {"theme": "redhunter"}
+
+
 def test_put_default_theme_rejects_invalid_value(client):
     resp = client.put("/api/app/theme", json={"theme": "not-a-real-theme"})
     assert resp.status_code == 400

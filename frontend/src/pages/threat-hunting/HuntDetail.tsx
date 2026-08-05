@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -62,6 +62,10 @@ export default function HuntDetail({
 
   // issue-006-G: re-run dialog state
   const [showRerunDialog, setShowRerunDialog] = useState(false)
+
+  // issue-local-038: clone dialog state — mirrors the list page's own
+  // CloneTarget dialog (ThreatHunting.tsx), just scoped to this one package.
+  const [cloneName, setCloneName] = useState<string | null>(null)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
   const [rerunEffort, setRerunEffort] = useState<string>('medium')
   // issue-local-022 (item 3): shared defaults with AnalysisTab.tsx's
@@ -237,6 +241,19 @@ export default function HuntDetail({
     },
   })
 
+  // issue-local-038: clone this package — same backend route/behavior as the
+  // list page's clone dialog (evidence copied, runs/reports/IOCs reset to a
+  // fresh draft). Returns to the list afterward, same as delete above, where
+  // the new "Copy of ..." package is visible.
+  const cloneMut = useMutation({
+    mutationFn: (name: string) => api.threatHunting.clonePackage(pkgId, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setCloneName(null)
+      onBack()
+    },
+  })
+
   const noisyCount = (iocs as THExtractedIOC[]).filter((i) => i.flagged_noisy).length
   const cleanCount = (iocs as THExtractedIOC[]).length - noisyCount
   const removedCount = (iocs as THExtractedIOC[]).filter((i) => i.action === 'remove').length
@@ -320,6 +337,17 @@ export default function HuntDetail({
             <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
               <Plus className="w-4 h-4" />
               Add Item
+            </button>
+          )}
+          {/* issue-local-038: clone this package */}
+          {isResearcher && (
+            <button
+              className="btn-secondary flex items-center gap-2 text-sm"
+              onClick={() => setCloneName(`Copy of ${pkg?.name ?? ''}`)}
+              title="Clone this hunt package"
+            >
+              <Copy className="w-4 h-4" />
+              Clone
             </button>
           )}
           {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
@@ -731,6 +759,46 @@ export default function HuntDetail({
           onConfirm={() => deletePackageMut.mutate()}
           onCancel={() => setShowDeletePackageConfirm(false)}
         />
+      )}
+
+      {/* issue-local-038: clone dialog */}
+      {cloneName !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+            <h2 className="text-base font-semibold text-gray-100">Clone Hunt Package</h2>
+            <p className="text-sm text-gray-400">
+              Enter a name for the cloned package (cloning &quot;{pkg?.name}&quot;).
+            </p>
+            <input
+              className="input w-full"
+              value={cloneName}
+              onChange={(e) => setCloneName(e.target.value)}
+              placeholder="New package name"
+              autoFocus
+            />
+            {cloneMut.isError && (
+              <p className="text-sm text-red-400">
+                Clone failed: {cloneMut.error instanceof Error ? cloneMut.error.message : String(cloneMut.error)}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn-ghost text-sm"
+                onClick={() => { setCloneName(null); cloneMut.reset() }}
+                disabled={cloneMut.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-sm flex items-center gap-2"
+                disabled={!cloneName.trim() || cloneMut.isPending}
+                onClick={() => cloneMut.mutate(cloneName.trim())}
+              >
+                {cloneMut.isPending ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Cloning…</> : 'Clone'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* issue-006-G: Re-run dialog — model + effort selector */}

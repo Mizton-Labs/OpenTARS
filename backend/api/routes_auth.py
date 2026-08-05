@@ -6,9 +6,10 @@ Public:
   GET  /api/auth/status    — whether auth is enabled (for the SPA bootstrap)
 
 Authenticated (any role):
-  POST /api/auth/logout    — revoke the current session
-  GET  /api/auth/me        — current user profile
-  PUT  /api/auth/password  — change own password
+  POST /api/auth/logout       — revoke the current session
+  GET  /api/auth/me           — current user profile
+  PUT  /api/auth/password     — change own password
+  PUT  /api/auth/me/onboarding — dismiss own first-login wizard (issue-local-038)
 
 Admin only (user management):
   GET    /api/auth/users
@@ -17,6 +18,7 @@ Admin only (user management):
   PUT    /api/auth/users/{user_id}/enabled
   PUT    /api/auth/users/{user_id}/password
   PUT    /api/auth/users/{user_id}/organization
+  PUT    /api/auth/users/{user_id}/onboarding
   DELETE /api/auth/users/{user_id}
 
 Admin only (organization management — issue-local-037):
@@ -121,7 +123,12 @@ class CreateUserBody(BaseModel):
     # for why the "@org-domain" suffix (when applicable) is always
     # constructed server-side instead.
     username: str
-    password: str
+    # issue-local-038: no admin-supplied password anymore — the backend
+    # always generates one (same as admin_reset_password), returned once in
+    # the response. Same rationale as reset: an admin-chosen password is,
+    # from the new user's perspective, no more trustworthy than a
+    # server-generated one, and this removes an entire class of weak/reused
+    # admin-typed passwords.
     role: str = "threat-viewer"
     org_id: int | None = None
     use_email_username: bool = True
@@ -143,6 +150,10 @@ class OrganizationBody(BaseModel):
 class SetUserOrganizationBody(BaseModel):
     org_id: int | None = None
     use_email_username: bool = True
+
+
+class SetUserOnboardedBody(BaseModel):
+    onboarded: bool = False
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -221,6 +232,11 @@ def _public_user(user: dict) -> dict:
         # list it already fetches for the Create/Change-Organization
         # dropdown — no separate org lookup/join needed here.
         "org_id": user.get("org_id"),
+        # issue-local-038: whether this user has already been through (or
+        # dismissed) the first-login onboarding wizard. ProtectedLayout
+        # gates the wizard on this being False, same pattern as the
+        # must_change_password gate above.
+        "onboarded": bool(user.get("onboarded", True)),
     }
 
 
@@ -530,6 +546,17 @@ async def set_own_theme(body: ThemeBody, user: dict = Depends(get_current_user))
     return _public_user(await db.get_user_by_id(user["id"]))
 
 
+@router.put("/me/onboarding")
+async def complete_own_onboarding(user: dict = Depends(get_current_user)) -> dict:
+    """Mark the caller's first-login onboarding wizard as seen/dismissed
+    (issue-local-038). Bodyless — always sets True; there is no self-service
+    way to re-arm it (only an admin can, via the per-user admin route
+    below), same asymmetry as must_change_password.
+    """
+    await db.set_onboarded(user["id"], True)
+    return _public_user(await db.get_user_by_id(user["id"]))
+
+
 # ── Admin: user management ────────────────────────────────────────────────────
 
 
@@ -549,7 +576,6 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
     # body.username is always the LOCAL PART (see CreateUserBody) — validated
     # as such regardless of whether an org suffix ends up appended below.
     _validate_username(body.username)
-    _validate_password(body.password)
     if body.role not in db.VALID_ROLES:
         raise HTTPException(
             status_code=400,
@@ -563,18 +589,19 @@ async def create_user(body: CreateUserBody, admin: dict = Depends(require_admin)
     final_username = build_username(body.username, org, body.use_email_username)
     if await db.get_user_by_username(final_username) is not None:
         raise HTTPException(status_code=409, detail="Username already exists")
-    # An admin-supplied password is, from the new user's perspective, the
-    # same trust situation as an admin reset (issue-local-016) — force it to
-    # be changed on first login rather than trusting it stays private.
+    # issue-local-038: server-generated password, same pattern/trust
+    # rationale as admin_reset_password — returned once so the admin can
+    # hand it to the new user out-of-band; never stored or logged.
+    generated_password = secrets.token_urlsafe(18)
     uid = await db.create_user(
         final_username,
-        hash_password(body.password),
+        hash_password(generated_password),
         role=body.role,
         must_change_password=True,
         org_id=body.org_id,
     )
     created = await db.get_user_by_id(uid)
-    return _public_user(created)
+    return {**_public_user(created), "generated_password": generated_password}
 
 
 @router.put("/users/{user_id}/role")
@@ -672,6 +699,23 @@ async def set_user_organization(
         ok = await db.set_user_username_and_org(user_id, final_username, body.org_id)
         if not ok:
             raise HTTPException(status_code=409, detail="Username already exists")
+    return _public_user(await db.get_user_by_id(user_id))
+
+
+@router.put("/users/{user_id}/onboarding")
+async def set_user_onboarding(
+    user_id: int, body: SetUserOnboardedBody, admin: dict = Depends(require_admin)
+) -> dict:
+    """Set a user's onboarded flag (issue-local-038) — admin-only.
+
+    Used to reset an existing user's flag back to False, forcing the
+    first-login wizard to show again on their next login ("Trigger
+    first-login wizard" in User Management). Also accepts True, for
+    symmetry/consistency, though there's normally no reason for an admin to
+    set that themselves (the user's own dismissal already does).
+    """
+    await _require_user(user_id)
+    await db.set_onboarded(user_id, body.onboarded)
     return _public_user(await db.get_user_by_id(user_id))
 
 

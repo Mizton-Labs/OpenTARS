@@ -90,7 +90,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USERS_DB_PATH = _PROJECT_ROOT / "data" / "users.db"
 
-_USERS_SCHEMA_VERSION = 7
+_USERS_SCHEMA_VERSION = 8
 
 # Canonical role set (issue-local-002): expanded for the Threat Hunting module.
 # Old roles 'normal' and 'sender' are migrated to 'threat-viewer' and
@@ -100,7 +100,7 @@ VALID_ROLES = frozenset({"admin", "threat-researcher", "threat-viewer", "feed-se
 # issue-local-016: per-user UI theme override. NULL in the DB means "use the
 # instance-wide default" (backend/config/loader.load_default_theme) — see
 # users.theme column, added in the v4->v5 migration below.
-VALID_THEMES = frozenset({"classic", "energy", "light", "ocean"})
+VALID_THEMES = frozenset({"classic", "energy", "light", "ocean", "redhunter"})
 
 
 CREATE_USERS_TABLE = """
@@ -249,6 +249,18 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
         application layer in delete_organization instead, same
         check-before-delete approach as count_admins/last-admin guards).
         NULL means "Local user" (no organization).
+
+    v7 -> v8 (issue-local-038): first-login onboarding notice.
+      - Add ``onboarded`` column, DEFAULT 1 (True) — this grandfathers every
+        EXISTING row as already-onboarded so shipping this feature doesn't
+        retroactively interrupt users already using the app. New accounts
+        explicitly pass ``onboarded=False`` to create_user() below (Python-
+        level default, not the SQL column default — SSO auto-provisioning
+        and the admin Create User route both go through create_user() and
+        get the "show the wizard" behavior for free without their own
+        changes). An admin can also reset an existing user's flag back to
+        False to force the wizard again on that user's next login (User
+        Management's "Trigger first-login wizard" action).
     """
     cur = await db.execute("PRAGMA table_info(users)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -285,6 +297,9 @@ async def _migrate_users_schema(db: aiosqlite.Connection) -> None:
     if "org_id" not in cols:
         logger.info("Migrating users schema v6->v7: adding org_id column")
         await db.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
+    if "onboarded" not in cols:
+        logger.info("Migrating users schema v7->v8: adding onboarded column")
+        await db.execute("ALTER TABLE users ADD COLUMN onboarded INTEGER NOT NULL DEFAULT 1")
 
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
@@ -307,12 +322,18 @@ def _user_row_to_dict(row: Any) -> dict[str, Any]:
         # issue-local-037: organization FK (NULL = "Local user"); may be
         # absent in old rows read before migration.
         "org_id": row[10] if len(row) > 10 else None,
+        # issue-local-038: first-login onboarding wizard already shown/
+        # dismissed; may be absent in old rows read before migration —
+        # default True there too, matching the column's own migration
+        # DEFAULT (don't retroactively interrupt a pre-existing row that
+        # just hasn't been re-read through the new column yet).
+        "onboarded": bool(row[11]) if len(row) > 11 else True,
     }
 
 
 _USER_COLS = (
     "id, username, password_hash, role, enabled, created_at, must_change_password, "
-    "idp, external_id, theme, org_id"
+    "idp, external_id, theme, org_id, onboarded"
 )
 
 
@@ -325,6 +346,7 @@ async def create_user(
     idp: str | None = None,
     external_id: str | None = None,
     org_id: int | None = None,
+    onboarded: bool = False,
 ) -> int:
     """Insert a new user; return its id. Raises on duplicate username.
 
@@ -332,7 +354,11 @@ async def create_user(
     Local accounts leave both as NULL. *org_id* (issue-local-037) is NULL for
     a "Local user" (no organization) — callers are responsible for resolving
     the final *username* (whether it includes an "@org-domain" suffix) before
-    calling this function; it stores whatever it's given verbatim.
+    calling this function; it stores whatever it's given verbatim. *onboarded*
+    (issue-local-038) defaults to False — a NEW account, however created
+    (admin Create User, SSO auto-provisioning), should show the first-login
+    wizard once, unlike the column's own SQL DEFAULT (True), which exists
+    only to grandfather pre-existing rows during the v7->v8 migration.
     """
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r}")
@@ -340,8 +366,8 @@ async def create_user(
         cur = await db.execute(
             "INSERT INTO users "
             "(username, password_hash, role, enabled, created_at, must_change_password, "
-            " idp, external_id, org_id) "
-            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+            " idp, external_id, org_id, onboarded) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
             (
                 username,
                 password_hash,
@@ -351,6 +377,7 @@ async def create_user(
                 idp,
                 external_id,
                 org_id,
+                1 if onboarded else 0,
             ),
         )
         await db.commit()
@@ -490,6 +517,22 @@ async def set_theme(user_id: int, theme: str | None) -> bool:
         raise ValueError(f"invalid theme: {theme!r}")
     async with aiosqlite.connect(_USERS_DB_PATH) as db:
         cur = await db.execute("UPDATE users SET theme = ? WHERE id = ?", (theme, user_id))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_onboarded(user_id: int, onboarded: bool) -> bool:
+    """Set a user's first-login-wizard-seen flag (issue-local-038).
+
+    Used two ways: a user marks their OWN onboarding done (True) after
+    completing/dismissing the wizard, or an admin resets a user's flag back
+    to False to force the wizard again on that user's next login (User
+    Management's "Trigger first-login wizard" action).
+    """
+    async with aiosqlite.connect(_USERS_DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE users SET onboarded = ? WHERE id = ?", (1 if onboarded else 0, user_id)
+        )
         await db.commit()
         return cur.rowcount > 0
 
