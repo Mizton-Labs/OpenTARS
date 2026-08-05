@@ -357,15 +357,17 @@ async def _upsert_sso_user(
          linked to SSO (e.g. an admin that already exists locally).
       3. Create a new provisioned account (if auto_provision=True).
 
-    On each successful SSO login the user's role is updated to match the
-    current IdP claim mapping (so role changes in the IdP take effect on
-    next login without manual admin action). issue-local-037: org_id is
-    resynced the same way, best-effort matching the SSO username's email
-    domain against configured organizations — but the username itself is
-    NEVER touched here (unlike the admin-driven org-change route), since
-    silently rewriting a user's login identifier as a side effect of an
-    automated background login step would be surprising in a way an
-    explicit admin action isn't.
+    *role* (mapped from IdP claims, falling back to the SSO config's
+    default_role) is applied ONLY when auto-provisioning a brand-new
+    account. An EXISTING user's role is never touched by a login — role is
+    an admin-owned field (set at Create, changed via the role dropdown in
+    User Management), same as username: a background login step silently
+    overwriting an admin's explicit assignment back to whatever the IdP
+    claims (or, commonly, the config's default_role when no claim matches)
+    would be surprising and actively wrong, not a feature. issue-local-037:
+    org_id IS still resynced on every login (best-effort matching the SSO
+    username's email domain against configured organizations), since an org
+    assignment isn't a privilege grant the way a role is.
     """
     # 1. Match by external_id (most stable)
     user: dict[str, Any] | None = None
@@ -381,16 +383,16 @@ async def _upsert_sso_user(
     org_id = matched_org["id"] if matched_org else None
 
     if user is not None:
-        # Update role if IdP mapping changed, stamp idp/external_id if missing,
-        # and clear must_change_password for SSO logins (issue-local-013).
-        # Rationale: an SSO authentication proves identity via the IdP; forcing
-        # an SSO-authenticated user to "change" a local password they cannot
-        # access (possibly an unusable random hash) makes no sense.  Clearing
+        # Stamp idp/external_id if missing, resync org_id, and clear
+        # must_change_password for SSO logins (issue-local-013). Rationale:
+        # an SSO authentication proves identity via the IdP; forcing an
+        # SSO-authenticated user to "change" a local password they cannot
+        # access (possibly an unusable random hash) makes no sense. Clearing
         # the flag here covers both newly-linked accounts and existing local
         # accounts (e.g. a bootstrap admin) that later authenticate via SSO.
+        # role is deliberately NOT in this list — see docstring.
         updates_needed = (
-            user.get("role") != role
-            or user.get("idp") != idp
+            user.get("idp") != idp
             or user.get("external_id") != sub
             or user.get("must_change_password")  # always clear on SSO login
             or user.get("org_id") != org_id
@@ -398,12 +400,11 @@ async def _upsert_sso_user(
         if updates_needed:
             async with __import__("aiosqlite").connect(auth_db._USERS_DB_PATH) as _db:
                 await _db.execute(
-                    "UPDATE users SET role = ?, idp = ?, external_id = ?, "
+                    "UPDATE users SET idp = ?, external_id = ?, "
                     "must_change_password = 0, org_id = ? WHERE id = ?",
-                    (role, idp, sub, org_id, user["id"]),
+                    (idp, sub, org_id, user["id"]),
                 )
                 await _db.commit()
-            user["role"] = role
             user["idp"] = idp
             user["external_id"] = sub
             user["must_change_password"] = False

@@ -68,6 +68,29 @@ describe('Account page', () => {
     expect(screen.getByText('threat-viewer')).toBeInTheDocument()
   })
 
+  it('truncates a long (org-email) username instead of overlapping the role', () => {
+    vi.mocked(useAuth).mockReturnValue({
+      loading: false,
+      authEnabled: true,
+      user: { ...selfUser, username: 'a.very.long.local.part@some-long-organization-domain.example.com' },
+      isAuthenticated: true,
+      isAdmin: false,
+      isResearcher: false,
+      isViewer: true,
+      passwordPolicy: { min_length: 8, required_classes: 3, max_bytes: 72 },
+      ssoEnabled: false,
+      ssoButtonLabel: 'Sign in with SSO',
+      login: vi.fn(),
+      logout: vi.fn(),
+      refresh: vi.fn(),
+    })
+    renderAccount()
+    const usernameEl = screen.getByText('a.very.long.local.part@some-long-organization-domain.example.com')
+    expect(usernameEl).toHaveClass('truncate')
+    // Role must remain its own, fully readable text node — not swallowed by the username cell.
+    expect(screen.getByText('threat-viewer')).toBeInTheDocument()
+  })
+
   it('blocks submission when the new password reuses the current one', () => {
     renderAccount()
     fireEvent.change(screen.getByLabelText('Current password'), { target: { value: 'Adminpass1' } })
