@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import {
   api,
+  AssistantSettings,
   ListenerConfig,
   FieldsConfig,
   IngestResponse,
@@ -507,6 +508,8 @@ function ApplicationTab() {
 
       <ThemeSetting />
 
+      <AssistantSettingsCard />
+
       <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
         <div>
           <p className="text-sm text-gray-300">Base URL Prefix</p>
@@ -553,6 +556,136 @@ function ApplicationTab() {
       </div>
 
       <LogoSetting />
+    </div>
+  )
+}
+
+// ── AI Assistant provider + context budget (issue-local-039) ─────────────────
+// Lets an admin pin the Smart Assistant (Configuration → Application) to a
+// specific configured LLM provider instead of always following the global
+// LLM Providers default, and adjust how many retrieved hits are stuffed into
+// its context window. Both are optional overrides — "Use default" preserves
+// today's behavior exactly.
+
+const ASSISTANT_CONTEXT_HITS_MIN = 4
+const ASSISTANT_CONTEXT_HITS_MAX = 100
+
+export function AssistantSettingsCard() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['assistant-settings'],
+    queryFn: api.getAssistantSettings,
+  })
+  const { data: providers } = useQuery({
+    queryKey: ['llm-providers'],
+    queryFn: api.llm.listProviders,
+  })
+  const { data: llmConfig } = useQuery({
+    queryKey: ['llm-config'],
+    queryFn: api.llm.getConfig,
+  })
+
+  const [provider, setProvider] = useState<string>('')
+  const [hitsInput, setHitsInput] = useState<string>('')
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (data) {
+      setProvider(data.assistant_provider ?? '')
+      setHitsInput(String(data.assistant_context_hits))
+    }
+  }, [data])
+
+  const mutation = useMutation({
+    mutationFn: (value: AssistantSettings) => api.setAssistantSettings(value),
+    onSuccess: () => {
+      setSaved(true)
+      setError(null)
+      qc.invalidateQueries({ queryKey: ['assistant-settings'] })
+    },
+    onError: (err: unknown) => {
+      setSaved(false)
+      setError(err instanceof Error ? err.message : String(err))
+    },
+  })
+
+  const parsedHits = Number(hitsInput)
+  const hitsValid =
+    Number.isInteger(parsedHits) &&
+    parsedHits >= ASSISTANT_CONTEXT_HITS_MIN &&
+    parsedHits <= ASSISTANT_CONTEXT_HITS_MAX
+  const unchanged =
+    provider === (data?.assistant_provider ?? '') && parsedHits === (data?.assistant_context_hits ?? -1)
+  const saveDisabled = !hitsValid || unchanged || mutation.isPending
+
+  return (
+    <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-3">
+      <div>
+        <p className="text-sm text-gray-300">AI Assistant</p>
+        <p className="text-xs text-gray-500">
+          The LLM provider and retrieval budget used by the Smart Assistant / search chat.
+          Takes effect immediately (no restart).
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs text-gray-400">LLM Provider</label>
+        <select
+          className="input w-full"
+          value={provider}
+          onChange={e => { setProvider(e.target.value); setSaved(false); setError(null) }}
+        >
+          <option value="">
+            Use default{llmConfig?.default_provider ? ` (${llmConfig.default_provider})` : ''}
+          </option>
+          {(providers ?? []).map(p => (
+            <option key={p.name} value={p.name}>
+              {p.name} ({p.kind}{p.model ? ` · ${p.model}` : ''})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-xs text-gray-400">
+          Context budget — retrieved hits fed to the model per question
+        </label>
+        <input
+          type="number"
+          min={ASSISTANT_CONTEXT_HITS_MIN}
+          max={ASSISTANT_CONTEXT_HITS_MAX}
+          className="input w-32 tabular-nums"
+          value={hitsInput}
+          onChange={e => { setHitsInput(e.target.value); setSaved(false); setError(null) }}
+        />
+        <p className="text-xs text-gray-500">
+          Range {ASSISTANT_CONTEXT_HITS_MIN}–{ASSISTANT_CONTEXT_HITS_MAX}. Default 24. Higher
+          values give the assistant more to work with per answer at the cost of a larger prompt.
+        </p>
+      </div>
+
+      <div>
+        <button
+          className="btn-primary text-xs"
+          disabled={saveDisabled}
+          onClick={() => mutation.mutate({
+            assistant_provider: provider || null,
+            assistant_context_hits: parsedHits,
+          })}
+        >
+          {mutation.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+
+      {!hitsValid && hitsInput !== '' && (
+        <p className="text-xs text-red-400">
+          Context budget must be an integer between {ASSISTANT_CONTEXT_HITS_MIN} and{' '}
+          {ASSISTANT_CONTEXT_HITS_MAX}.
+        </p>
+      )}
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {saved && !error && <p className="text-xs text-green-400">Saved.</p>}
     </div>
   )
 }

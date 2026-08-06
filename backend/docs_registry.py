@@ -36,8 +36,21 @@ class Document(NamedTuple):
 
 
 #: doc_id → document. The keys are the public identifiers used in URLs.
+#:
+#: issue-local-039: only "api-threat-hunting" is rendered as an About-page
+#: tab today (frontend/src/pages/about/ApiDocsTab.tsx hardcodes that one doc
+#: id rather than iterating this registry) — the other four are registered
+#: for search/Assistant indexing only, so a question about the platform's
+#: architecture or design can be answered from the same source the docs
+#: themselves live in, without also adding new About-page UI.
 DOCUMENTS: dict[str, Document] = {
     "api-threat-hunting": Document("Threat Hunting API reference", "api-threat-hunting.md"),
+    "architecture": Document("Architecture reference", "architecture.md"),
+    "platform-overview": Document("Platform overview", "platform-overview.md"),
+    "agent-architecture": Document("Agent architecture", "agent-architecture.md"),
+    "threat-hunting-framework-design": Document(
+        "Threat Hunting framework design", "threat-hunting-framework-design.md"
+    ),
 }
 
 

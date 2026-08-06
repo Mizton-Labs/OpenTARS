@@ -109,8 +109,28 @@ def isolated_sources(monkeypatch):
             }
         ]
 
-    async def fake_empty():
+    async def fake_empty(*_a, **_k):
         return []
+
+    async def fake_dashboard_stats(*_a, **_k):
+        return {
+            "packages_total": 3,
+            "packages_by_status": {"active": 2, "completed": 1},
+            "runs_total": 5,
+            "evidence_total": 7,
+            "hypotheses_total": 4,
+            "hunting_leads_total": 2,
+            "queries_total": 6,
+            "iocs_extracted_total": 10,
+            "iocs_kept_total": 8,
+            "siem_searches_total": 3,
+            "siem_searches_completed": 2,
+            "threat_actors_total": 1,
+            "campaigns_total": 0,
+            "malware_families_total": 0,
+            "ttps_total": 0,
+            "sources_processed": 2,
+        }
 
     import backend.db.manager as manager
     import backend.db.watchers as watchers_db
@@ -127,6 +147,16 @@ def isolated_sources(monkeypatch):
     monkeypatch.setattr(th_db, "aggregate_campaigns", fake_empty)
     monkeypatch.setattr(th_db, "aggregate_malware_families", fake_empty)
     monkeypatch.setattr(th_db, "aggregate_ttps", fake_empty)
+    # issue-local-039: new hunt-scoped retrieval sources. Defaulted empty here
+    # so the suite stays hermetic (no dependency on whatever happens to be in
+    # a developer's local threat_hunting.db) — individual tests below
+    # monkeypatch these to non-empty fakes to exercise each source's shape.
+    monkeypatch.setattr(th_db, "search_hunt_reports", fake_empty)
+    monkeypatch.setattr(th_db, "search_threat_intel_analysis", fake_empty)
+    monkeypatch.setattr(th_db, "search_evidence_items", fake_empty)
+    monkeypatch.setattr(th_db, "search_run_comments", fake_empty)
+    monkeypatch.setattr(th_db, "list_explorer_rows", fake_empty)
+    monkeypatch.setattr(th_db, "get_hunt_dashboard_stats", fake_dashboard_stats)
 
 
 async def _aio(value):
@@ -257,6 +287,368 @@ def test_archived_hunt_is_found_and_tagged(monkeypatch):
     assert hits[0]["archived"] is True
 
 
+# ── New retrieval sources (issue-local-039) ─────────────────────────────────
+
+
+def test_hunt_report_source_surfaces_executive_summary(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_reports(query, *, limit=10):
+        return [
+            {
+                "id": "report-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "hunt_name": "Lazarus sweep",
+                "executive_summary": "Confirmed Lazarus Group beaconing to 203.0.113.10",
+                "full_report": {"report_kind": None},
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "search_hunt_reports", fake_reports)
+
+    hits = _sections(asyncio.run(global_search("Lazarus Group", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "report-1")
+    assert "Lazarus Group" in hit["snippet"]
+    assert hit["route"] == "/threat-hunting/pkg-1"
+
+
+def test_hunt_report_source_labels_comparison_reports(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_reports(query, *, limit=10):
+        return [
+            {
+                "id": "report-2",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "hunt_name": "Lazarus sweep",
+                "executive_summary": None,
+                "full_report": {"report_kind": "comparison", "note": "Lazarus comparison"},
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "search_hunt_reports", fake_reports)
+
+    hits = _sections(asyncio.run(global_search("Lazarus", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "report-2")
+    assert "comparison report" in hit["title"]
+
+
+def test_threat_intel_analysis_source_surfaces_matched_field(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_analysis(query, *, limit=10):
+        return [
+            {
+                "id": "ti-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "hunt_name": "Lazarus sweep",
+                "summary": None,
+                "attribution": "High confidence: Lazarus Group",
+                "full_analysis": None,
+                "threat_actors": None,
+                "malware_families": None,
+                "campaigns": None,
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "search_threat_intel_analysis", fake_analysis)
+
+    hits = _sections(asyncio.run(global_search("Lazarus Group", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "ti-1")
+    assert "Lazarus Group" in hit["snippet"]
+    assert "Threat Intelligence analysis" in hit["title"]
+
+
+def test_evidence_source_surfaces_extracted_text(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_evidence(query, *, limit=10):
+        return [
+            {
+                "id": "ev-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "hunt_name": "Lazarus sweep",
+                "label": "phishing_email.eml",
+                "source_ref": None,
+                "item_type": "file",
+                "extracted_text": "Sender impersonates Lazarus Group finance dept",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "search_evidence_items", fake_evidence)
+
+    hits = _sections(asyncio.run(global_search("Lazarus Group", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "ev-1")
+    assert "Lazarus Group" in hit["snippet"]
+    assert "phishing_email.eml" in hit["title"]
+
+
+def test_run_comment_source_surfaces_comment_body(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_comments(query, *, limit=10):
+        return [
+            {
+                "id": "cmt-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "run_id_display": "TH01-R1",
+                "hunt_name": "Lazarus sweep",
+                "created_by": "analyst1",
+                "body": "Confirmed this is Lazarus Group tooling, escalating",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "search_run_comments", fake_comments)
+
+    hits = _sections(asyncio.run(global_search("Lazarus Group", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "cmt-1")
+    assert "Lazarus Group" in hit["snippet"]
+    assert "analyst1" in hit["title"]
+
+
+def test_siem_search_source_surfaces_query_text(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_explorer(category, *, search=None, **_kw):
+        if category != "siem_searches":
+            return []
+        return [
+            {
+                "id": "siem-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "run_id_display": "TH01-R1",
+                "siem_connector": "Splunk Prod",
+                "query_text": "index=proxy Lazarus_Group_c2",
+                "status": "completed",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_explorer_rows", fake_explorer)
+
+    hits = _sections(asyncio.run(global_search("Lazarus_Group_c2", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "siem-1")
+    assert "Lazarus_Group_c2" in hit["snippet"]
+    assert "Splunk Prod" in hit["title"]
+
+
+def test_hunt_ioc_source_surfaces_action_and_noise_score(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_explorer(category, *, search=None, **_kw):
+        if category != "iocs":
+            return []
+        return [
+            {
+                "id": "ioc-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "ioc": "203.0.113.10",
+                "ioc_type": "ip",
+                "action": "block",
+                "noise_score": 0.1,
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_explorer_rows", fake_explorer)
+
+    hits = _sections(asyncio.run(global_search("203.0.113.10", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "ioc-1")
+    assert "block" in hit["snippet"]
+    assert "203.0.113.10 (ip)" in hit["title"]
+
+
+def test_run_metadata_source_surfaces_model_and_status(monkeypatch):
+    import backend.threat_hunting.db as th_db
+
+    async def fake_explorer(category, *, search=None, **_kw):
+        if category != "runs":
+            return []
+        return [
+            {
+                "id": "run-1",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "run_id_display": "TH01-R1",
+                "hunt_name": "Lazarus sweep",
+                "llm_model": "gpt-4o",
+                "generation_status": "completed",
+                "research_effort": "deep",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_explorer_rows", fake_explorer)
+
+    hits = _sections(asyncio.run(global_search("gpt-4o", role="admin")))["Threat Hunting"]
+    hit = next(h for h in hits if h["ref"] == "run-1")
+    assert "gpt-4o" in hit["snippet"]
+
+
+@pytest.mark.parametrize(
+    "fn_name,question",
+    [
+        ("search_hunt_reports", "what reports do we have"),
+        ("search_evidence_items", "show me the evidence"),
+        ("search_run_comments", "any comments on this"),
+    ],
+)
+def test_naming_a_new_category_lists_recent_entries(fn_name, question, monkeypatch):
+    """issue-local-039: a report/evidence item/comment rarely contains the
+    literal word naming its own category, so "what reports do we have"
+    matched nothing under plain substring search — exactly the gap the
+    existing threat-actor/campaign/malware/technique category words already
+    solve for Threat Intel Tracking. Naming the category should list recent
+    entries instead of requiring the query to appear in an entry's own text."""
+    import backend.threat_hunting.db as th_db
+
+    captured: dict = {}
+
+    async def fake_source(lookup, *, limit=10):
+        captured["lookup"] = lookup
+        return []
+
+    monkeypatch.setattr(th_db, fn_name, fake_source)
+
+    asyncio.run(global_search(question, role="admin"))
+    assert captured["lookup"] == "", "category word should bypass the literal substring lookup"
+
+
+@pytest.mark.parametrize(
+    "fn_name,question",
+    [
+        ("search_hunt_reports", "Lazarus infrastructure"),
+        ("search_evidence_items", "Lazarus infrastructure"),
+        ("search_run_comments", "Lazarus infrastructure"),
+    ],
+)
+def test_not_naming_the_category_keeps_the_literal_lookup(fn_name, question, monkeypatch):
+    """A question that doesn't name the category (no "report"/"evidence"/
+    "comment") must still search literally — the bypass is for the category
+    word specifically, not the general case."""
+    import backend.threat_hunting.db as th_db
+
+    captured: dict = {}
+
+    async def fake_source(lookup, *, limit=10):
+        captured["lookup"] = lookup
+        return []
+
+    monkeypatch.setattr(th_db, fn_name, fake_source)
+
+    asyncio.run(global_search(question, role="admin"))
+    assert captured["lookup"] == question
+
+
+@pytest.mark.parametrize(
+    "fn_name",
+    [
+        "search_hunt_reports",
+        "search_threat_intel_analysis",
+        "search_evidence_items",
+        "search_run_comments",
+    ],
+)
+def test_new_hunt_sources_are_gated_below_threat_viewer(fn_name, monkeypatch):
+    """The same role boundary _search_hunts already enforces must apply to
+    every new hunt-scoped source — none of them may leak content to a role
+    that couldn't already reach it through the normal API."""
+    import backend.threat_hunting.db as th_db
+
+    called = False
+
+    async def fake_source(*_a, **_k):
+        nonlocal called
+        called = True
+        return [
+            {
+                "id": "x",
+                "hunt_package_id": "pkg-1",
+                "hunt_id_display": "TH01",
+                "hunt_name": "n",
+                "executive_summary": "Lazarus",
+                "full_report": {},
+                "summary": "Lazarus",
+                "attribution": None,
+                "full_analysis": None,
+                "threat_actors": None,
+                "malware_families": None,
+                "campaigns": None,
+                "label": "Lazarus",
+                "source_ref": None,
+                "item_type": "file",
+                "extracted_text": "Lazarus",
+                "run_id_display": "TH01-R1",
+                "created_by": "a",
+                "body": "Lazarus",
+            }
+        ]
+
+    monkeypatch.setattr(th_db, fn_name, fake_source)
+
+    result = asyncio.run(global_search("Lazarus", role="feed-sender"))
+    assert called is False, f"{fn_name} was queried for a role below threat-viewer"
+    assert _sections(result).get("Threat Hunting", []) == []
+
+
+def test_hunt_hit_shows_the_deep_field_that_actually_matched(monkeypatch):
+    """issue-local-039: previously a package matching only via a deep-search
+    field (threat context, hypotheses, TTP analysis, hunting leads, query
+    drafts, an extracted IOC) still showed only the package's own
+    description or a bare status line — the content that actually caused the
+    match never reached the caller. list_hunt_packages(search=...) now
+    attaches search_snippet ({"field", "text"}); _search_hunts must surface
+    it whenever the description itself doesn't already explain the hit."""
+    import backend.threat_hunting.db as th_db
+
+    async def fake_packages(*, search=None, **_kw):
+        return [
+            {
+                "id": "pkg-1",
+                "name": "Package A",
+                "description": "unrelated description",
+                "status": "completed",
+                "hunt_id_display": "TH01",
+                "search_snippet": {"field": "TTP analysis", "text": "Observed use of FIN7 tooling"},
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_hunt_packages", fake_packages)
+
+    hits = _sections(asyncio.run(global_search("FIN7", role="admin")))["Threat Hunting"]
+    assert len(hits) == 1
+    assert "FIN7" in hits[0]["snippet"]
+    assert "TTP analysis" in hits[0]["snippet"]
+
+
+def test_hunt_hit_prefers_description_when_it_already_explains_the_match(monkeypatch):
+    """A search_snippet must not override a description that already
+    contains the query — the deep-field snippet exists to fill a gap, not to
+    replace a perfectly good explanation."""
+    import backend.threat_hunting.db as th_db
+
+    async def fake_packages(*, search=None, **_kw):
+        return [
+            {
+                "id": "pkg-1",
+                "name": "Package A",
+                "description": "Investigating FIN7 phishing lures",
+                "status": "completed",
+                "hunt_id_display": "TH01",
+                "search_snippet": {"field": "hunting leads", "text": "unrelated lead text"},
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "list_hunt_packages", fake_packages)
+
+    hits = _sections(asyncio.run(global_search("FIN7", role="admin")))["Threat Hunting"]
+    assert hits[0]["snippet"] == "Investigating FIN7 phishing lures"
+
+
 # ── No secrets in the index ───────────────────────────────────────────────────
 
 
@@ -328,6 +720,34 @@ def test_gather_context_is_role_scoped_like_the_search_itself():
 def test_gather_context_is_bounded():
     hits = asyncio.run(smart.gather_context("a e i o u api hunt intel", role="admin"))
     assert len(hits) <= smart.MAX_CONTEXT_HITS
+
+
+def test_gather_context_always_includes_dashboard_stats(monkeypatch):
+    """issue-local-039: "how many hunts are active?" reduces to terms too
+    generic for substring search to answer with a count — it would retrieve
+    individual hunt entries, never a total. The Dashboard stats block must
+    appear regardless of what terms the question reduces to, not just when
+    one of them happens to match something."""
+    hits = asyncio.run(smart.gather_context("what color is the sky", role="admin"))
+    stats_hits = [h for h in hits if h["title"] == "Instance-wide Dashboard statistics"]
+    assert len(stats_hits) == 1
+    assert "Hunt packages" in stats_hits[0]["snippet"]
+
+
+def test_gather_context_omits_dashboard_stats_below_threat_viewer():
+    """A role that cannot see the Dashboard must not learn its counts through
+    the Assistant either — the same boundary every other source enforces."""
+    hits = asyncio.run(smart.gather_context("how many hunts are there", role="feed-sender"))
+    assert not any(h["title"] == "Instance-wide Dashboard statistics" for h in hits)
+
+
+def test_gather_context_dashboard_stats_counts_toward_the_budget():
+    """The stats block occupies one of the max_context_hits slots rather than
+    being handed out for free on top of it, so a tightly configured budget
+    still holds."""
+    hits = asyncio.run(smart.gather_context("hunt", role="admin", max_context_hits=1))
+    assert len(hits) == 1
+    assert hits[0]["title"] == "Instance-wide Dashboard statistics"
 
 
 # ── SmartSearch: prompt guardrails ────────────────────────────────────────────
@@ -408,7 +828,7 @@ def test_status_reports_unavailable_with_an_actionable_reason(monkeypatch):
 
 def test_smart_answer_refuses_when_unavailable(monkeypatch):
     monkeypatch.setattr(
-        smart, "smart_search_status", lambda: {"available": False, "reason": "nope"}
+        smart, "smart_search_status", lambda *_a, **_k: {"available": False, "reason": "nope"}
     )
     with pytest.raises(smart.SmartSearchUnavailable):
         asyncio.run(smart.smart_answer("hello", role="admin"))
@@ -421,7 +841,9 @@ def test_smart_answer_rejects_an_empty_question():
 
 def test_smart_answer_sanitises_the_model_response(monkeypatch):
     """Model output is untrusted too — it is shaped by the documents it read."""
-    monkeypatch.setattr(smart, "smart_search_status", lambda: {"available": True, "reason": None})
+    monkeypatch.setattr(
+        smart, "smart_search_status", lambda *_a, **_k: {"available": True, "reason": None}
+    )
 
     class FakeClient:
         name = "fake"
@@ -560,7 +982,9 @@ def test_sanitize_multiline_caps_blank_line_padding():
 
 def test_smart_answer_returns_markdown_unflattened(monkeypatch):
     """End to end: a Markdown answer must reach the caller with its lines."""
-    monkeypatch.setattr(smart, "smart_search_status", lambda: {"available": True, "reason": None})
+    monkeypatch.setattr(
+        smart, "smart_search_status", lambda *_a, **_k: {"available": True, "reason": None}
+    )
 
     class FakeClient:
         name = "fake"
@@ -770,6 +1194,51 @@ def test_correlated_iocs_cannot_starve_the_entity_aggregates(monkeypatch):
     assert any("(url)" in h["title"] for h in tracking), "IOCs should still appear"
 
 
+def test_entity_hit_shows_the_description_excerpt_when_that_is_the_match(monkeypatch):
+    """issue-local-039: an entity (threat actor/campaign/malware family/
+    technique) whose name doesn't contain the query, but whose description
+    does, used to show only the hunt-linkage line — the description text
+    that actually caused the match never reached the caller."""
+    import backend.threat_hunting.db as th_db
+
+    async def one_actor():
+        return [
+            {
+                "name": "Sapphire Wolf",
+                "description": "Known for abusing FIN7-style phishing kits",
+                "sources": [{"hunt_id_display": "TH01"}],
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "aggregate_threat_actors", one_actor)
+
+    tracking = _sections(asyncio.run(global_search("FIN7-style", role="admin")))["Threat Intel Tracking"]
+    actor = next(h for h in tracking if "Sapphire Wolf" in h["title"])
+    assert "FIN7-style" in actor["snippet"]
+    assert "TH01" in actor["snippet"], "hunt linkage must still be present alongside the excerpt"
+
+
+def test_entity_hit_omits_description_excerpt_when_name_already_matched(monkeypatch):
+    """When the name itself matched, the snippet stays the plain hunt-linkage
+    line — no need to also quote the description."""
+    import backend.threat_hunting.db as th_db
+
+    async def one_actor():
+        return [
+            {
+                "name": "Lazarus Group",
+                "description": "State-sponsored group",
+                "sources": [{"hunt_id_display": "TH01"}],
+            }
+        ]
+
+    monkeypatch.setattr(th_db, "aggregate_threat_actors", one_actor)
+
+    tracking = _sections(asyncio.run(global_search("Lazarus", role="admin")))["Threat Intel Tracking"]
+    actor = next(h for h in tracking if "Lazarus Group" in h["title"])
+    assert actor["snippet"] == "TH01"
+
+
 def test_interleave_gives_every_sequence_a_share():
     from backend.search.service import interleave
 
@@ -903,3 +1372,65 @@ def test_bare_family_word_lists_malware_families(monkeypatch):
         th_db, "aggregate_malware_families", lambda: _aio([{"name": "Chaos ransomware"}])
     )
     assert "malware family" in _tracking_titles("families")
+
+
+# ── Docs registry + read cache (issue-local-039) ────────────────────────────
+
+
+def test_docs_registry_registers_the_new_design_docs():
+    """architecture.md, platform-overview.md, agent-architecture.md and
+    threat-hunting-framework-design.md were previously unregistered and so
+    completely unreachable by search or the Assistant."""
+    from backend import docs_registry
+
+    for doc_id in (
+        "architecture",
+        "platform-overview",
+        "agent-architecture",
+        "threat-hunting-framework-design",
+    ):
+        assert docs_registry.resolve(doc_id) is not None, f"{doc_id} should resolve to a real file"
+
+
+def test_read_doc_cached_reads_the_file_only_once_for_an_unchanged_mtime(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from backend.search import service
+
+    path = tmp_path / "doc.md"
+    path.write_text("hello world", encoding="utf-8")
+    service._DOC_CACHE.clear()
+
+    calls = {"n": 0}
+    real_read_text = Path.read_text
+
+    def counting_read_text(self, *a, **k):
+        calls["n"] += 1
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    first = service._read_doc_cached(path)
+    second = service._read_doc_cached(path)
+    assert first == second == "hello world"
+    assert calls["n"] == 1, "second read should have come from the cache"
+
+
+def test_read_doc_cached_picks_up_a_changed_file(tmp_path):
+    import os
+
+    from backend.search import service
+
+    path = tmp_path / "doc.md"
+    path.write_text("version one", encoding="utf-8")
+    service._DOC_CACHE.clear()
+
+    assert service._read_doc_cached(path) == "version one"
+
+    path.write_text("version two", encoding="utf-8")
+    # Force a distinct mtime — some filesystems have coarse (1s) resolution,
+    # and a same-mtime rewrite must still be a cache miss in practice.
+    st = path.stat()
+    os.utime(path, (st.st_atime, st.st_mtime + 1))
+
+    assert service._read_doc_cached(path) == "version two"

@@ -857,12 +857,13 @@ async def list_hunt_packages(
             "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
             "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
             "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
-            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
+            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\' "
+            "OR r.hunting_leads LIKE ? ESCAPE '\\' OR r.query_drafts LIKE ? ESCAPE '\\')) "
             "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
             "AND x.ioc LIKE ? ESCAPE '\\')"
             ")"
         )
-        params.extend([like_term] * 7)
+        params.extend([like_term] * 9)
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -898,6 +899,8 @@ async def list_hunt_packages(
         pkg_ids = tuple(row["id"] for row in rows)
         all_run_rows: list[Any] = []
         report_run_ids: set[str] = set()
+        deep_fields_by_pkg: dict[str, list[dict[str, Any]]] = {}
+        matched_ioc_by_pkg: dict[str, dict[str, Any]] = {}
         if pkg_ids:
             placeholders = ",".join("?" for _ in pkg_ids)
             cur3 = await db.execute(
@@ -922,6 +925,36 @@ async def list_hunt_packages(
                 )
                 report_run_ids = {r[0] for r in await cur4.fetchall()}
                 await cur4.close()
+
+            # issue-local-039: a deep search matches these six run fields plus
+            # extracted IOCs (see _matching_pkg_where above), but nothing
+            # returned by this function said *which* field or IOC actually
+            # matched — callers (search) fell back to the package's own
+            # name/description or a bare status line even when the real hit
+            # was buried in, say, hunting_leads. Fetched only when `search` is
+            # set, and only for the already-filtered pkg_ids, so the ordinary
+            # (non-search) package list pays nothing extra for this.
+            if search:
+                cur5 = await db.execute(
+                    "SELECT hunt_package_id, threat_context, hypotheses, ttp_analysis, "
+                    "deep_retrohunt, hunting_leads, query_drafts "
+                    f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
+                    "ORDER BY hunt_package_id, created_at DESC",
+                    pkg_ids,
+                )
+                for r in await cur5.fetchall():
+                    deep_fields_by_pkg.setdefault(r["hunt_package_id"], []).append(dict(r))
+                await cur5.close()
+
+                like_term = f"%{_escape_like(search)}%"
+                cur6 = await db.execute(
+                    "SELECT hunt_package_id, ioc, ioc_type FROM extracted_iocs "
+                    f"WHERE hunt_package_id IN ({placeholders}) AND ioc LIKE ? ESCAPE '\\'",
+                    (*pkg_ids, like_term),
+                )
+                for r in await cur6.fetchall():
+                    matched_ioc_by_pkg.setdefault(r["hunt_package_id"], dict(r))
+                await cur6.close()
 
     # Build lookup: hunt_package_id → {generation_status, step_logs_json, run_created_at}
     run_by_pkg: dict[str, dict[str, Any]] = {}
@@ -984,8 +1017,52 @@ async def list_hunt_packages(
         pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
         pkg["run_count"] = len(pkg["runs"])
         pkg["hunt_id_display"] = hunt_id_by_pkg.get(pkg["id"], "")
+        if search:
+            pkg["search_snippet"] = _deep_match_snippet(
+                search, deep_fields_by_pkg.get(pkg["id"], []), matched_ioc_by_pkg.get(pkg["id"])
+            )
         result.append(pkg)
     return result
+
+
+_DEEP_FIELD_LABELS: dict[str, str] = {
+    "threat_context": "threat context",
+    "hypotheses": "hypotheses",
+    "ttp_analysis": "TTP analysis",
+    "deep_retrohunt": "deep retrohunt",
+    "hunting_leads": "hunting leads",
+    "query_drafts": "query drafts",
+}
+
+
+def _deep_match_snippet(
+    search: str,
+    deep_rows: list[dict[str, Any]],
+    ioc_match: dict[str, Any] | None,
+) -> dict[str, str] | None:
+    """Find which run field (or extracted IOC) actually satisfied a deep
+    search match (issue-local-039), so callers such as
+    ``backend.search.service._search_hunts`` can show what really matched
+    instead of always falling back to the package's own name/description or
+    a generic status line.
+
+    Runs are checked newest first; fields, within a run, in the same order as
+    the OR chain in ``_matching_pkg_where``. This is a plain Python substring
+    scan over already-fetched rows, not a re-derivation of SQLite's LIKE
+    matching, so it can in rare cases (NUL bytes, collation edge cases) pick a
+    different field than the SQL WHERE actually matched on — acceptable for a
+    display snippet, where agreeing with LIKE the overwhelming majority of the
+    time is what matters.
+    """
+    needle = search.lower()
+    for row in deep_rows:
+        for field, label in _DEEP_FIELD_LABELS.items():
+            value = row.get(field)
+            if value and needle in str(value).lower():
+                return {"field": label, "text": str(value)}
+    if ioc_match:
+        return {"field": "extracted IOC", "text": str(ioc_match.get("ioc") or "")}
+    return None
 
 
 def _matching_pkg_where(
@@ -1022,12 +1099,13 @@ def _matching_pkg_where(
             "hp.name LIKE ? ESCAPE '\\' OR hp.description LIKE ? ESCAPE '\\' "
             "OR EXISTS (SELECT 1 FROM hunting_packages r WHERE r.hunt_package_id = hp.id "
             "AND (r.threat_context LIKE ? ESCAPE '\\' OR r.hypotheses LIKE ? ESCAPE '\\' "
-            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\')) "
+            "OR r.ttp_analysis LIKE ? ESCAPE '\\' OR r.deep_retrohunt LIKE ? ESCAPE '\\' "
+            "OR r.hunting_leads LIKE ? ESCAPE '\\' OR r.query_drafts LIKE ? ESCAPE '\\')) "
             "OR EXISTS (SELECT 1 FROM extracted_iocs x WHERE x.hunt_package_id = hp.id "
             "AND x.ioc LIKE ? ESCAPE '\\')"
             ")"
         )
-        params.extend([like_term] * 7)
+        params.extend([like_term] * 9)
     return " AND ".join(where_clauses), params
 
 
@@ -1788,6 +1866,37 @@ async def list_evidence_items(hunt_package_id: str) -> list[dict[str, Any]]:
                 d[field] = [] if field == "parse_warnings" else {}
         result.append(d)
     return result
+
+
+async def search_evidence_items(query: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Full-text search across every hunt's evidence — label, source
+    reference, and extracted text (issue-local-039). ``extracted_text`` is
+    the fetched/parsed content of uploaded files, URLs and pasted text: the
+    richest source of hunt-specific detail in the database, and until now
+    completely unreachable by search.
+    """
+    like_term = f"%{_escape_like(query)}%"
+    prefix = load_hunt_id_prefix()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT e.id, e.hunt_package_id, e.item_type, e.label, e.source_ref, "
+            "       e.extracted_text, e.created_at, hp.name AS hunt_name, hp.hunt_seq, "
+            "       hp.created_at AS hunt_created_at "
+            "FROM evidence_items e JOIN hunt_packages hp ON hp.id = e.hunt_package_id "
+            "WHERE e.label LIKE ? ESCAPE '\\' OR e.source_ref LIKE ? ESCAPE '\\' "
+            "OR e.extracted_text LIKE ? ESCAPE '\\' "
+            "ORDER BY e.created_at DESC LIMIT ?",  # noqa: S608
+            (like_term, like_term, like_term, limit),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    out = []
+    for row in rows:
+        d = dict(row)
+        d["hunt_id_display"] = format_hunt_id(prefix, d["hunt_seq"], d["hunt_created_at"])
+        out.append(d)
+    return out
 
 
 async def delete_evidence_item(item_id: str) -> bool:
@@ -3122,6 +3231,39 @@ async def get_latest_threat_intel_analysis(hunt_package_id: str) -> dict[str, An
     return _decode_threat_intel_row(dict(row))
 
 
+async def search_threat_intel_analysis(query: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Full-text search across every hunt's Threat Intelligence analysis —
+    summary, full analysis, attribution, and the named threat actors/malware
+    families/campaigns (issue-local-039). Previously unreachable by search
+    entirely, even though it is one of the platform's core generated
+    artifacts.
+    """
+    like_term = f"%{_escape_like(query)}%"
+    prefix = load_hunt_id_prefix()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT a.id, a.hunt_package_id, a.run_id, a.summary, a.full_analysis, "
+            "       a.attribution, a.threat_actors, a.malware_families, a.campaigns, "
+            "       a.created_at, hp.name AS hunt_name, hp.hunt_seq, "
+            "       hp.created_at AS hunt_created_at "
+            "FROM threat_intel_analysis a JOIN hunt_packages hp ON hp.id = a.hunt_package_id "
+            "WHERE a.summary LIKE ? ESCAPE '\\' OR a.full_analysis LIKE ? ESCAPE '\\' "
+            "OR a.attribution LIKE ? ESCAPE '\\' OR a.threat_actors LIKE ? ESCAPE '\\' "
+            "OR a.malware_families LIKE ? ESCAPE '\\' OR a.campaigns LIKE ? ESCAPE '\\' "
+            "ORDER BY a.created_at DESC LIMIT ?",  # noqa: S608
+            (like_term, like_term, like_term, like_term, like_term, like_term, limit),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    out = []
+    for row in rows:
+        d = dict(row)
+        d["hunt_id_display"] = format_hunt_id(prefix, d["hunt_seq"], d["hunt_created_at"])
+        out.append(d)
+    return out
+
+
 async def find_cross_package_ioc_matches(
     hunt_package_id: str, iocs: list[str]
 ) -> list[dict[str, Any]]:
@@ -3526,6 +3668,34 @@ async def list_run_comments(run_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+async def search_run_comments(query: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Full-text search across every run's analyst comments (issue-local-039)."""
+    like_term = f"%{_escape_like(query)}%"
+    prefix = load_hunt_id_prefix()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT c.id, c.hunt_package_id, c.run_id, c.body, c.created_by, c.created_at, "
+            "       hp.name AS hunt_name, hp.hunt_seq, hp.created_at AS hunt_created_at, "
+            "       hpk.run_seq "
+            "FROM run_comments c "
+            "JOIN hunt_packages hp ON hp.id = c.hunt_package_id "
+            "LEFT JOIN hunting_packages hpk ON hpk.id = c.run_id "
+            "WHERE c.body LIKE ? ESCAPE '\\' "
+            "ORDER BY c.created_at DESC LIMIT ?",  # noqa: S608
+            (like_term, limit),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    out = []
+    for row in rows:
+        d = dict(row)
+        d["hunt_id_display"] = format_hunt_id(prefix, d["hunt_seq"], d["hunt_created_at"])
+        d["run_id_display"] = format_run_id(d["hunt_id_display"], d["run_seq"]) if d["run_seq"] else ""
+        out.append(d)
+    return out
+
+
 async def delete_run_comment(comment_id: str) -> bool:
     """Delete a comment by id. Returns True if a row was actually deleted."""
     async with aiosqlite.connect(_TH_DB_PATH) as db:
@@ -3734,3 +3904,32 @@ async def list_hunt_reports(hunt_package_id: str) -> list[dict[str, Any]]:
         rows = await cur.fetchall()
         await cur.close()
     return [_decode_report_row(dict(row)) for row in rows]
+
+
+async def search_hunt_reports(query: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Full-text search across every hunt's reports — executive summary and
+    the full generated report body, which carries findings, recommendations,
+    evidence summary and execution results (issue-local-039). Comparison and
+    consolidated reports are included; they are real reports too.
+    """
+    like_term = f"%{_escape_like(query)}%"
+    prefix = load_hunt_id_prefix()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT r.id, r.hunt_package_id, r.run_id, r.executive_summary, r.full_report, "
+            "       r.created_at, hp.name AS hunt_name, hp.hunt_seq, "
+            "       hp.created_at AS hunt_created_at "
+            "FROM hunt_reports r JOIN hunt_packages hp ON hp.id = r.hunt_package_id "
+            "WHERE r.executive_summary LIKE ? ESCAPE '\\' OR r.full_report LIKE ? ESCAPE '\\' "
+            "ORDER BY r.created_at DESC LIMIT ?",  # noqa: S608
+            (like_term, like_term, limit),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    out = []
+    for row in rows:
+        d = _decode_report_row(dict(row))
+        d["hunt_id_display"] = format_hunt_id(prefix, d["hunt_seq"], d["hunt_created_at"])
+        out.append(d)
+    return out

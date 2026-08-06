@@ -510,3 +510,95 @@ def test_api_doc_headings_suit_the_generated_contents_list(client):
     # would jump to the first of them.
     assert len(set(headings)) == len(headings), f"duplicate topic headings: {headings}"
     assert all(h.strip() for h in headings)
+
+
+# ── AI Assistant provider + context budget (issue-local-039) ────────────────
+
+
+@pytest.fixture
+def llm_config(tmp_path, monkeypatch):
+    """Redirect the LLM providers config to a tmp file with two providers."""
+    from backend.llm import config as llm_config_module
+
+    fake = tmp_path / "llm-providers.yaml"
+    fake.write_text(
+        yaml.safe_dump(
+            {
+                "enabled": True,
+                "default_provider": "primary",
+                "providers": [
+                    {"name": "primary", "kind": "openai", "model": "gpt-4o"},
+                    {"name": "secondary", "kind": "anthropic", "model": "claude"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config_module, "_LLM_CONFIG_PATH", fake)
+    return fake
+
+
+def test_get_assistant_settings_defaults(client):
+    resp = client.get("/api/app/assistant-settings")
+    assert resp.status_code == 200
+    assert resp.json() == {"assistant_provider": None, "assistant_context_hits": 24}
+
+
+def test_put_assistant_settings_round_trip(client, llm_config):
+    resp = client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": "secondary", "assistant_context_hits": 10},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"assistant_provider": "secondary", "assistant_context_hits": 10}
+    assert client.get("/api/app/assistant-settings").json() == {
+        "assistant_provider": "secondary",
+        "assistant_context_hits": 10,
+    }
+
+
+def test_put_assistant_settings_null_provider_clears_override(client, llm_config):
+    client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": "secondary", "assistant_context_hits": 24},
+    )
+    resp = client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": None, "assistant_context_hits": 24},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["assistant_provider"] is None
+
+
+def test_put_assistant_settings_rejects_unknown_provider(client, llm_config):
+    resp = client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": "does-not-exist", "assistant_context_hits": 24},
+    )
+    assert resp.status_code == 400
+
+
+def test_put_assistant_settings_rejects_out_of_range_context_hits(client):
+    resp = client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": None, "assistant_context_hits": 1000},
+    )
+    assert resp.status_code == 400
+
+
+def test_put_assistant_settings_rejects_non_integer_context_hits(client):
+    resp = client.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": None, "assistant_context_hits": "24"},
+    )
+    assert resp.status_code == 400
+
+
+def test_put_assistant_settings_requires_admin_when_auth_enabled(client, monkeypatch):
+    monkeypatch.setenv("OPENTARS_ENABLE_AUTH", "1")
+    anon = TestClient(app)
+    resp = anon.put(
+        "/api/app/assistant-settings",
+        json={"assistant_provider": None, "assistant_context_hits": 24},
+    )
+    assert resp.status_code == 401

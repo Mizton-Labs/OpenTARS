@@ -9,6 +9,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — AI Assistant coverage expansion, admin-configurable provider + context budget (issue-local-039)
+
+- **The AI Assistant / search now index almost everything the platform produces**, not just hunt
+  packages and raw/normalized threat intel. Seven new retrieval sources: generated hunt reports
+  (executive summary + full report body, including comparison and consolidated reports), per-hunt
+  Threat Intelligence analysis, hunt evidence (including the full extracted text of uploaded files,
+  fetched URLs and pasted content — the richest source of hunt-specific detail in the database),
+  executed SIEM searches, per-run extracted IOC triage (action, noise score), generation-run
+  metadata (model, status, effort), and analyst comments left on a run. A question about historical
+  results, a report's findings, an evidence file's contents, or a comment left on a run can now be
+  answered from a source that previously had none.
+- **Fixed content loss on existing hunt/tracking hits**: a hunt package matching only via its
+  deep-search fields (threat context, hypotheses, TTP analysis, hunting leads, query drafts, an
+  extracted IOC) previously showed only its own description or a bare status line — the content that
+  actually caused the match never reached the caller or the model. The deep-search WHERE clause was
+  also silently missing `hunting_leads` and `query_drafts` entirely, making packages that only
+  matched there unreachable by any search. Threat Intel Tracking entities (threat actors, campaigns,
+  malware families, techniques) had the same gap when a query matched only their description.
+- **New: an always-on "Instance-wide Dashboard statistics" context block.** "How many hunts are
+  active?" or "how many threat actors do we track?" reduce to terms too generic for substring search
+  to answer with a count — retrieving individual entries, never a total. Every Assistant answer now
+  includes current instance-wide totals regardless of retrieval terms, so aggregate questions can be
+  answered directly instead of guessed from a truncated sample.
+- **New: naming a content category lists it.** "What reports do we have?" / "show me the evidence" /
+  "any comments on this?" now list recent entries in that category, the same way asking about threat
+  actors or malware families already did — a report or comment rarely contains the literal word
+  naming its own category, so it was previously unreachable by that phrasing.
+- **New: admin-configurable AI Assistant settings**, in Configuration → Application → a new "AI
+  Assistant" card: pin the Assistant to a specific configured LLM provider (independent of the
+  instance's default provider used everywhere else), and adjust its context budget (how many
+  retrieved snippets are fed to the model per question, 4–100, default 24 — unchanged from before).
+- Registered four more project documents (architecture, platform overview, agent architecture,
+  Threat Hunting framework design) for search/Assistant indexing, alongside the existing API
+  reference. Document reads are now cached (keyed on file mtime, so an edited/redeployed doc is
+  picked up on its next read) — SmartSearch re-runs its search once per retrieval term, so re-reading
+  every registered document from disk on every call stopped being free once the corpus was five docs
+  instead of one.
+- Widened the raw Threat Intel store's search to match the normalized store's coverage: `cve_id`,
+  `country`, `malware_family` and `source` are real columns that were never searched, so a CVE id or
+  malware family name matched an entry once normalized but not in the raw store holding the same
+  entry.
+
 ### Added — Home branding, commit-stamped logs/reports, hunt package clone + Simple view, RedHunter theme, first-login wizard, user-management polish (issue-local-038)
 
 - **Home**: subtitle "Threat Agentic Research System" under the OpenTARS title, with spacing before "Choose a module to get started". The title is slightly larger with a two-tone "Open"/"TARS" treatment, and the subtitle's T-A-R-S initials are highlighted and enlarged so the acronym reads clearly.

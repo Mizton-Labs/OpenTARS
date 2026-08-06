@@ -37,7 +37,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.config.loader import load_auth_enabled
+from backend.config.loader import (
+    load_assistant_context_hits,
+    load_assistant_provider,
+    load_auth_enabled,
+)
 from backend.llm.errors import LLMProviderError, LLMTransportError
 from backend.search import sessions as sessions_db
 from backend.search.service import MAX_TOTAL_RESULTS, global_search
@@ -106,7 +110,7 @@ async def search(
 @router.get("/status")
 async def status() -> dict:
     """Report SmartSearch availability for the always-visible Normal/Smart switch."""
-    return smart_search_status()
+    return smart_search_status(load_assistant_provider())
 
 
 class HistoryTurn(BaseModel):
@@ -129,6 +133,8 @@ async def smart(request: Request, body: SmartSearchBody) -> dict:
             body.question,
             role=_caller_role(request),
             history=[turn.model_dump() for turn in body.history],
+            provider_name=load_assistant_provider(),
+            max_context_hits=load_assistant_context_hits(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

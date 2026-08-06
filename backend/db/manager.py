@@ -312,7 +312,26 @@ async def query_entries(
                         where_clauses.append(f"{col} = ?")
                         params.append(val)
                 if search:
-                    search_cols = ["indicator", "title", "description", "tags", "actor", "campaign"]
+                    # issue-local-039: widened to match query_normalized's
+                    # coverage (backend/normalizer/db.py) — cve_id, country
+                    # and malware_family are real columns on this table (see
+                    # backend/db/schema.py) that were simply never searched,
+                    # so a CVE id or malware family name only matched the
+                    # normalized store, never the raw one holding the same
+                    # entry. "source" is this table's equivalent of the
+                    # normalized store's "source_name".
+                    search_cols = [
+                        "indicator",
+                        "title",
+                        "description",
+                        "tags",
+                        "actor",
+                        "campaign",
+                        "cve_id",
+                        "country",
+                        "malware_family",
+                        "source",
+                    ]
                     like_clauses = " OR ".join(f"{c} LIKE ?" for c in search_cols)
                     where_clauses.append(f"({like_clauses})")
                     params.extend([f"%{search}%"] * len(search_cols))

@@ -39,8 +39,10 @@ from backend.llm.errors import (
     LLMTransportError,
 )
 from backend.llm.registry import get_client
+from backend.search.catalog import role_allows
 from backend.search.service import (
     MAX_TOTAL_RESULTS,
+    SearchHit,
     global_search,
     interleave,
     sanitize_multiline,
@@ -74,15 +76,17 @@ _STOPWORDS = frozenset(
 _TERM_RE = re.compile(r"[A-Za-z0-9_.:/@-]{3,}")
 
 
-def smart_search_status() -> dict[str, Any]:
+def smart_search_status(provider_name: str | None = None) -> dict[str, Any]:
     """Report whether SmartSearch can run, and if not, why.
 
     Drives the always-visible Normal/Smart switch in the UI: when unavailable
     the switch is greyed out and ``reason`` is shown on hover, pointing at the
-    setting that enables it.
+    setting that enables it. ``provider_name`` lets callers check the actual
+    admin-pinned provider (issue-local-039) rather than always the global
+    default.
     """
     try:
-        client = get_client()
+        client = get_client(provider_name)
     except LLMDisabledError:
         return {
             "available": False,
@@ -134,21 +138,74 @@ def retrieval_terms(question: str) -> list[str]:
     return terms
 
 
-async def gather_context(question: str, *, role: str | None) -> list[dict[str, Any]]:
+async def _dashboard_stats_hit(role: str | None) -> dict[str, Any] | None:
+    """Instance-wide hunt/tracking counts, included in every answer
+    regardless of retrieval terms (issue-local-039).
+
+    Aggregate questions ("how many hunts are active?", "how many threat
+    actors do we track?") reduce to terms too generic for the substring
+    search to answer with — "how many hunts" retrieves individual hunt
+    entries, never a count. Dashboard stats are the one thing in this
+    application that already IS the answer to "how many", so they bypass the
+    keyword-driven retrieval entirely rather than trying to make substring
+    search do arithmetic. None when the caller's role cannot reach the
+    Dashboard itself (below threat-viewer).
+    """
+    if not role_allows(role, "threat-viewer"):
+        return None
+    from backend.threat_hunting import db as th_db
+
+    stats = await th_db.get_hunt_dashboard_stats()
+    lines = [
+        f"Hunt packages: {stats.get('packages_total', 0)} total "
+        f"(by status: {stats.get('packages_by_status', {})})",
+        f"Generation runs: {stats.get('runs_total', 0)}",
+        f"Evidence items: {stats.get('evidence_total', 0)}",
+        f"Hypotheses: {stats.get('hypotheses_total', 0)} · "
+        f"Hunting leads: {stats.get('hunting_leads_total', 0)} · "
+        f"Queries: {stats.get('queries_total', 0)}",
+        f"Extracted IOCs: {stats.get('iocs_extracted_total', 0)} "
+        f"(kept: {stats.get('iocs_kept_total', 0)})",
+        f"SIEM searches: {stats.get('siem_searches_total', 0)} "
+        f"(completed: {stats.get('siem_searches_completed', 0)})",
+        f"Threat actors tracked: {stats.get('threat_actors_total', 0)}",
+        f"Campaigns tracked: {stats.get('campaigns_total', 0)}",
+        f"Malware families tracked: {stats.get('malware_families_total', 0)}",
+        f"MITRE techniques tracked: {stats.get('ttps_total', 0)}",
+        f"Threat intel sources processed: {stats.get('sources_processed', 0)}",
+    ]
+    return SearchHit(
+        section="Threat Hunting",
+        title="Instance-wide Dashboard statistics",
+        snippet="\n".join(lines),
+        route="/threat-hunting",
+    ).to_dict()
+
+
+async def gather_context(
+    question: str, *, role: str | None, max_context_hits: int = MAX_CONTEXT_HITS
+) -> list[dict[str, Any]]:
     """Retrieve role-scoped snippets relevant to *question*, newest source first.
 
     Runs the ordinary search once per salient term and merges, de-duplicating
     on (section, title, route) so a term appearing in several fields does not
-    crowd out other matches.
+    crowd out other matches. ``max_context_hits`` defaults to the module
+    constant but is admin-configurable (issue-local-039); the caller passes
+    the effective value through. The instance-wide Dashboard stats block
+    (issue-local-039) always occupies the first slot, outside the
+    keyword-driven retrieval below.
     """
+    stats_hit = await _dashboard_stats_hit(role)
+    budget = max(0, max_context_hits - 1) if stats_hit else max_context_hits
+
     merged: dict[tuple[str, str, str], dict[str, Any]] = {}
     terms = retrieval_terms(question)
 
     # Give every term a share of the budget. Without a per-term quota the first
-    # broad word ("hunts") fills all 24 slots from one search, and the specific
+    # broad word ("hunts") fills all slots from one search, and the specific
     # word that actually identifies what was asked about ("emotet") contributes
     # nothing — the retrieval would get worse the more precise the question was.
-    quota = max(2, MAX_CONTEXT_HITS // (len(terms) + 1))
+    quota = max(2, budget // (len(terms) + 1))
 
     async def absorb(query: str, allowance: int) -> None:
         """Take up to *allowance* hits for one term, spread across sections.
@@ -161,12 +218,12 @@ async def gather_context(question: str, *, role: str | None) -> list[dict[str, A
         reached the model. One hit per section per pass keeps a term's answer
         visible wherever it lives.
         """
-        if not query or len(merged) >= MAX_CONTEXT_HITS:
+        if not query or len(merged) >= budget:
             return
         result = await global_search(query, role=role, limit=MAX_TOTAL_RESULTS)
         taken = 0
         for hit in interleave([s["hits"] for s in result["sections"]]):
-            if taken >= allowance or len(merged) >= MAX_CONTEXT_HITS:
+            if taken >= allowance or len(merged) >= budget:
                 return
             key = (hit["section"], hit["title"], hit["route"])
             if key not in merged:
@@ -179,7 +236,8 @@ async def gather_context(question: str, *, role: str | None) -> list[dict[str, A
     for term in terms:
         await absorb(term, quota)
 
-    return list(merged.values())[:MAX_CONTEXT_HITS]
+    hits = list(merged.values())[:budget]
+    return [stats_hit, *hits] if stats_hit else hits
 
 
 # A short, static, author-written description of the product. Lets the
@@ -198,9 +256,13 @@ Threat Hunting platform. Its main areas are:
   listener endpoint).
 - Threat Hunting — hunt packages hold evidence (files, URLs, pasted text, watcher
   feeds). Running generation starts an LLM agent pipeline that parses the evidence,
-  extracts IOCs, forms hypotheses and drafts SIEM queries. A run can then be
-  approved and executed against a configured SIEM, after which reports (Markdown/PDF),
-  a Threat Intelligence analysis, and run comparisons become available.
+  extracts IOCs, forms hypotheses and hunting leads, and drafts SIEM queries. A run
+  can then be approved and executed against a configured SIEM, after which reports
+  (Markdown/PDF), a Threat Intelligence analysis, and run comparisons become
+  available. Retrieved context may include any of these directly: report text,
+  Threat Intelligence analysis, the extracted text of a piece of evidence, executed
+  SIEM search queries and their status, per-run IOC triage (action taken, noise
+  score), run metadata (model, effort, status), and analyst comments left on a run.
 - Threat Intel Tracking — cross-hunt aggregation built from every hunt's latest
   Threat Intelligence analysis: IOCs, CVEs, threat actors, campaigns, malware
   families and MITRE ATT&CK techniques, each linked back to the hunts it was seen
@@ -209,6 +271,13 @@ Threat Hunting platform. Its main areas are:
 - Normalizer — maps source fields onto the canonical schema.
 - Configuration — feeds and ingestion, LLM providers, SIEM connectors, users and
   roles, scoped API access keys, and hunting defaults.
+
+Retrieved context always includes an "Instance-wide Dashboard statistics" item with
+current totals (hunt packages, runs, evidence, hypotheses, hunting leads, queries,
+IOCs, SIEM searches, tracked threat actors/campaigns/malware families/techniques).
+Use it directly to answer "how many" / count / total questions — do not estimate a
+count from the number of individual items shown elsewhere in the context, since that
+is a truncated sample, not the true total.
 """
 
 _SYSTEM_PROMPT = """\
@@ -307,21 +376,24 @@ async def smart_answer(
     history: list[dict[str, str]] | None = None,
     provider_name: str | None = None,
     model_name: str | None = None,
+    max_context_hits: int = MAX_CONTEXT_HITS,
 ) -> dict[str, Any]:
     """Answer *question* from role-scoped application context.
 
     Returns ``{"answer", "sources", "used_context"}``. ``sources`` are the
-    retrieved hits, so the UI can link straight to them.
+    retrieved hits, so the UI can link straight to them. ``max_context_hits``
+    defaults to the module constant but callers pass the admin-configured
+    value (issue-local-039).
     """
     cleaned_question = sanitize_text(question, MAX_QUESTION_CHARS)
     if not cleaned_question:
         raise ValueError("question must not be empty")
 
-    status = smart_search_status()
+    status = smart_search_status(provider_name)
     if not status["available"]:
         raise SmartSearchUnavailable(status["reason"] or "SmartSearch is unavailable")
 
-    context_hits = await gather_context(cleaned_question, role=role)
+    context_hits = await gather_context(cleaned_question, role=role, max_context_hits=max_context_hits)
     turns = _clean_history(history)
 
     # Call the provider directly, the same way the other non-Threat-Hunting LLM
