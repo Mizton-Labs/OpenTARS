@@ -1072,6 +1072,15 @@ export const api = {
       body: JSON.stringify({ hunt_id_prefix: value }),
     }),
 
+  // AI Assistant provider override + context budget (issue-local-039)
+  getAssistantSettings: () =>
+    request<AssistantSettings>('/app/assistant-settings'),
+  setAssistantSettings: (value: AssistantSettings) =>
+    request<AssistantSettings>('/app/assistant-settings', {
+      method: 'PUT',
+      body: JSON.stringify(value),
+    }),
+
   // Agent tools + document parsers toggles (issue-007)
   getAgentTools: () => request<{ agent_tools: Record<string, boolean> }>('/app/agent-tools'),
   setAgentTools: (value: Record<string, boolean>) =>
@@ -1975,6 +1984,13 @@ export interface LLMProviderSummary {
   // required — bad models surface at proposal request/response time). Default
   // [] on providers that have not been discovered yet.
   available_models?: string[]
+}
+
+// issue-local-039: the AI Assistant's pinned LLM provider (null = follow the
+// global default_provider) and its retrieved-hit context budget.
+export interface AssistantSettings {
+  assistant_provider: string | null
+  assistant_context_hits: number
 }
 
 /**

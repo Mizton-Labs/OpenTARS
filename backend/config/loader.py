@@ -1216,3 +1216,86 @@ def load_max_decompressed_bytes() -> int:
         )
         return _MAX_DECOMPRESSED_MIN
     return n
+
+
+# ── AI Assistant LLM provider + context budget (issue-local-039) ────────────
+# Lets an admin pin the Smart Assistant (backend/search/smart.py) to a
+# specific configured LLM provider instead of always following the global
+# default_provider, and lets them raise/lower how many retrieved hits are
+# stuffed into its context window. Both are optional overrides — unset/None
+# preserves today's behavior exactly (default_provider, MAX_CONTEXT_HITS=24).
+
+_ASSISTANT_CONTEXT_HITS_DEFAULT = 24
+_ASSISTANT_CONTEXT_HITS_MIN = 4
+_ASSISTANT_CONTEXT_HITS_MAX = 100
+
+
+def load_assistant_provider() -> str | None:
+    """Return the admin-pinned LLM provider name for the AI Assistant.
+
+    None means "no override" — callers should fall back to whatever
+    ``backend.llm.registry.get_client()`` resolves by default. The
+    provider name itself is NOT validated against configured providers
+    here (that requires backend.llm, which this low-level module does not
+    import); route-layer callers validate before saving.
+    """
+    raw = load_app_config().get("assistant_provider")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw
+
+
+def save_assistant_provider(value: str | None) -> None:
+    """Persist (or clear, with None/"") the AI Assistant's pinned provider name."""
+    if value is not None and not isinstance(value, str):
+        raise ValueError("assistant_provider must be a string or null")
+    data = load_app_config()
+    data["assistant_provider"] = value.strip() if isinstance(value, str) and value.strip() else None
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+def load_assistant_context_hits() -> int:
+    """Return the configured cap on retrieved hits fed to the Assistant (default 24).
+
+    Non-integer or out-of-range values on disk fall back to the default with
+    a warning, so a malformed config never breaks the Assistant.
+    """
+    raw = load_app_config().get("assistant_context_hits", _ASSISTANT_CONTEXT_HITS_DEFAULT)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "assistant_context_hits in %s is not an integer (%r); using default %d",
+            APP_CONFIG_PATH,
+            raw,
+            _ASSISTANT_CONTEXT_HITS_DEFAULT,
+        )
+        return _ASSISTANT_CONTEXT_HITS_DEFAULT
+    if n < _ASSISTANT_CONTEXT_HITS_MIN or n > _ASSISTANT_CONTEXT_HITS_MAX:
+        logger.warning(
+            "assistant_context_hits=%d is out of range [%d, %d]; using default %d",
+            n,
+            _ASSISTANT_CONTEXT_HITS_MIN,
+            _ASSISTANT_CONTEXT_HITS_MAX,
+            _ASSISTANT_CONTEXT_HITS_DEFAULT,
+        )
+        return _ASSISTANT_CONTEXT_HITS_DEFAULT
+    return n
+
+
+def save_assistant_context_hits(value: int) -> None:
+    """Persist the Assistant's retrieved-hit budget to application.yaml.
+
+    Raises ValueError when the value is not an integer in the supported
+    range. Booleans are rejected explicitly (bool is a subclass of int).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("assistant_context_hits must be an integer")
+    if value < _ASSISTANT_CONTEXT_HITS_MIN or value > _ASSISTANT_CONTEXT_HITS_MAX:
+        raise ValueError(
+            "assistant_context_hits must be between "
+            f"{_ASSISTANT_CONTEXT_HITS_MIN} and {_ASSISTANT_CONTEXT_HITS_MAX}"
+        )
+    data = load_app_config()
+    data["assistant_context_hits"] = value
+    _write_yaml(APP_CONFIG_PATH, data)

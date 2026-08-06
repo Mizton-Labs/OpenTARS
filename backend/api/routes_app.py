@@ -25,6 +25,8 @@ from backend.config.loader import (
     load_app_base_prefix,
     load_app_pagination_max,
     load_app_title,
+    load_assistant_context_hits,
+    load_assistant_provider,
     load_default_theme,
     load_hunt_id_prefix,
     load_th_llm_max_retries,
@@ -41,6 +43,8 @@ from backend.config.loader import (
     save_app_base_prefix,
     save_app_pagination_max,
     save_app_title,
+    save_assistant_context_hits,
+    save_assistant_provider,
     save_default_theme,
     save_hunt_id_prefix,
     save_logo_path,
@@ -51,6 +55,7 @@ from backend.config.loader import (
     save_th_research_effort,
     save_watcher_max_events,
 )
+from backend.llm.registry import list_provider_names
 
 router = APIRouter(prefix="/api/app", tags=["app"])
 
@@ -498,6 +503,66 @@ async def set_hunt_id_prefix(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"hunt_id_prefix": value}
+
+
+# ── AI Assistant provider + context budget (issue-local-039) ────────────────
+
+
+def _assistant_settings_payload() -> dict[str, Any]:
+    return {
+        "assistant_provider": load_assistant_provider(),
+        "assistant_context_hits": load_assistant_context_hits(),
+    }
+
+
+@router.get("/assistant-settings")
+async def get_assistant_settings(
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Return the AI Assistant's pinned LLM provider (null = follow the
+    global default provider) and its retrieved-hit context budget."""
+    return _assistant_settings_payload()
+
+
+@router.put("/assistant-settings")
+async def set_assistant_settings(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the AI Assistant's pinned LLM provider and context budget.
+
+    Body: {"assistant_provider": "my-provider" | null, "assistant_context_hits": 24}
+    A non-null provider must match a currently configured LLM provider name.
+    """
+    provider = body.get("assistant_provider")
+    if provider is not None and not isinstance(provider, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'assistant_provider' as a string or null",
+        )
+    if isinstance(provider, str) and provider.strip():
+        known = {p["name"] for p in list_provider_names()}
+        if provider not in known:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown LLM provider {provider!r}",
+            )
+    else:
+        provider = None
+
+    context_hits = body.get("assistant_context_hits")
+    if not isinstance(context_hits, int) or isinstance(context_hits, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'assistant_context_hits' as an integer",
+        )
+
+    try:
+        save_assistant_provider(provider)
+        save_assistant_context_hits(context_hits)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _assistant_settings_payload()
 
 
 # ── Threat Hunting report formats (issue-local-004) ──────────────────────────

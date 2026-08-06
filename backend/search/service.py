@@ -30,6 +30,7 @@ import logging
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 
 from backend import docs_registry
@@ -118,6 +119,16 @@ _IOC_TYPE_TERMS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
 #: touching this list.
 _ANY_HASH_TERMS = frozenset({"hash", "hashes", "checksum", "checksums", "fingerprint"})
 _ANY_IOC_TERMS = frozenset({"ioc", "iocs", "indicator", "indicators"})
+
+# issue-local-039: naming one of these *categories* ("what reports do we
+# have?") should list recent entries in it, the same way _search_tracking
+# already does for threat actors/campaigns/malware/techniques — otherwise a
+# report/comment/evidence item is only reachable by a query that happens to
+# substring-match its own body text, and "what reports do we have" matches no
+# report's own text (reports rarely contain the word "report").
+_REPORT_TERMS = frozenset({"report", "reports"})
+_EVIDENCE_TERMS = frozenset({"evidence"})
+_COMMENT_TERMS = frozenset({"comment", "comments"})
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -267,12 +278,24 @@ async def _search_hunts(query: str, role: str | None) -> list[SearchHit]:
     for pkg in packages[:MAX_PER_SECTION]:
         label = sanitize_text(pkg.get("hunt_id_display")) or ""
         title = sanitize_text(pkg.get("name")) or "(unnamed hunt)"
+        description = pkg.get("description")
+        # issue-local-039: a package matching only via its deep-search fields
+        # (threat context, hypotheses, TTP analysis, deep retrohunt, hunting
+        # leads, query drafts, extracted IOCs) previously always showed the
+        # package's own description or a generic status line — the actual
+        # matched content, and why the package appeared at all, never reached
+        # the caller (or the model, for SmartSearch). Prefer it whenever the
+        # description itself doesn't already explain the match.
+        deep = pkg.get("search_snippet")
+        if deep and not _matches(query, description):
+            snippet = _snippet(f"{deep['field']}: {deep['text']}", query)
+        else:
+            snippet = _snippet(description, query) or f"Status: {sanitize_text(pkg.get('status'))}"
         hits.append(
             SearchHit(
                 section="Threat Hunting",
                 title=f"{label} {title}".strip(),
-                snippet=_snippet(pkg.get("description"), query)
-                or f"Status: {sanitize_text(pkg.get('status'))}",
+                snippet=snippet,
                 route=f"/threat-hunting/{pkg['id']}",
                 ref=str(pkg["id"]),
                 archived=pkg.get("status") == "archived",
@@ -393,11 +416,18 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
         shown = ", ".join(seen[:4])
         return f"Seen in {len(seen)} hunt package(s): {shown}" if len(seen) > 4 else shown
 
-    def _hit(title: str, record: dict[str, Any], ref: str | None) -> SearchHit:
+    def _hit(title: str, record: dict[str, Any], ref: str | None, matched_in: str | None = None) -> SearchHit:
+        # issue-local-039: when the query matched the record's description
+        # rather than its name, show that excerpt — previously the snippet
+        # was always the hunt-linkage line, so a match on description content
+        # (the only place many of these have any prose at all) surfaced no
+        # trace of what actually matched.
+        base = _hunts_of(record)
+        snippet = f"{matched_in} — {base}" if matched_in else base
         return SearchHit(
             section="Threat Intel Tracking",
             title=title,
-            snippet=_hunts_of(record),
+            snippet=snippet,
             route="/threat-hunting/tracking",
             ref=ref,
         )
@@ -468,9 +498,12 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
             name = sanitize_text(record.get("name") or record.get("technique_id"))
             if not name:
                 continue
-            if not wants_category and not _matches(query, name, record.get("description")):
+            description = record.get("description")
+            name_matches = _matches(query, name)
+            if not wants_category and not name_matches and not _matches(query, description):
                 continue
-            matched.append(_hit(f"{name} ({label})", record, name))
+            matched_in = _snippet(description, query) if not wants_category and not name_matches else None
+            matched.append(_hit(f"{name} ({label})", record, name, matched_in))
             if len(matched) >= MAX_PER_SECTION:
                 break
         grouped.append(matched)
@@ -480,6 +513,225 @@ async def _search_tracking(query: str, role: str | None) -> list[SearchHit]:
         hits.append(hit)
         if len(hits) >= MAX_PER_SECTION:
             break
+    return hits
+
+
+async def _search_hunt_reports(query: str, role: str | None) -> list[SearchHit]:
+    """Generated hunt reports: executive summary, findings, recommendations,
+    evidence summary and execution results (issue-local-039). Comparison and
+    consolidated reports are included — they are real reports too."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    # "what reports do we have?" names the category, not text a report's own
+    # body would contain — list the most recent ones rather than requiring a
+    # literal substring match (mirrors _search_tracking's category words).
+    lookup = "" if query_words(query) & _REPORT_TERMS else query
+    rows = await th_db.search_hunt_reports(lookup, limit=MAX_PER_SECTION)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        hunt_name = sanitize_text(row.get("hunt_name")) or "(unnamed hunt)"
+        full_report = row.get("full_report")
+        kind = full_report.get("report_kind") if isinstance(full_report, dict) else None
+        kind_label = {"comparison": "comparison report", "consolidated": "consolidated report"}.get(
+            kind, "report"
+        )
+        summary = row.get("executive_summary")
+        if summary and _matches(query, summary):
+            snippet = _snippet(summary, query)
+        else:
+            snippet = _snippet(sanitize_text(full_report), query) or "(no summary)"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {hunt_name} — {kind_label}".strip(),
+                snippet=snippet,
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row["id"]),
+            )
+        )
+    return hits
+
+
+async def _search_threat_intel_analysis(query: str, role: str | None) -> list[SearchHit]:
+    """Per-hunt Threat Intelligence analysis: summary, attribution, and the
+    named threat actors/malware families/campaigns (issue-local-039)."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    rows = await th_db.search_threat_intel_analysis(query, limit=MAX_PER_SECTION)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        hunt_name = sanitize_text(row.get("hunt_name")) or "(unnamed hunt)"
+        snippet = None
+        for field in (
+            "summary",
+            "attribution",
+            "full_analysis",
+            "threat_actors",
+            "malware_families",
+            "campaigns",
+        ):
+            value = row.get(field)
+            if value and _matches(query, value):
+                snippet = _snippet(value, query)
+                break
+        if not snippet:
+            snippet = _snippet(row.get("summary"), query) or "(threat intelligence analysis)"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {hunt_name} — Threat Intelligence analysis".strip(),
+                snippet=snippet,
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row["id"]),
+            )
+        )
+    return hits
+
+
+async def _search_evidence(query: str, role: str | None) -> list[SearchHit]:
+    """Hunt evidence — label, source, and extracted text from uploaded
+    files, fetched URLs, and pasted text (issue-local-039). extracted_text is
+    the richest source of hunt-specific detail in the database."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    lookup = "" if query_words(query) & _EVIDENCE_TERMS else query
+    rows = await th_db.search_evidence_items(lookup, limit=MAX_PER_SECTION)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        hunt_name = sanitize_text(row.get("hunt_name")) or "(unnamed hunt)"
+        item_label = sanitize_text(row.get("label")) or sanitize_text(row.get("source_ref")) or "(evidence)"
+        extracted = row.get("extracted_text")
+        if extracted and _matches(query, extracted):
+            snippet = _snippet(extracted, query)
+        else:
+            snippet = _snippet(row.get("source_ref"), query) or f"Type: {sanitize_text(row.get('item_type'))}"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {hunt_name} — {item_label}".strip(),
+                snippet=snippet,
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row["id"]),
+            )
+        )
+    return hits
+
+
+async def _search_run_comments(query: str, role: str | None) -> list[SearchHit]:
+    """Analyst comments left on a hunt run (issue-local-039)."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    lookup = "" if query_words(query) & _COMMENT_TERMS else query
+    rows = await th_db.search_run_comments(lookup, limit=MAX_PER_SECTION)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        run_label = sanitize_text(row.get("run_id_display")) or ""
+        hunt_name = sanitize_text(row.get("hunt_name")) or "(unnamed hunt)"
+        author = sanitize_text(row.get("created_by")) or "someone"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {run_label} {hunt_name} — comment by {author}".strip(),
+                snippet=_snippet(row.get("body"), query),
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row["id"]),
+            )
+        )
+    return hits
+
+
+async def _search_siem_searches(query: str, role: str | None) -> list[SearchHit]:
+    """Executed SIEM searches — the query text sent, its connector, and
+    result status (issue-local-039)."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    rows = await th_db.list_explorer_rows("siem_searches", search=query)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        run_label = sanitize_text(row.get("run_id_display")) or ""
+        connector = sanitize_text(row.get("siem_connector")) or "SIEM"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {run_label} — {connector} search".strip(),
+                snippet=_snippet(row.get("query_text"), query)
+                or f"Status: {sanitize_text(row.get('status'))}",
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row.get("id")),
+            )
+        )
+    return hits
+
+
+async def _search_hunt_iocs(query: str, role: str | None) -> list[SearchHit]:
+    """Per-run extracted IOCs, with their triage action and noise score
+    (issue-local-039) — a per-occurrence view, distinct from Threat Intel
+    Tracking's cross-hunt deduped correlation."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    rows = await th_db.list_explorer_rows("iocs", search=query)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        ioc = sanitize_text(row.get("ioc")) or "(ioc)"
+        ioc_type = sanitize_text(row.get("ioc_type")) or "ioc"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{ioc} ({ioc_type}) — {label}".strip(),
+                snippet=f"Action: {sanitize_text(row.get('action')) or 'none'} · "
+                f"noise score {row.get('noise_score')}",
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row.get("id")),
+            )
+        )
+    return hits
+
+
+async def _search_run_metadata(query: str, role: str | None) -> list[SearchHit]:
+    """Generation runs matched by model, status, effort or Run ID
+    (issue-local-039)."""
+    if not role_allows(role, "threat-viewer"):
+        return []
+    from backend.threat_hunting import db as th_db
+
+    rows = await th_db.list_explorer_rows("runs", search=query)
+    hits: list[SearchHit] = []
+    for row in rows[:MAX_PER_SECTION]:
+        label = sanitize_text(row.get("hunt_id_display")) or ""
+        run_label = sanitize_text(row.get("run_id_display")) or ""
+        hunt_name = sanitize_text(row.get("hunt_name")) or "(unnamed hunt)"
+        hits.append(
+            SearchHit(
+                section="Threat Hunting",
+                title=f"{label} {run_label} {hunt_name}".strip(),
+                snippet=_snippet(
+                    f"Model {sanitize_text(row.get('llm_model'))} · "
+                    f"status {sanitize_text(row.get('generation_status'))} · "
+                    f"effort {sanitize_text(row.get('research_effort'))}",
+                    query,
+                ),
+                route=f"/threat-hunting/{row['hunt_package_id']}",
+                ref=str(row.get("id")),
+            )
+        )
     return hits
 
 
@@ -512,6 +764,26 @@ async def _search_watchers(query: str, role: str | None) -> list[SearchHit]:
     return hits
 
 
+#: (path, mtime) → file content. issue-local-039 registered four more
+#: documents alongside the API reference (one of them 70+KB), and SmartSearch
+#: re-runs this search once per retrieval term — up to several times per
+#: question — so re-reading every registered document from disk on every call
+#: stopped being free. Keyed on mtime rather than a TTL so an edited/
+#: redeployed doc is picked up on its very next read, no restart required.
+_DOC_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _read_doc_cached(path: Path) -> str:
+    mtime = path.stat().st_mtime
+    key = str(path)
+    cached = _DOC_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    content = path.read_text(encoding="utf-8")
+    _DOC_CACHE[key] = (mtime, content)
+    return content
+
+
 def _search_docs(query: str, role: str | None) -> list[SearchHit]:
     """Full-text search within the allowlisted documentation."""
     if not role_allows(role, "threat-viewer"):
@@ -527,7 +799,7 @@ def _search_docs(query: str, role: str | None) -> list[SearchHit]:
         if path is None:
             continue
         try:
-            content = path.read_text(encoding="utf-8")
+            content = _read_doc_cached(path)
         except OSError as exc:  # pragma: no cover — defensive
             logger.warning("Could not read searchable doc %s: %s", path, exc)
             continue
@@ -575,6 +847,13 @@ async def global_search(query: str, *, role: str | None, limit: int = MAX_TOTAL_
     # and the catalogue alone spans Navigation, Settings and Docs.
     per_source: list[list[SearchHit]] = [
         await _search_hunts(cleaned, role),
+        await _search_hunt_reports(cleaned, role),
+        await _search_threat_intel_analysis(cleaned, role),
+        await _search_evidence(cleaned, role),
+        await _search_run_comments(cleaned, role),
+        await _search_siem_searches(cleaned, role),
+        await _search_hunt_iocs(cleaned, role),
+        await _search_run_metadata(cleaned, role),
         await _search_threat_intel(cleaned, role),
         await _search_normalized(cleaned, role),
         await _search_tracking(cleaned, role),

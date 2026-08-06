@@ -375,6 +375,46 @@ async def test_query_entries_field_filter_matches_exact_column(temp_data_dir):
     assert [r["indicator"] for r in crit] == ["1.1.1.1"]
 
 
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("cve_id", "CVE-2026-12345"),
+        ("country", "Freedonia"),
+        ("malware_family", "Chaos ransomware"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_query_entries_search_matches_widened_columns(temp_data_dir, column, value):
+    """issue-local-039: query_entries(search=...) previously only matched
+    indicator/title/description/tags/actor/campaign — cve_id, country and
+    malware_family are real columns on this table that were never searched,
+    so global search's raw-store source silently missed anything only
+    present in one of them (even though the SAME entry, once normalized, WAS
+    reachable via query_normalized's wider column list)."""
+    from backend.db.manager import insert_entry, query_entries
+
+    entry = {"indicator": "1.2.3.4", "source": "widened_src", column: value}
+    await insert_entry("widened_src", entry)
+
+    results = await query_entries(source_name="widened_src", search=value)
+    assert [r["indicator"] for r in results] == ["1.2.3.4"]
+
+
+@pytest.mark.asyncio
+async def test_query_entries_search_matches_source_column(temp_data_dir):
+    """The "source" column (which feed an entry came from) is also part of
+    the widened search — matching query_normalized's "source_name" coverage.
+    insert_entry always sets `source` from its own `source_name` argument
+    (never from the entry dict), so that argument is what must carry the
+    searched-for value here."""
+    from backend.db.manager import insert_entry, query_entries
+
+    await insert_entry("vendor_feed_xyz", {"indicator": "1.2.3.4"})
+
+    results = await query_entries(source_name="vendor_feed_xyz", search="vendor_feed_xyz")
+    assert [r["indicator"] for r in results] == ["1.2.3.4"]
+
+
 @pytest.mark.asyncio
 async def test_query_entries_unknown_field_filter_is_ignored(temp_data_dir):
     """A non-whitelisted column (extra-JSON field or injection attempt) must be

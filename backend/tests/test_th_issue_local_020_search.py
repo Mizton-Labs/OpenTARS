@@ -68,6 +68,49 @@ class TestListHuntPackagesSearch:
             assert [p["name"] for p in result] == ["Package A"]
 
     @pytest.mark.asyncio
+    async def test_search_matches_run_hunting_leads_json(self, db_path: Path) -> None:
+        """issue-local-039: hunting_leads was missing from the deep-search
+        WHERE clause entirely — a package whose only mention of a term was in
+        this field was unreachable by any search."""
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Package A", "")
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "INSERT INTO hunting_packages (id, hunt_package_id, hunting_leads, created_at) "
+                    "VALUES (?,?,?,?)",
+                    (
+                        "run-1",
+                        pkg["id"],
+                        json.dumps([{"lead": "Pivot on Cobalt Strike beacon interval"}]),
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+                await db.commit()
+            result = await th_db.list_hunt_packages(search="beacon interval")
+            assert [p["name"] for p in result] == ["Package A"]
+
+    @pytest.mark.asyncio
+    async def test_search_matches_run_query_drafts_json(self, db_path: Path) -> None:
+        """issue-local-039: query_drafts was likewise missing from the
+        deep-search WHERE clause."""
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Package A", "")
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "INSERT INTO hunting_packages (id, hunt_package_id, query_drafts, created_at) "
+                    "VALUES (?,?,?,?)",
+                    (
+                        "run-1",
+                        pkg["id"],
+                        json.dumps([{"spl": "index=proxy dest_domain=evil-domain.example"}]),
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+                await db.commit()
+            result = await th_db.list_hunt_packages(search="evil-domain.example")
+            assert [p["name"] for p in result] == ["Package A"]
+
+    @pytest.mark.asyncio
     async def test_search_matches_extracted_ioc(self, db_path: Path) -> None:
         with patch.object(th_db, "_TH_DB_PATH", db_path):
             pkg = await th_db.create_hunt_package("Package A", "")
@@ -141,6 +184,59 @@ class TestListHuntPackagesSearch:
 
             result = await th_db.list_hunt_packages(search="Emotet", date_from="2025-01-01")
             assert [p["name"] for p in result] == ["Emotet followup"]
+
+
+class TestSearchSnippet:
+    """issue-local-039: list_hunt_packages(search=...) attaches a
+    `search_snippet` telling the caller which field actually matched, so
+    search results stop silently falling back to the package's own
+    description or a generic status line for deep-search-only matches."""
+
+    @pytest.mark.asyncio
+    async def test_snippet_is_none_when_search_is_unset(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            await th_db.create_hunt_package("Package A", "")
+            result = await th_db.list_hunt_packages()
+            assert "search_snippet" not in result[0]
+
+    @pytest.mark.asyncio
+    async def test_snippet_is_none_when_only_name_or_description_matched(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            await th_db.create_hunt_package("Emotet campaign", "phishing lure")
+            result = await th_db.list_hunt_packages(search="Emotet")
+            assert result[0]["search_snippet"] is None
+
+    @pytest.mark.asyncio
+    async def test_snippet_names_the_matched_run_field(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Package A", "")
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "INSERT INTO hunting_packages (id, hunt_package_id, ttp_analysis, created_at) "
+                    "VALUES (?,?,?,?)",
+                    ("run-1", pkg["id"], json.dumps({"technique": "T1059 - FIN7 usage"}), "2026-01-01T00:00:00Z"),
+                )
+                await db.commit()
+            result = await th_db.list_hunt_packages(search="FIN7")
+            snippet = result[0]["search_snippet"]
+            assert snippet is not None
+            assert snippet["field"] == "TTP analysis"
+            assert "FIN7" in snippet["text"]
+
+    @pytest.mark.asyncio
+    async def test_snippet_names_a_matched_extracted_ioc(self, db_path: Path) -> None:
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            pkg = await th_db.create_hunt_package("Package A", "")
+            await th_db.add_extracted_iocs(
+                pkg["id"],
+                "ev1",
+                [{"ioc": "malicious-domain.biz", "ioc_type": "domain", "ioc_description": "", "noise_score": 0.1}],
+            )
+            result = await th_db.list_hunt_packages(search="malicious-domain")
+            snippet = result[0]["search_snippet"]
+            assert snippet is not None
+            assert snippet["field"] == "extracted IOC"
+            assert snippet["text"] == "malicious-domain.biz"
 
 
 @pytest.mark.asyncio
