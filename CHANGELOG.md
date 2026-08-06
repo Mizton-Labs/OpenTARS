@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — Home branding, commit-stamped logs/reports, hunt package clone + Simple view, RedHunter theme, first-login wizard, user-management polish (issue-local-038)
 
-- **Home**: subtitle "Threat Agentic Research System" under the OpenTARS title, with spacing before "Choose a module to get started".
+- **Home**: subtitle "Threat Agentic Research System" under the OpenTARS title, with spacing before "Choose a module to get started". The title is slightly larger with a two-tone "Open"/"TARS" treatment, and the subtitle's T-A-R-S initials are highlighted and enlarged so the acronym reads clearly.
 - **Logging**: the `opentars` launcher now exports `GIT_COMMIT` to the backend process itself (previously only to the frontend build step), so the startup log line includes the running commit.
 - **Hunt packages**:
   - A Clone button in the package detail page's action bar (previously only on the list page), reusing the same clone route/dialog.

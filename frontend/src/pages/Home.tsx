@@ -13,8 +13,17 @@ export default function Home() {
   return (
     <div className="p-8 flex flex-col items-center">
       <div className="text-center mb-8">
-        <h1 className="text-2xl font-bold text-gray-100">OpenTARS</h1>
-        <p className="text-sm text-gray-500 mt-1">Threat Agentic Research System</p>
+        <h1 className="text-3xl font-bold tracking-tight text-gray-100">
+          Open<span className="text-brand-400">TARS</span>
+        </h1>
+        {/* The acronym letters (T-A-R-S) are highlighted + slightly enlarged
+            so the title above reads as an acronym, not just a name. */}
+        <p className="text-sm text-gray-500 mt-1.5">
+          <span className="text-base font-semibold text-brand-400">T</span>hreat{' '}
+          <span className="text-base font-semibold text-brand-400">A</span>gentic{' '}
+          <span className="text-base font-semibold text-brand-400">R</span>esearch{' '}
+          <span className="text-base font-semibold text-brand-400">S</span>ystem
+        </p>
         <p className="text-sm text-gray-400 mt-4">Choose a module to get started</p>
       </div>
 
