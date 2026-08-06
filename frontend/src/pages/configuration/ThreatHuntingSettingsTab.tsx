@@ -135,13 +135,19 @@ export default function ThreatHuntingSettingsTab() {
           <span className="font-mono text-gray-400">{huntIdPrefix || 'TH'}01</span>. Runs are then
           numbered under their package's HuntID, e.g.{' '}
           <span className="font-mono text-gray-400">{huntIdPrefix || 'TH'}01-X01</span>.
+          {/* issue-local-038: strftime support */}
+          {' '}May include date/time codes (e.g. <span className="font-mono text-gray-400">%Y</span>,{' '}
+          <span className="font-mono text-gray-400">%m</span>, <span className="font-mono text-gray-400">%d</span>)
+          — a prefix of <span className="font-mono text-gray-400">TH-%Y%m%d</span> gives{' '}
+          <span className="font-mono text-gray-400">TH-20260805</span>01, stamped with each
+          package's own creation date so it never changes later. Codes are case-sensitive.
         </p>
         <input
           type="text"
-          className="input w-32 font-mono"
-          maxLength={8}
+          className="input w-48 font-mono"
+          maxLength={24}
           value={huntIdPrefix}
-          onChange={(e) => setHuntIdPrefix(e.target.value.toUpperCase())}
+          onChange={(e) => setHuntIdPrefix(e.target.value)}
         />
       </div>
 

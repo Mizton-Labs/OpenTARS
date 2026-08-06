@@ -18,7 +18,7 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend import __version__
+from backend import __version__, get_git_commit
 from backend import scheduler as scheduler_mod
 from backend.api.routes_app import router as app_config_router
 from backend.api.routes_audit import router as audit_router
@@ -148,7 +148,9 @@ async def lifespan(app: FastAPI):
         logger.warning("Audit DB init failed: %s", exc)
     scheduler_mod.reload()
     scheduler_mod.start()
-    _system_logger.info("OpenTARS startup complete (version %s)", __version__)
+    _system_logger.info(
+        "OpenTARS startup complete (version %s, commit %s)", __version__, get_git_commit()
+    )
     yield
     _system_logger.info("OpenTARS shutting down")
     scheduler_mod.stop()
@@ -258,6 +260,9 @@ _SELF_PATHS = frozenset(
         # issue-local-016: any authenticated user (not just admins, who
         # already bypass role-gating entirely below) may set their own theme.
         "/api/auth/me/theme",
+        # issue-local-038: any authenticated user may dismiss their own
+        # first-login onboarding wizard, same reasoning as /me/theme above.
+        "/api/auth/me/onboarding",
     }
 )
 

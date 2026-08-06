@@ -202,11 +202,11 @@ def test_admin_reset_password_evicts_target_sessions(auth_env):
     admin = _login("admin", "Adminpass1")
     created = admin.post(
         "/api/auth/users",
-        json={"username": "bob", "password": "Bobpass12", "role": "threat-viewer"},
+        json={"username": "bob", "role": "threat-viewer"},
     )
     assert created.status_code == 200
     uid = created.json()["id"]
-    bob = _login("bob", "Bobpass12")
+    bob = _login("bob", created.json()["generated_password"])
     assert bob.get("/api/auth/me").status_code == 200
 
     # issue-local-016: bodyless — the backend generates the new password.
@@ -250,12 +250,12 @@ def test_admin_reset_password_generates_random_password(auth_env):
 
 def test_admin_reset_password_requires_admin(auth_env):
     admin = _login("admin", "Adminpass1")
-    uid = admin.post(
+    created = admin.post(
         "/api/auth/users",
-        json={"username": "eve", "password": "Evepass123", "role": "threat-viewer"},
-    ).json()["id"]
-    viewer = _login("eve", "Evepass123")
-    r = viewer.put(f"/api/auth/users/{uid}/password")
+        json={"username": "eve", "role": "threat-viewer"},
+    ).json()
+    viewer = _login("eve", created["generated_password"])
+    r = viewer.put(f"/api/auth/users/{created['id']}/password")
     assert r.status_code == 403
 
 
@@ -328,6 +328,15 @@ def test_set_own_theme_accepts_ocean(auth_env):
     assert c.get("/api/auth/me").json()["user"]["theme"] == "ocean"
 
 
+def test_set_own_theme_accepts_redhunter(auth_env):
+    """issue-local-038: 'redhunter' is a valid fifth personal theme override."""
+    c = _login("admin", "Adminpass1")
+    r = c.put("/api/auth/me/theme", json={"theme": "redhunter"})
+    assert r.status_code == 200
+    assert r.json()["theme"] == "redhunter"
+    assert c.get("/api/auth/me").json()["user"]["theme"] == "redhunter"
+
+
 def test_set_own_theme_null_clears_override(auth_env):
     c = _login("admin", "Adminpass1")
     c.put("/api/auth/me/theme", json={"theme": "energy"})
@@ -349,12 +358,12 @@ def test_set_own_theme_reachable_by_non_admin_role(auth_env):
     this route (admins bypass role-gating entirely, so this must be tested
     with a non-admin caller to actually exercise the fix)."""
     admin = _login("admin", "Adminpass1")
-    uid = admin.post(
+    created = admin.post(
         "/api/auth/users",
-        json={"username": "frank", "password": "Frankpass1", "role": "threat-viewer"},
-    ).json()["id"]
-    assert uid > 0
-    viewer = _login("frank", "Frankpass1")
+        json={"username": "frank", "role": "threat-viewer"},
+    ).json()
+    assert created["id"] > 0
+    viewer = _login("frank", created["generated_password"])
     r = viewer.put("/api/auth/me/theme", json={"theme": "energy"})
     assert r.status_code == 200
     assert r.json()["theme"] == "energy"
@@ -430,11 +439,11 @@ def test_admin_created_user_must_change_password(auth_env):
     admin = _login("admin", "Adminpass1")
     created = admin.post(
         "/api/auth/users",
-        json={"username": "bob", "password": "Bobpass12", "role": "threat-viewer"},
+        json={"username": "bob", "role": "threat-viewer"},
     )
     assert created.status_code == 200
     assert created.json()["must_change_password"] is True
-    bob = _login("bob", "Bobpass12")
+    bob = _login("bob", created.json()["generated_password"])
     assert bob.get("/api/auth/me").json()["user"]["must_change_password"] is True
     # Gated by the forced-change 403 until the password is changed.
     assert bob.get("/api/viewer/sources").status_code == 403
@@ -445,30 +454,39 @@ def test_admin_created_user_can_change_password_and_regain_access(auth_env):
     mirroring test_must_change_cleared_after_change_restores_access but
     starting from a freshly-created (not admin-reset) user."""
     admin = _login("admin", "Adminpass1")
-    admin.post(
+    created = admin.post(
         "/api/auth/users",
-        json={"username": "carol", "password": "Carolpass1", "role": "threat-viewer"},
-    )
-    carol = _login("carol", "Carolpass1")
+        json={"username": "carol", "role": "threat-viewer"},
+    ).json()
+    carol = _login("carol", created["generated_password"])
     assert carol.get("/api/viewer/sources").status_code == 403
 
     r = carol.put(
         "/api/auth/password",
-        json={"current_password": "Carolpass1", "new_password": "Newcarolpass2"},
+        json={"current_password": created["generated_password"], "new_password": "Newcarolpass2"},
     )
     assert r.status_code == 200
     assert carol.get("/api/auth/me").json()["user"]["must_change_password"] is False
     assert carol.get("/api/viewer/sources").status_code != 403
 
 
-def test_create_user_rejects_insufficient_classes(auth_env):
-    """Admin-created passwords must satisfy the complexity policy."""
+def test_create_user_generates_a_random_password(auth_env):
+    """issue-local-038: the admin no longer supplies a password at all — the
+    backend always generates one (same as admin_reset_password), returned
+    once in the create response, and it actually works to log in."""
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "weakuser", "password": "alllowercase1", "role": "threat-viewer"},
+        json={"username": "newuser", "role": "threat-viewer"},
     )
-    assert r.status_code == 400
+    assert r.status_code == 200, r.text
+    generated = r.json()["generated_password"]
+    assert isinstance(generated, str) and len(generated) >= 20  # token_urlsafe(18)
+
+    login = _client().post(
+        "/api/auth/login", json={"username": "newuser", "password": generated}
+    )
+    assert login.status_code == 200
 
 
 def test_admin_reset_password_no_body_required(auth_env):
@@ -479,12 +497,12 @@ def test_admin_reset_password_no_body_required(auth_env):
     c = _login("admin", "Adminpass1")
     r = c.post(
         "/api/auth/users",
-        json={"username": "carol", "password": "Carolpass1", "role": "threat-viewer"},
+        json={"username": "carol", "role": "threat-viewer"},
     )
-    uid = r.json()["id"]
-    r2 = c.put(f"/api/auth/users/{uid}/password")
+    body = r.json()
+    r2 = c.put(f"/api/auth/users/{body['id']}/password")
     assert r2.status_code == 200, r2.text
-    assert r2.json()["generated_password"] != "Carolpass1"
+    assert r2.json()["generated_password"] != body["generated_password"]
 
 
 # ── admin user management ─────────────────────────────────────────────────────
@@ -583,17 +601,17 @@ def test_cannot_demote_last_admin_via_other(auth_env):
     """Two admins: the second may demote the first; the lone remaining admin
     cannot then be demoted."""
     c = _login("admin", "Adminpass1")
-    c.post(
+    created = c.post(
         "/api/auth/users",
-        json={"username": "admin2", "password": "Admin2pass1", "role": "admin"},
-    )
+        json={"username": "admin2", "role": "admin"},
+    ).json()
     admin1_id = c.get("/api/auth/me").json()["user"]["id"]
-    c2 = _login("admin2", "Admin2pass1")
+    c2 = _login("admin2", created["generated_password"])
     # issue-local-016: admin-created accounts are must_change_password by
     # default — clear it so admin2 can exercise non-self endpoints below.
     c2.put(
         "/api/auth/password",
-        json={"current_password": "Admin2pass1", "new_password": "Admin2pass2"},
+        json={"current_password": created["generated_password"], "new_password": "Admin2pass2"},
     )
     admin2_id = c2.get("/api/auth/me").json()["user"]["id"]
     # admin2 demotes admin1 → allowed (admin2 remains an admin).
@@ -614,11 +632,11 @@ def test_cannot_demote_last_admin_via_other(auth_env):
 
 def test_normal_role_blocked_from_admin_endpoints(auth_env):
     c = _login("admin", "Adminpass1")
-    c.post(
+    created = c.post(
         "/api/auth/users",
-        json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
-    )
-    nc = _login("viewer1", "Viewerpass1")
+        json={"username": "viewer1", "role": "threat-viewer"},
+    ).json()
+    nc = _login("viewer1", created["generated_password"])
     # Self endpoints allowed.
     assert nc.get("/api/auth/me").status_code == 200
     # issue-local-016: clear the forced-password-change gate first so the
@@ -626,7 +644,7 @@ def test_normal_role_blocked_from_admin_endpoints(auth_env):
     # gate (both return 403, which would otherwise mask which one fired).
     nc.put(
         "/api/auth/password",
-        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+        json={"current_password": created["generated_password"], "new_password": "Viewerpass2"},
     )
     # Admin user list blocked.
     assert nc.get("/api/auth/users").status_code == 403
@@ -636,16 +654,16 @@ def test_normal_role_blocked_from_admin_endpoints(auth_env):
 
 def test_normal_role_allowed_viewer_reads(auth_env):
     c = _login("admin", "Adminpass1")
-    c.post(
+    created = c.post(
         "/api/auth/users",
-        json={"username": "viewer1", "password": "Viewerpass1", "role": "threat-viewer"},
-    )
-    nc = _login("viewer1", "Viewerpass1")
+        json={"username": "viewer1", "role": "threat-viewer"},
+    ).json()
+    nc = _login("viewer1", created["generated_password"])
     # issue-local-016: clear the forced-password-change gate so this test
     # exercises the ROLE allowlist, not the must-change gate.
     nc.put(
         "/api/auth/password",
-        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+        json={"current_password": created["generated_password"], "new_password": "Viewerpass2"},
     )
     # A whitelisted Viewer read must pass the gate (not 401/403).
     r = nc.get("/api/viewer/summary")
@@ -663,18 +681,17 @@ def test_researcher_role_reaches_llm_providers_and_config(auth_env):
     403'd for anyone who wasn't admin, even though threat-researcher is
     exactly the role meant to see and use it."""
     c = _login("admin", "Adminpass1")
-    c.post(
+    created = c.post(
         "/api/auth/users",
         json={
             "username": "researcher1",
-            "password": "Researchpass1",
             "role": "threat-researcher",
         },
-    )
-    nc = _login("researcher1", "Researchpass1")
+    ).json()
+    nc = _login("researcher1", created["generated_password"])
     nc.put(
         "/api/auth/password",
-        json={"current_password": "Researchpass1", "new_password": "Researchpass2"},
+        json={"current_password": created["generated_password"], "new_password": "Researchpass2"},
     )
     assert nc.get("/api/llm/providers").status_code not in (401, 403)
     assert nc.get("/api/llm/config").status_code not in (401, 403)
@@ -685,14 +702,14 @@ def test_viewer_role_still_blocked_from_llm_providers(auth_env):
     _RESEARCHER_GET_PREFIXES adds to _VIEWER_GET_PREFIXES, it must not widen
     it in place (that would be a shared-tuple aliasing bug)."""
     c = _login("admin", "Adminpass1")
-    c.post(
+    created = c.post(
         "/api/auth/users",
-        json={"username": "viewer2", "password": "Viewerpass1", "role": "threat-viewer"},
-    )
-    nc = _login("viewer2", "Viewerpass1")
+        json={"username": "viewer2", "role": "threat-viewer"},
+    ).json()
+    nc = _login("viewer2", created["generated_password"])
     nc.put(
         "/api/auth/password",
-        json={"current_password": "Viewerpass1", "new_password": "Viewerpass2"},
+        json={"current_password": created["generated_password"], "new_password": "Viewerpass2"},
     )
     assert nc.get("/api/llm/providers").status_code == 403
 

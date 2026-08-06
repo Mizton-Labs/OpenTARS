@@ -28,17 +28,49 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
-def format_hunt_id(prefix: str, hunt_seq: int | None) -> str:
+def _expand_hunt_id_prefix(prefix: str, created_at: str | None) -> str:
+    """Expand any strftime directives in *prefix* (issue-local-038, e.g.
+    "TH-%Y%m%d" -> "TH-20260805") using the hunt PACKAGE'S OWN creation
+    date, not "now" — the display id is otherwise recomputed dynamically on
+    every read (see format_hunt_id's docstring), and a date is not a static
+    label like the rest of the prefix: expanding it against "now" would make
+    a package's displayed id silently change every day it's viewed after
+    creation, defeating the whole point of stamping it with when the hunt
+    actually happened.
+    """
+    if "%" not in prefix:
+        return prefix
+    dt = None
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at)
+        except ValueError:
+            dt = None
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    try:
+        return dt.strftime(prefix)
+    except ValueError:
+        # A malformed directive should have been rejected at save time
+        # (backend.config.loader._validate_hunt_id_prefix) — degrade to the
+        # literal template rather than raising out of a display path.
+        return prefix
+
+
+def format_hunt_id(prefix: str, hunt_seq: int | None, created_at: str | None = None) -> str:
     """Build a hunt package's human-readable HuntID, e.g. prefix 'TH' + seq 1 -> 'TH01'.
 
     ``:02d`` is a minimum width, not a cap — seq 100 renders as 'TH100', no
     truncation. Computed dynamically from the *current* prefix setting
     (issue-local-018), not baked into a stored string, so changing the
-    prefix relabels every package consistently.
+    (non-date) prefix relabels every package consistently. *created_at*
+    (issue-local-038) is the owning package's own creation timestamp, used
+    only to resolve any strftime directives in the prefix — see
+    _expand_hunt_id_prefix.
     """
     if hunt_seq is None:
         return ""
-    return f"{prefix}{hunt_seq:02d}"
+    return f"{_expand_hunt_id_prefix(prefix, created_at)}{hunt_seq:02d}"
 
 
 def format_run_id(hunt_id_display: str, run_seq: int | None) -> str:
@@ -701,7 +733,9 @@ async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
     if not row:
         return None
     pkg = dict(row)
-    pkg["hunt_id_display"] = format_hunt_id(load_hunt_id_prefix(), pkg.get("hunt_seq"))
+    pkg["hunt_id_display"] = format_hunt_id(
+        load_hunt_id_prefix(), pkg.get("hunt_seq"), pkg.get("created_at")
+    )
     return pkg
 
 
@@ -903,7 +937,7 @@ async def list_hunt_packages(
     # computed while building runs_by_pkg below.
     prefix = load_hunt_id_prefix()
     hunt_id_by_pkg: dict[str, str] = {
-        row["id"]: format_hunt_id(prefix, row["hunt_seq"]) for row in rows
+        row["id"]: format_hunt_id(prefix, row["hunt_seq"], row["created_at"]) for row in rows
     }
 
     # Build lookup: hunt_package_id → [run summary dicts, newest first]
@@ -1286,7 +1320,9 @@ async def list_explorer_rows(
         if not pkg_ids:
             return []
         placeholders = ",".join("?" for _ in pkg_ids)
-        hunt_id_by_pkg = {r["id"]: format_hunt_id(prefix, r["hunt_seq"]) for r in pkg_rows}
+        hunt_id_by_pkg = {
+            r["id"]: format_hunt_id(prefix, r["hunt_seq"], r["created_at"]) for r in pkg_rows
+        }
         name_by_pkg = {r["id"]: r["name"] for r in pkg_rows}
 
         if category == "hunts":
@@ -2442,7 +2478,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT hunt_seq FROM hunt_packages WHERE id = ?", (hunt_package_id,)
+            "SELECT hunt_seq, created_at FROM hunt_packages WHERE id = ?", (hunt_package_id,)
         )
         pkg_row = await cur.fetchone()
         await cur.close()
@@ -2472,7 +2508,9 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
             await cur2.close()
 
     hunt_id_display = format_hunt_id(
-        load_hunt_id_prefix(), pkg_row["hunt_seq"] if pkg_row else None
+        load_hunt_id_prefix(),
+        pkg_row["hunt_seq"] if pkg_row else None,
+        pkg_row["created_at"] if pkg_row else None,
     )
 
     result: list[dict[str, Any]] = []
@@ -3170,7 +3208,7 @@ async def list_correlated_iocs(
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             f"""SELECT ei.ioc, ei.ioc_type, hp.id AS hunt_package_id, hp.name AS hunt_name,
-                       hp.hunt_seq
+                       hp.hunt_seq, hp.created_at
                 FROM extracted_iocs ei
                 JOIN hunt_packages hp ON hp.id = ei.hunt_package_id
                 WHERE {" AND ".join(where)}""",  # noqa: S608
@@ -3189,7 +3227,7 @@ async def list_correlated_iocs(
         entry["hunt_packages"][row["hunt_package_id"]] = {
             "id": row["hunt_package_id"],
             "name": row["hunt_name"],
-            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"], row["created_at"]),
         }
 
     result = [
@@ -3212,7 +3250,8 @@ async def _latest_threat_intel_per_package() -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT tia.*, hp.name AS hunt_name, hp.hunt_seq
+            """SELECT tia.*, hp.name AS hunt_name, hp.hunt_seq,
+                      hp.created_at AS pkg_created_at
                FROM threat_intel_analysis tia
                JOIN hunt_packages hp ON hp.id = tia.hunt_package_id
                WHERE hp.status != 'archived' AND hp.excluded_from_correlation = 0
@@ -3229,7 +3268,7 @@ async def _latest_threat_intel_per_package() -> list[dict[str, Any]]:
             continue  # rows are ORDER BY ... created_at DESC, so first wins
         decoded = _decode_threat_intel_row(dict(row))
         decoded["hunt_name"] = row["hunt_name"]
-        decoded["hunt_id_display"] = format_hunt_id(prefix, row["hunt_seq"])
+        decoded["hunt_id_display"] = format_hunt_id(prefix, row["hunt_seq"], row["pkg_created_at"])
         latest[pkg_id] = decoded
     return list(latest.values())
 
@@ -3298,7 +3337,8 @@ async def aggregate_ttps() -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT hpk.hunt_package_id, hpk.ttp_analysis, hp.name AS hunt_name, hp.hunt_seq
+            """SELECT hpk.hunt_package_id, hpk.ttp_analysis, hp.name AS hunt_name, hp.hunt_seq,
+                      hp.created_at
                FROM hunting_packages hpk
                JOIN hunt_packages hp ON hp.id = hpk.hunt_package_id
                WHERE hp.status != 'archived' AND hp.excluded_from_correlation = 0
@@ -3325,7 +3365,7 @@ async def aggregate_ttps() -> list[dict[str, Any]]:
         source = {
             "id": pkg_id,
             "name": row["hunt_name"],
-            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"], row["created_at"]),
         }
         for tech in (ttp or {}).get("techniques") or []:
             tid = str(tech.get("technique_id") or "").strip()
@@ -3375,7 +3415,7 @@ async def aggregate_evidence_sources(pkg_ids: tuple[str, ...]) -> list[dict[str,
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             "SELECT ei.hunt_package_id, ei.item_type, ei.source_entity, "
-            "       hp.name AS hunt_name, hp.hunt_seq "
+            "       hp.name AS hunt_name, hp.hunt_seq, hp.created_at "
             "FROM evidence_items ei "
             "JOIN hunt_packages hp ON hp.id = ei.hunt_package_id "
             f"WHERE ei.hunt_package_id IN ({placeholders})",  # noqa: S608
@@ -3396,7 +3436,7 @@ async def aggregate_evidence_sources(pkg_ids: tuple[str, ...]) -> list[dict[str,
         entry["sources"][pkg_id] = {
             "id": pkg_id,
             "name": row["hunt_name"],
-            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"], row["created_at"]),
         }
 
     out = [{**entry, "sources": list(entry["sources"].values())} for entry in by_entity.values()]
@@ -3411,7 +3451,8 @@ async def list_tracking_hunts() -> list[dict[str, Any]]:
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            """SELECT hp.id, hp.name, hp.hunt_seq, hp.status, hp.excluded_from_correlation,
+            """SELECT hp.id, hp.name, hp.hunt_seq, hp.created_at, hp.status,
+                      hp.excluded_from_correlation,
                       COUNT(DISTINCT ei.id) AS ioc_count,
                       COUNT(DISTINCT tia.id) AS threat_intel_count
                FROM hunt_packages hp
@@ -3430,7 +3471,7 @@ async def list_tracking_hunts() -> list[dict[str, Any]]:
         {
             "id": row["id"],
             "name": row["name"],
-            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"]),
+            "hunt_id_display": format_hunt_id(prefix, row["hunt_seq"], row["created_at"]),
             "status": row["status"],
             "excluded_from_correlation": bool(row["excluded_from_correlation"]),
             "ioc_count": row["ioc_count"],

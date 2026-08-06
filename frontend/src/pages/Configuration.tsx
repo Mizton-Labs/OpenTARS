@@ -359,11 +359,16 @@ function AppTitleSetting() {
 // issue-local-016: swatch colors are hardcoded hex (not Tailwind classes) so
 // each option always shows its OWN theme's real colors regardless of which
 // theme is currently active on the page rendering this picker.
-const THEME_SWATCHES: Record<'classic' | 'energy' | 'light' | 'ocean', { label: string; colors: string[] }> = {
+const THEME_SWATCHES: Record<
+  'classic' | 'energy' | 'light' | 'ocean' | 'redhunter',
+  { label: string; colors: string[] }
+> = {
   classic: { label: 'Classic', colors: ['#030712', '#111827', '#2f58f0', '#dc2626'] },
   energy: { label: 'Energy', colors: ['#0a0a0a', '#121212', '#eab308', '#7f1d1d'] },
-  light: { label: 'Light', colors: ['#f9fafb', '#f3f4f6', '#2f58f0', '#dc2626'] },
+  // issue-local-038: page/card swapped (page now near-white, card the grey).
+  light: { label: 'Light', colors: ['#fafbfd', '#e3e6e9', '#2f58f0', '#dc2626'] },
   ocean: { label: 'Ocean', colors: ['#02080b', '#08161c', '#0ea5e9', '#dc2626'] },
+  redhunter: { label: 'RedHunter', colors: ['#080808', '#141414', '#f43f5e', '#dc2626'] },
 }
 
 function ThemeSetting() {
@@ -376,7 +381,7 @@ function ThemeSetting() {
   const [error, setError] = useState<string | null>(null)
 
   const mutation = useMutation({
-    mutationFn: (theme: 'classic' | 'energy' | 'light' | 'ocean') => api.setDefaultTheme(theme),
+    mutationFn: (theme: 'classic' | 'energy' | 'light' | 'ocean' | 'redhunter') => api.setDefaultTheme(theme),
     onSuccess: () => {
       setSaved(true)
       setError(null)
@@ -389,7 +394,12 @@ function ThemeSetting() {
   })
 
   const current =
-    data?.theme === 'energy' || data?.theme === 'light' || data?.theme === 'ocean' ? data.theme : 'classic'
+    data?.theme === 'energy' ||
+    data?.theme === 'light' ||
+    data?.theme === 'ocean' ||
+    data?.theme === 'redhunter'
+      ? data.theme
+      : 'classic'
 
   return (
     <div className="border border-gray-700 rounded-lg px-3 py-2.5 space-y-2">
@@ -403,7 +413,7 @@ function ThemeSetting() {
       <div className="flex gap-2">
         {(
           Object.entries(THEME_SWATCHES) as [
-            'classic' | 'energy' | 'light' | 'ocean',
+            'classic' | 'energy' | 'light' | 'ocean' | 'redhunter',
             { label: string; colors: string[] },
           ][]
         ).map(

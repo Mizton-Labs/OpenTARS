@@ -12,13 +12,12 @@
  *
  * Configuration only mounts this tab when authEnabled && isAdmin.
  */
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, KeyRound, Plus, X, Copy, Check, AlertTriangle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query'
+import { Trash2, KeyRound, Plus, X, Copy, Check, AlertTriangle, Save, Sparkles } from 'lucide-react'
 import { api, type AuthUser, type Organization, type UserRole } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import Toggle from '../../components/Toggle'
-import { describePasswordPolicy, validatePassword } from '../../utils/passwordPolicy'
 
 const USERS_KEY = ['auth-users'] as const
 // issue-local-037: shared with OrgManagementTab so both tabs invalidate the
@@ -45,6 +44,11 @@ export default function UserManagementTab() {
   // to guess wrong otherwise.
   const [notice, setNotice] = useState<string | null>(null)
   const [resetFor, setResetFor] = useState<AuthUser | null>(null)
+  // issue-local-038: one-time reveal of a newly-created user's generated
+  // password — same shape/urgency as ResetPasswordModal's reveal.
+  const [createdReveal, setCreatedReveal] = useState<{ username: string; password: string } | null>(
+    null,
+  )
   // prompts-049: armed inline delete confirmation (mirrors the provider-delete
   // pattern) — the trash button arms it; the actual delete only fires from the
   // confirm panel.
@@ -92,6 +96,17 @@ export default function UserManagementTab() {
     },
     onError: (e) => setActionError(errorMessage(e)),
   })
+  // issue-local-038: admin-triggered — resets a user's onboarded flag so
+  // the first-login wizard shows again on their next login.
+  const onboardMut = useMutation({
+    mutationFn: (id: number) => api.auth.setUserOnboarded(id, false),
+    onSuccess: (updated) => {
+      setActionError(null)
+      setNotice(`First-login wizard will show for "${updated.username}" on their next login.`)
+      invalidate()
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  })
 
   if (isLoading) return <div className="text-sm text-gray-500">Loading…</div>
 
@@ -115,122 +130,33 @@ export default function UserManagementTab() {
       )}
 
       <div className="space-y-2">
-        {users.map((u) => {
-          const isSelf = self?.id === u.id
-          const armed = confirmDeleteId === u.id
-          return (
-            <div
-              key={u.id}
-              className="rounded-lg border border-gray-700 bg-gray-800/50"
-            >
-              <div className="flex items-center gap-3 px-3 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-mono font-medium text-gray-200 truncate">
-                    {u.username}
-                    {isSelf && <span className="ml-2 text-[10px] text-gray-500">(you)</span>}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {u.enabled ? 'Active' : 'Disabled'} · {orgLabel(u.org_id, organizations)}
-                  </p>
-                </div>
-
-                {/* Organization selector */}
-                <select
-                  className="input w-32 text-xs"
-                  aria-label={`Organization for ${u.username}`}
-                  value={u.org_id ?? ''}
-                  disabled={orgMut.isPending}
-                  onChange={(e) =>
-                    orgMut.mutate({
-                      id: u.id,
-                      org_id: e.target.value === '' ? null : Number(e.target.value),
-                    })
-                  }
-                >
-                  <option value="">Local user</option>
-                  {organizations.map((o) => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
-                  ))}
-                </select>
-
-                {/* Role selector */}
-                <select
-                  className="input w-28 text-xs"
-                  value={u.role}
-                  disabled={isSelf || roleMut.isPending}
-                  onChange={(e) => roleMut.mutate({ id: u.id, role: e.target.value as UserRole })}
-                >
-                  <option value="admin">admin</option>
-                  <option value="threat-researcher">threat-researcher</option>
-                  <option value="threat-viewer">threat-viewer</option>
-                  <option value="feed-sender">feed-sender</option>
-                </select>
-
-                {/* Enabled toggle */}
-                <div className="flex items-center gap-1.5">
-                  <Toggle
-                    checked={u.enabled}
-                    disabled={isSelf || enabledMut.isPending}
-                    onChange={(enabled) => enabledMut.mutate({ id: u.id, enabled })}
-                  />
-                </div>
-
-                <button
-                  className="btn-ghost p-1"
-                  title="Reset password"
-                  onClick={() => { setActionError(null); setResetFor(u) }}
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  className="btn-ghost p-1 text-red-400 hover:text-red-300 disabled:opacity-40"
-                  title={isSelf ? 'You cannot delete your own account' : 'Delete user'}
-                  disabled={isSelf || deleteMut.isPending}
-                  onClick={() => { setActionError(null); setConfirmDeleteId(u.id) }}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {armed && (
-                <div
-                  className="border-t border-red-500/40 bg-red-500/5 rounded-b-lg px-3 py-2.5 space-y-2"
-                  data-testid={`delete-confirm-${u.id}`}
-                  role="alertdialog"
-                  aria-label={`Confirm delete ${u.username}`}
-                >
-                  <p className="text-xs text-gray-200">
-                    Delete user "<span className="font-mono">{u.username}</span>"? This cannot be
-                    undone.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="btn-danger flex items-center gap-1.5"
-                      onClick={() => deleteMut.mutate(u.id)}
-                      disabled={deleteMut.isPending}
-                      data-testid={`delete-confirm-yes-${u.id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      {deleteMut.isPending ? 'Deleting…' : 'Confirm delete'}
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      onClick={() => setConfirmDeleteId(null)}
-                      disabled={deleteMut.isPending}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {users.map((u) => (
+          <UserRow
+            key={u.id}
+            user={u}
+            organizations={organizations}
+            isSelf={self?.id === u.id}
+            armed={confirmDeleteId === u.id}
+            roleMut={roleMut}
+            orgMut={orgMut}
+            enabledMut={enabledMut}
+            deleteMut={deleteMut}
+            onboardMut={onboardMut}
+            onArmDelete={() => { setActionError(null); setConfirmDeleteId(u.id) }}
+            onCancelDelete={() => setConfirmDeleteId(null)}
+            onResetPassword={() => { setActionError(null); setResetFor(u) }}
+            onSaveError={setActionError}
+          />
+        ))}
       </div>
 
       <CreateUserForm
         organizations={organizations}
-        onCreated={(username) => { invalidate(); setNotice(`User "${username}" created.`) }}
+        onCreated={(username, generatedPassword) => {
+          invalidate()
+          setNotice(`User "${username}" created.`)
+          setCreatedReveal({ username, password: generatedPassword })
+        }}
         onError={setActionError}
       />
 
@@ -239,6 +165,204 @@ export default function UserManagementTab() {
           user={resetFor}
           onClose={() => setResetFor(null)}
         />
+      )}
+
+      {createdReveal !== null && (
+        <CreatedUserPasswordModal
+          username={createdReveal.username}
+          password={createdReveal.password}
+          onClose={() => setCreatedReveal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── User row (issue-local-038: staged Role/Organization + explicit Save) ────
+//
+// Role and Organization are staged locally and only applied on an explicit
+// Save click — a "Save" button appears in the row once either is dirty
+// (mirrors the "Save Callback URL" pattern already used in SSO config,
+// issue-local-036). The Enabled toggle stays instant, unlike Role/Org — an
+// admin disabling a compromised account should not be delayed by a confirm
+// step.
+
+function UserRow({
+  user: u,
+  organizations,
+  isSelf,
+  armed,
+  roleMut,
+  orgMut,
+  enabledMut,
+  deleteMut,
+  onboardMut,
+  onArmDelete,
+  onCancelDelete,
+  onResetPassword,
+  onSaveError,
+}: {
+  user: AuthUser
+  organizations: Organization[]
+  isSelf: boolean
+  armed: boolean
+  roleMut: UseMutationResult<AuthUser, unknown, { id: number; role: UserRole }>
+  orgMut: UseMutationResult<AuthUser, unknown, { id: number; org_id: number | null }>
+  enabledMut: UseMutationResult<AuthUser, unknown, { id: number; enabled: boolean }>
+  deleteMut: UseMutationResult<{ status: string; id: number }, unknown, number>
+  onboardMut: UseMutationResult<AuthUser, unknown, number>
+  onArmDelete: () => void
+  onCancelDelete: () => void
+  onResetPassword: () => void
+  onSaveError: (msg: string | null) => void
+}) {
+  const [draftRole, setDraftRole] = useState<UserRole>(u.role)
+  const [draftOrgId, setDraftOrgId] = useState<number | ''>(u.org_id ?? '')
+
+  // Re-sync the draft whenever the persisted value actually changes (a
+  // successful save, or a refetch picking up someone else's change) — NOT
+  // on every render, so mid-edit keystrokes/selections survive unrelated
+  // re-renders of this row.
+  useEffect(() => {
+    setDraftRole(u.role)
+  }, [u.role])
+  useEffect(() => {
+    setDraftOrgId(u.org_id ?? '')
+  }, [u.org_id])
+
+  const roleDirty = draftRole !== u.role
+  const orgDirty = draftOrgId !== (u.org_id ?? '')
+  const dirty = roleDirty || orgDirty
+  const saving = roleMut.isPending || orgMut.isPending
+
+  function handleSave() {
+    onSaveError(null)
+    if (roleDirty) roleMut.mutate({ id: u.id, role: draftRole })
+    if (orgDirty) orgMut.mutate({ id: u.id, org_id: draftOrgId === '' ? null : draftOrgId })
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-700 bg-gray-800/50">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-mono font-medium text-gray-200 truncate">
+            {u.username}
+            {isSelf && <span className="ml-2 text-[10px] text-gray-500">(you)</span>}
+          </p>
+          <p className="text-xs text-gray-500">
+            {u.enabled ? 'Active' : 'Disabled'} · {orgLabel(u.org_id, organizations)}
+          </p>
+        </div>
+
+        {/* Organization selector — staged, applied on Save */}
+        <select
+          className="input w-32 text-xs"
+          aria-label={`Organization for ${u.username}`}
+          value={draftOrgId}
+          disabled={saving}
+          onChange={(e) => setDraftOrgId(e.target.value === '' ? '' : Number(e.target.value))}
+        >
+          <option value="">Local user</option>
+          {organizations.map((o) => (
+            <option key={o.id} value={o.id}>{o.name}</option>
+          ))}
+        </select>
+
+        {/* Role selector — staged, applied on Save */}
+        <select
+          className="input w-28 text-xs"
+          value={draftRole}
+          disabled={isSelf || saving}
+          onChange={(e) => setDraftRole(e.target.value as UserRole)}
+        >
+          <option value="admin">admin</option>
+          <option value="threat-researcher">threat-researcher</option>
+          <option value="threat-viewer">threat-viewer</option>
+          <option value="feed-sender">feed-sender</option>
+        </select>
+
+        {/* Save — only appears once Role and/or Organization is dirty */}
+        {dirty && (
+          <button
+            className="btn-primary p-1.5 text-xs flex items-center gap-1"
+            title="Save role/organization changes"
+            disabled={saving}
+            onClick={handleSave}
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+
+        {/* Enabled toggle — instant, not staged (see comment above) */}
+        <div className="flex items-center gap-1.5">
+          <Toggle
+            checked={u.enabled}
+            disabled={isSelf || enabledMut.isPending}
+            onChange={(enabled) => enabledMut.mutate({ id: u.id, enabled })}
+          />
+        </div>
+
+        {/* issue-local-038: explicit text label added — was icon-only. */}
+        <button
+          className="btn-ghost p-1 flex items-center gap-1 text-xs whitespace-nowrap"
+          title="Reset password"
+          onClick={onResetPassword}
+        >
+          <KeyRound className="w-3.5 h-3.5" />
+          Reset password
+        </button>
+        {/* issue-local-038: admin-triggered — forces the first-login wizard
+            to show again for this user on their next login. */}
+        <button
+          className="btn-ghost p-1 flex items-center gap-1 text-xs whitespace-nowrap"
+          title="Trigger first-login wizard on next login"
+          disabled={onboardMut.isPending}
+          onClick={() => onboardMut.mutate(u.id)}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          First-login wizard
+        </button>
+        <button
+          className="btn-ghost p-1 text-red-400 hover:text-red-300 disabled:opacity-40"
+          title={isSelf ? 'You cannot delete your own account' : 'Delete user'}
+          disabled={isSelf || deleteMut.isPending}
+          onClick={onArmDelete}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {armed && (
+        <div
+          className="border-t border-red-500/40 bg-red-500/5 rounded-b-lg px-3 py-2.5 space-y-2"
+          data-testid={`delete-confirm-${u.id}`}
+          role="alertdialog"
+          aria-label={`Confirm delete ${u.username}`}
+        >
+          <p className="text-xs text-gray-200">
+            Delete user "<span className="font-mono">{u.username}</span>"? This cannot be
+            undone.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-danger flex items-center gap-1.5"
+              onClick={() => deleteMut.mutate(u.id)}
+              disabled={deleteMut.isPending}
+              data-testid={`delete-confirm-yes-${u.id}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleteMut.isPending ? 'Deleting…' : 'Confirm delete'}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={onCancelDelete}
+              disabled={deleteMut.isPending}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -252,14 +376,14 @@ function CreateUserForm({
   onError,
 }: {
   organizations: Organization[]
-  onCreated: (username: string) => void
+  // issue-local-038: carries the one-time generated password up, so the
+  // parent can show the reveal modal (same one-time-reveal UX as
+  // ResetPasswordModal — the password is never retrievable again).
+  onCreated: (username: string, generatedPassword: string) => void
   onError: (msg: string | null) => void
 }) {
-  const { passwordPolicy } = useAuth()
   const [open, setOpen] = useState(false)
   const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
   const [role, setRole] = useState<UserRole>('threat-viewer')
   const [orgId, setOrgId] = useState<number | ''>('')
   // issue-local-037: enabled by default — the whole point of the checkbox
@@ -270,7 +394,6 @@ function CreateUserForm({
     mutationFn: () =>
       api.auth.createUser({
         username,
-        password,
         role,
         org_id: orgId === '' ? null : orgId,
         use_email_username: useEmailUsername,
@@ -278,13 +401,11 @@ function CreateUserForm({
     onSuccess: (created) => {
       onError(null)
       setUsername('')
-      setPassword('')
-      setConfirm('')
       setRole('threat-viewer')
       setOrgId('')
       setUseEmailUsername(true)
       setOpen(false)
-      onCreated(created.username)
+      onCreated(created.username, created.generated_password)
     },
     onError: (e) => onError(errorMessage(e)),
   })
@@ -292,8 +413,6 @@ function CreateUserForm({
   function reset() {
     setOpen(false)
     setUsername('')
-    setPassword('')
-    setConfirm('')
     setOrgId('')
     setUseEmailUsername(true)
     onError(null)
@@ -308,16 +427,7 @@ function CreateUserForm({
   }
 
   const usernameValid = USERNAME_RE.test(username)
-  const policyError = password !== '' ? validatePassword(password, passwordPolicy) : null
-  const confirmError =
-    confirm !== '' && password !== confirm ? 'Passwords do not match.' : null
-  const canSubmit =
-    usernameValid &&
-    password !== '' &&
-    confirm !== '' &&
-    policyError === null &&
-    confirmError === null &&
-    !mutation.isPending
+  const canSubmit = usernameValid && !mutation.isPending
 
   const selectedOrg = orgId === '' ? null : organizations.find((o) => o.id === orgId) ?? null
   const previewUsername =
@@ -384,39 +494,17 @@ function CreateUserForm({
           Username will be <span className="font-mono text-gray-300">{previewUsername}</span>.
         </p>
       )}
-      <div>
-        <label htmlFor="new-user-password" className="label">Password</label>
-        <input
-          id="new-user-password"
-          type="password"
-          autoComplete="new-password"
-          className="input"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <p className="text-xs text-gray-500 mt-1">{describePasswordPolicy(passwordPolicy)}</p>
-      </div>
-      <div>
-        <label htmlFor="new-user-confirm" className="label">Confirm password</label>
-        <input
-          id="new-user-confirm"
-          type="password"
-          autoComplete="new-password"
-          className="input"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-        />
-      </div>
+      {/* issue-local-038: no password fields — the backend always generates
+          one, shown once after creation (same as Reset Password). */}
       <p className="text-xs text-gray-500">
-        The new user will be required to set their own password on first login.
+        A random password is generated automatically and shown once after creation. The new
+        user will be required to set their own password on first login.
       </p>
       {username !== '' && !usernameValid && (
         <p className="text-xs text-red-400">
           Username must be 1–40 chars of letters, digits, &apos;.&apos;, &apos;_&apos; or &apos;-&apos;.
         </p>
       )}
-      {policyError !== null && <p className="text-xs text-red-400">{policyError}</p>}
-      {confirmError !== null && <p className="text-xs text-red-400">{confirmError}</p>}
       <div className="flex justify-end gap-2">
         <button className="btn-ghost" onClick={reset}>
           <X className="w-3.5 h-3.5" /> Cancel
@@ -425,6 +513,73 @@ function CreateUserForm({
           <Plus className="w-3.5 h-3.5" />
           {mutation.isPending ? 'Creating…' : 'Create'}
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Created-user password reveal (issue-local-038) ──────────────────────────
+//
+// Create User no longer takes a password at all — the backend always
+// generates one. This is the one-time reveal for it, same read-only +
+// copy-to-clipboard shape as ResetPasswordModal's reveal step below, just
+// without the "Generate" confirmation step (creation already happened).
+
+function CreatedUserPasswordModal({
+  username,
+  password,
+  onClose,
+}: {
+  username: string
+  password: string
+  onClose: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(password)
+    setCopied(true)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-gray-200">
+            User created — <span className="font-mono">{username}</span>
+          </h4>
+          <button className="btn-ghost p-1" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 p-2.5 flex gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-300">
+            Shown only once — copy it now and share it with{' '}
+            <span className="font-mono">{username}</span> through a secure channel. It cannot be
+            retrieved again, and they must set a new password on their first login.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            readOnly
+            aria-label="Generated password"
+            className="input font-mono flex-1"
+            value={password}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button className="btn-secondary p-2" title="Copy to clipboard" onClick={handleCopy}>
+            {copied ? (
+              <Check className="w-3.5 h-3.5 text-green-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+          </button>
+        </div>
+        <div className="flex justify-end">
+          <button className="btn-primary text-xs" onClick={onClose}>Done</button>
+        </div>
       </div>
     </div>
   )

@@ -59,12 +59,14 @@ class TestHuntIdPrefixConfig:
         loader.save_hunt_id_prefix("HUNT")
         assert loader.load_hunt_id_prefix() == "HUNT"
 
-    def test_save_rejects_non_alphanumeric(self, tmp_path, monkeypatch):
+    def test_save_rejects_disallowed_characters(self, tmp_path, monkeypatch):
         from backend.config import loader
 
         monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
         with pytest.raises(ValueError):
-            loader.save_hunt_id_prefix("TH-01")
+            loader.save_hunt_id_prefix("TH 01")  # space is not allowed
+        with pytest.raises(ValueError):
+            loader.save_hunt_id_prefix("TH/01")  # filesystem-unsafe
 
     def test_save_rejects_empty(self, tmp_path, monkeypatch):
         from backend.config import loader
@@ -78,7 +80,68 @@ class TestHuntIdPrefixConfig:
 
         monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
         with pytest.raises(ValueError):
-            loader.save_hunt_id_prefix("ABCDEFGHI")  # 9 chars, max is 8
+            loader.save_hunt_id_prefix("A" * 25)  # max is 24
+
+
+# ── hunt_id_prefix strftime support (issue-local-038) ────────────────────────
+
+
+class TestHuntIdPrefixStrftime:
+    def test_save_accepts_strftime_directives(self, tmp_path, monkeypatch):
+        from backend.config import loader
+
+        monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
+        loader.save_hunt_id_prefix("TH-%Y%m%d")
+        assert loader.load_hunt_id_prefix() == "TH-%Y%m%d"
+
+    def test_format_hunt_id_expands_strftime_using_created_at_not_now(self):
+        from backend.threat_hunting.db import format_hunt_id
+
+        assert (
+            format_hunt_id("TH-%Y%m%d", 1, "2026-01-15T10:30:00+00:00") == "TH-2026011501"
+        )
+
+    def test_format_hunt_id_static_prefix_ignores_created_at(self):
+        from backend.threat_hunting.db import format_hunt_id
+
+        assert format_hunt_id("TH", 1, "2026-01-15T10:30:00+00:00") == "TH01"
+
+    def test_format_hunt_id_missing_created_at_falls_back_to_now(self):
+        from backend.threat_hunting.db import format_hunt_id
+
+        result = format_hunt_id("TH-%Y", 1, None)
+        assert result.startswith("TH-2")  # any sane current year
+        assert result.endswith("01")
+
+    def test_format_hunt_id_unparseable_created_at_falls_back_to_now(self):
+        from backend.threat_hunting.db import format_hunt_id
+
+        result = format_hunt_id("TH-%Y", 1, "not-a-date")
+        assert result.startswith("TH-2")
+        assert result.endswith("01")
+
+    @pytest.mark.asyncio
+    async def test_create_hunt_package_stamps_date_prefix_from_creation_date(
+        self, tmp_path, monkeypatch
+    ):
+        """A date-based prefix must reflect the package's OWN creation date,
+        stable even if read again after that date has passed (not "now")."""
+        from unittest.mock import patch
+
+        from backend.config import loader
+        from backend.threat_hunting import db as th_db
+
+        monkeypatch.setattr(loader, "APP_CONFIG_PATH", tmp_path / "application.yaml")
+        loader.save_hunt_id_prefix("TH-%Y%m%d")
+
+        db_path = tmp_path / "th.db"
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            await th_db.init_threat_hunting_db()
+            pkg = await th_db.create_hunt_package("pkg", "")
+
+        assert pkg["hunt_id_display"].startswith("TH-")
+        assert pkg["hunt_id_display"].endswith("01")
+        assert len(pkg["hunt_id_display"]) == len("TH-YYYYMMDD01")
 
 
 # ── schema v6 migration ──────────────────────────────────────────────────────

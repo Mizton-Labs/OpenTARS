@@ -9,6 +9,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Home branding, commit-stamped logs/reports, hunt package clone + Simple view, RedHunter theme, first-login wizard, user-management polish (issue-local-038)
+
+- **Home**: subtitle "Threat Agentic Research System" under the OpenTARS title, with spacing before "Choose a module to get started". The title is slightly larger with a two-tone "Open"/"TARS" treatment, and the subtitle's T-A-R-S initials are highlighted and enlarged so the acronym reads clearly.
+- **Logging**: the `opentars` launcher now exports `GIT_COMMIT` to the backend process itself (previously only to the frontend build step), so the startup log line includes the running commit.
+- **Hunt packages**:
+  - A Clone button in the package detail page's action bar (previously only on the list page), reusing the same clone route/dialog.
+  - Each generated report — data, markdown export, and PDF — is stamped with the app version/commit it was generated with.
+  - A new "Simple" density (leftmost in the switcher): like Compact, but the per-run chip row collapses to a one-line run count.
+  - The list's default density is now **Table** (was Detailed) when the user has no saved preference.
+  - The HuntID prefix may now contain `strftime` directives (e.g. `TH-%Y%m%d` → `TH-20260805`), resolved from each package's own creation date — not "now" — so a date-based prefix never drifts as time passes. Fixed a real bug found along the way: the prefix input forced every keystroke to uppercase, silently corrupting case-sensitive directives (`%m` month → `%M` minutes).
+- **Themes**: Light's page background and card surface were inverted — previously the page was a light grey and cards read as near-white; now the page is near-white and cards carry the grey contrast, as intended. Added **RedHunter**, a near-black dark theme with an intense ruby/crimson accent (Tailwind's `rose` scale, deliberately distinct from the app's stock red danger color so error states stay legible). A first-login onboarding wizard (backend-driven `onboarded` flag, grandfathering every pre-existing account so nobody is retroactively interrupted) lets a new user pick a theme and hunt-package view style, with a live preview, before entering the app. An admin can also force the wizard to show again for any user via a "First-login wizard" action in User Management.
+- **User management**:
+  - Role and Organization changes are now staged and applied via an explicit "Save" button that appears once either is dirty (the Enabled toggle stays instant, since disabling a compromised account shouldn't wait on a confirm step).
+  - Creating a user no longer takes an admin-supplied password — the backend always generates one (same as the existing Reset Password flow), shown once for the admin to hand off.
+  - The Reset Password button now shows its label ("Reset password"), not just the key icon.
+
 ### Fixed — SSO login silently reverted admin-assigned roles; Account page role hidden behind a long username
 
 - **Fixed: SSO login could silently overwrite an admin-assigned role.** On every SSO login,

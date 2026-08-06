@@ -360,7 +360,7 @@ def save_app_title(value: str) -> None:
 
 # ── Instance-wide default UI theme (issue-local-016) ─────────────────────────
 
-_VALID_THEMES = {"classic", "energy", "light", "ocean"}
+_VALID_THEMES = {"classic", "energy", "light", "ocean", "redhunter"}
 
 
 def load_default_theme() -> str:
@@ -791,19 +791,46 @@ def save_th_report_formats(value: dict[str, bool]) -> None:
 # runs' Run ID (f"{hunt_id}-X{run_seq:02d}", e.g. "TH01-X01"). Computed
 # dynamically from this setting at read time (not baked into a stored
 # string), so changing the prefix relabels every package/run consistently.
+#
+# issue-local-038: the prefix may also contain strftime directives (e.g.
+# "TH-%Y%m%d" -> "TH-20260805"), expanded by
+# backend.threat_hunting.db.format_hunt_id using each hunt PACKAGE'S OWN
+# created_at — never "now" — so a date-based prefix stays stable for that
+# package's whole lifetime instead of drifting as today's date changes on
+# every later view. This module only owns the TEMPLATE string's validation.
 
 _TH_HUNT_ID_PREFIX_DEFAULT = "TH"
-_TH_HUNT_ID_PREFIX_MAX_LEN = 8
+_TH_HUNT_ID_PREFIX_MAX_LEN = 24
+# Letters, digits, and a conservative set of separators/the strftime escape
+# character. Deliberately excludes '/', '\\', and other filesystem/URL-unsafe
+# characters, since hunt_id_display ends up in exported report filenames.
+_HUNT_ID_PREFIX_RE = re.compile(r"^[A-Za-z0-9%._-]+$")
+
+
+def _validate_hunt_id_prefix(value: Any) -> str | None:
+    """Return an error message if *value* is not a valid prefix TEMPLATE,
+    else None. Validates the strftime directives by actually trying one
+    (catches e.g. a lone trailing '%' or an unsupported code) rather than
+    guessing which directives are "safe" — platform strftime support varies.
+    """
+    if not isinstance(value, str) or not (1 <= len(value) <= _TH_HUNT_ID_PREFIX_MAX_LEN):
+        return f"hunt_id_prefix must be a string of 1-{_TH_HUNT_ID_PREFIX_MAX_LEN} characters"
+    if not _HUNT_ID_PREFIX_RE.match(value):
+        return "hunt_id_prefix may only contain letters, digits, '%', '.', '_', or '-'"
+    try:
+        from datetime import datetime, timezone
+
+        datetime.now(timezone.utc).strftime(value)
+    except ValueError as exc:
+        return f"hunt_id_prefix has an invalid time-format directive: {exc}"
+    return None
 
 
 def load_hunt_id_prefix() -> str:
-    """Return the configured HuntID prefix (default 'TH')."""
+    """Return the configured HuntID prefix TEMPLATE (default 'TH'; may
+    contain strftime directives — see module note above)."""
     raw = load_app_config().get("hunt_id_prefix", _TH_HUNT_ID_PREFIX_DEFAULT)
-    if (
-        not isinstance(raw, str)
-        or not raw.isalnum()
-        or not (1 <= len(raw) <= _TH_HUNT_ID_PREFIX_MAX_LEN)
-    ):
+    if _validate_hunt_id_prefix(raw) is not None:
         logger.warning(
             "hunt_id_prefix %r is not valid; using default %r", raw, _TH_HUNT_ID_PREFIX_DEFAULT
         )
@@ -812,15 +839,10 @@ def load_hunt_id_prefix() -> str:
 
 
 def save_hunt_id_prefix(value: str) -> None:
-    """Persist the HuntID prefix to application.yaml."""
-    if (
-        not isinstance(value, str)
-        or not value.isalnum()
-        or not (1 <= len(value) <= _TH_HUNT_ID_PREFIX_MAX_LEN)
-    ):
-        raise ValueError(
-            f"hunt_id_prefix must be an alphanumeric string of 1-{_TH_HUNT_ID_PREFIX_MAX_LEN} characters"
-        )
+    """Persist the HuntID prefix TEMPLATE to application.yaml."""
+    error = _validate_hunt_id_prefix(value)
+    if error is not None:
+        raise ValueError(error)
     data = load_app_config()
     data["hunt_id_prefix"] = value
     _write_yaml(APP_CONFIG_PATH, data)

@@ -128,69 +128,61 @@ describe('UserManagementTab (prompts-045)', () => {
     expect(api.auth.deleteUser).not.toHaveBeenCalled()
   })
 
-  it('creates a new user (with confirm + policy, prompts-046)', async () => {
+  it('creates a new user with a server-generated password (issue-local-038) and reveals it once', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
     vi.mocked(api.auth.createUser).mockResolvedValue({
       id: 3, username: 'newbie', role: 'threat-viewer', enabled: true,
+      generated_password: 'r4nd0m-gener4ted-p4ssw0rd',
     })
     renderWithClient(<UserManagementTab />)
     await screen.findByRole('button', { name: /add user/i })
 
     fireEvent.click(screen.getByRole('button', { name: /add user/i }))
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newbie' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Secret123' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Secret123' } })
+    // No password/confirm fields exist anymore — the backend always generates one.
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
-        username: 'newbie', password: 'Secret123', role: 'threat-viewer',
+        username: 'newbie', role: 'threat-viewer',
         org_id: null, use_email_username: true,
       })
     })
+
+    // One-time reveal, same shape as the reset-password modal.
+    const field = await screen.findByLabelText('Generated password')
+    expect(field).toHaveValue('r4nd0m-gener4ted-p4ssw0rd')
+    expect(field).toHaveAttribute('readonly')
   })
 
   it('creates a feed-sender account via the role dropdown (prompts-054)', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
     vi.mocked(api.auth.createUser).mockResolvedValue({
       id: 4, username: 'bot', role: 'feed-sender', enabled: true,
+      generated_password: 'another-generated-pass',
     })
     renderWithClient(<UserManagementTab />)
     fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'bot' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Secret123' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Secret123' } })
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'feed-sender' } })
     fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
     await waitFor(() => {
       expect(api.auth.createUser).toHaveBeenCalledWith({
-        username: 'bot', password: 'Secret123', role: 'feed-sender',
+        username: 'bot', role: 'feed-sender',
         org_id: null, use_email_username: true,
       })
     })
   })
 
-  it('blocks create when the password fails the policy (prompts-046)', async () => {
+  it('blocks create for an invalid username', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
     renderWithClient(<UserManagementTab />)
     fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newbie' } })
-    // Only lowercase + digits → 2 of 4 classes, policy requires 3.
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'lowercase12' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'lowercase12' } })
-    expect(screen.getByText(/must include at least 3 of/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^create$/i })).toBeDisabled()
-  })
-
-  it('blocks create when the confirmation does not match (prompts-046)', async () => {
-    vi.mocked(api.auth.listUsers).mockResolvedValue([selfAdmin])
-    renderWithClient(<UserManagementTab />)
-    fireEvent.click(await screen.findByRole('button', { name: /add user/i }))
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newbie' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Secret123' } })
-    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'Secret124' } })
-    expect(screen.getByText(/do not match/i)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'bad user!' } })
+    expect(screen.getByText(/must be 1–40 chars/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^create$/i })).toBeDisabled()
   })
 
