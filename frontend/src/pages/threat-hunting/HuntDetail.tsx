@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary } from '../../api/client'
+import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
@@ -24,6 +24,7 @@ import RunConfigForm from './RunConfigForm'
 import {
   buildRunConfig,
   modelOptionsFromProviders,
+  playbookIdFromChoice,
   DEFAULT_IOC_MODE,
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
@@ -39,6 +40,7 @@ export default function HuntDetail({
   pkgId,
   onBack,
   initialRunId,
+  initialTab,
 }: {
   pkgId: string
   onBack: () => void
@@ -46,11 +48,15 @@ export default function HuntDetail({
    *  list's Table density mode). Falls back to the newest run when absent
    *  or when it doesn't match any run in this package (stale deep-link). */
   initialRunId?: string
+  /** issue-local-040: set only right after the evidence-upload wizard
+   *  closes (via `?tab=analysis`) — every other page load keeps the general
+   *  'evidence' default. */
+  initialTab?: DetailTab
 }) {
   const { isResearcher, isAdmin } = useAuth()
   const qc = useQueryClient()
   const [showAddItem, setShowAddItem] = useState(false)
-  const [activeTab, setActiveTab] = useState<DetailTab>('evidence')
+  const [activeTab, setActiveTab] = useState<DetailTab>(initialTab ?? 'evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
   const [newComment, setNewComment] = useState('')
 
@@ -153,7 +159,19 @@ export default function HuntDetail({
     [rerunProviders],
   )
 
-  const rerunChosenModel = rerunModelChoice !== '' ? (rerunModelOptions[Number(rerunModelChoice)] ?? null) : null
+  // issue-local-040: Hunt Playbooks offered alongside standalone models.
+  const { data: rerunPlaybooks = [] } = useQuery({
+    queryKey: ['hunt-playbooks'],
+    queryFn: () => api.threatHunting.playbooks.list(),
+    staleTime: 60_000,
+    enabled: showRerunDialog,
+  })
+
+  const rerunChosenPlaybookId = playbookIdFromChoice(rerunModelChoice)
+  const rerunChosenModel =
+    rerunModelChoice !== '' && !rerunChosenPlaybookId
+      ? (rerunModelOptions[Number(rerunModelChoice)] ?? null)
+      : null
 
   // Auto-select the requested run (issue-local-018 deep-link) or else the
   // latest run when runs load/change. Falls back to newest if initialRunId
@@ -187,18 +205,29 @@ export default function HuntDetail({
   })
 
   // issue-006-G: Re-run with model+effort from dialog
-  const rerunMut = useMutation({
-    mutationFn: () => api.threatHunting.startGeneration(pkgId, {
-      research_effort: rerunEffort || 'medium',
-      provider_name: rerunChosenModel?.provider ?? undefined,
-      model_name: rerunChosenModel?.model ?? undefined,
-      run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
-    }),
+  const rerunMut = useMutation<THGenerationRecord | THPlaybookJob, Error, void>({
+    mutationFn: () => {
+      // issue-local-040: a Hunt Playbook selection fires the whole
+      // playbook (N runs) instead of a single standalone-model re-run.
+      if (rerunChosenPlaybookId) {
+        return api.threatHunting.playbooks.run(pkgId, rerunChosenPlaybookId)
+      }
+      return api.threatHunting.startGeneration(pkgId, {
+        research_effort: rerunEffort || 'medium',
+        provider_name: rerunChosenModel?.provider ?? undefined,
+        model_name: rerunChosenModel?.model ?? undefined,
+        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
+      })
+    },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
-      const newRunId = data.run_id ?? data.id
-      if (newRunId) setActiveRunId(newRunId)
+      // A playbook job fires several runs, so there's no single one to jump
+      // to — only a standalone-model run hands off its run_id.
+      if (!('run_ids' in data)) {
+        const newRunId = data.run_id ?? data.id
+        if (newRunId) setActiveRunId(newRunId)
+      }
       setActiveTab('analysis')
       setShowRerunDialog(false)
     },
@@ -520,7 +549,14 @@ export default function HuntDetail({
       {/* Evidence tab — issue-local-023: two-pane sidebar list + content
           viewer (PDF/plaintext rendered, binary files not processed), fully
           self-contained (owns its own delete flow/confirmation now). */}
-      {activeTab === 'evidence' && <EvidenceTab pkgId={pkgId} isResearcher={isResearcher} />}
+      {activeTab === 'evidence' && (
+        <EvidenceTab
+          pkgId={pkgId}
+          isResearcher={isResearcher}
+          hasRuns={runs.length > 0}
+          onGoToAnalysis={() => setActiveTab('analysis')}
+        />
+      )}
 
       {/* IOCs tab — issue-local-022 (item 6): once the run's Deep Retrohunt
           Lead exists, show the richer enriched All/Sanitized/Removed table
@@ -822,6 +858,7 @@ export default function HuntDetail({
               modelChoice={rerunModelChoice}
               onModelChoiceChange={setRerunModelChoice}
               modelOptions={rerunModelOptions}
+              playbookOptions={rerunPlaybooks}
               iocMode={iocMode}
               onIocModeChange={setIocMode}
               iocCleaningOptions={iocCleaningOptions}
@@ -832,9 +869,11 @@ export default function HuntDetail({
 
             {/* Selected summary */}
             <p className="text-[11px] text-gray-600">
-              {rerunChosenModel
-                ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
-                : 'Default model'}{' '}
+              {rerunChosenPlaybookId
+                ? `Playbook: ${rerunPlaybooks.find((p) => p.id === rerunChosenPlaybookId)?.name ?? rerunChosenPlaybookId}`
+                : rerunChosenModel
+                  ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
+                  : 'Default model'}{' '}
               · effort: {rerunEffort} · IOC: {iocMode === 'tagging_only' ? 'tagging only' : 'active cleaning'}
               {' '}· Threat Intel: {includeThreatIntel ? 'on' : 'off'}
             </p>

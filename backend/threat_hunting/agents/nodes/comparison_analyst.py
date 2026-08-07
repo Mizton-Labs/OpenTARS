@@ -170,6 +170,8 @@ async def compare_runs(
     created_by: str | None = None,
     phase: str = "full",
     job_id: str | None = None,
+    name: str | None = None,
+    name_prefix: str = "manual",
 ) -> dict[str, Any]:
     """Compare runs of a hunt package and persist a comparison report.
 
@@ -192,6 +194,10 @@ async def compare_runs(
     see routes_threat_hunting.py's `_run_comparison_job`, the only caller
     that passes one. ``None`` (direct calls, e.g. from tests) skips all
     progress reporting — behavior is otherwise identical either way.
+
+    issue-local-040: *name* is the assessment's saved name; blank/None
+    auto-generates one from *name_prefix* (the triggering playbook's name
+    when fired by a playbook, else "manual") plus a timestamp.
 
     Raises ValueError if the package doesn't exist or has no (matching)
     runs — callers (the route) translate that into an HTTP 404/400.
@@ -390,6 +396,8 @@ async def compare_runs(
         full_report=full_report,
         created_by=created_by,
         phase=phase,
+        name=name,
+        name_prefix=name_prefix,
     )
 
     if job_id:

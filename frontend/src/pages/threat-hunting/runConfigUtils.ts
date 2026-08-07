@@ -4,7 +4,7 @@
  * plain values trips the react-refresh/only-export-components lint rule.
  */
 
-import { type LLMProviderSummary } from '../../api/client'
+import { type LLMProviderSummary, type THPlaybook } from '../../api/client'
 
 export interface IocCleaningOptions {
   remove_noisy: boolean
@@ -45,6 +45,33 @@ export function modelOptionsFromProviders(providers: LLMProviderSummary[]): Mode
     }
   }
   return opts
+}
+
+// issue-local-040: the shared model dropdown's `modelChoice` is a flat
+// string — '' (default), a numeric index into ModelOption[] (a standalone
+// model), or one of these playbook-prefixed values (a Hunt Playbook, shown
+// in the same selector so the two "type standalone model / playbook"
+// choices the issue asks for live in one place). Centralized here so
+// RunConfigForm/AnalysisTab/HuntDetail all encode/decode it identically.
+const PLAYBOOK_CHOICE_PREFIX = 'playbook:'
+
+export function playbookChoiceValue(playbookId: string): string {
+  return `${PLAYBOOK_CHOICE_PREFIX}${playbookId}`
+}
+
+export function playbookIdFromChoice(modelChoice: string): string | null {
+  return modelChoice.startsWith(PLAYBOOK_CHOICE_PREFIX)
+    ? modelChoice.slice(PLAYBOOK_CHOICE_PREFIX.length)
+    : null
+}
+
+export function playbookFromChoice(
+  modelChoice: string,
+  playbooks: THPlaybook[],
+): THPlaybook | null {
+  const id = playbookIdFromChoice(modelChoice)
+  if (!id) return null
+  return playbooks.find((p) => p.id === id) ?? null
 }
 
 export function buildRunConfig(

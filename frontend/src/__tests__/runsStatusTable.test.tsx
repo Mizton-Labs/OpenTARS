@@ -332,4 +332,68 @@ describe('RunsStatusTable', () => {
       expect(api.threatHunting.hardDeleteRun).not.toHaveBeenCalled()
     })
   })
+
+  describe('Runs/Playbook Runs/Consolidated Runs sub-tabs (issue-local-040)', () => {
+    const mixedRuns = [
+      makeRun({ id: 'run-manual', llm_model: 'manual-model', run_origin: 'manual' }),
+      makeRun({
+        id: 'run-playbook',
+        llm_model: 'pb-model',
+        run_origin: 'playbook',
+        playbook_id: 'pb-1',
+        playbook_name: 'My Playbook',
+      }),
+      makeRun({
+        id: 'run-consolidated',
+        llm_model: 'consolidated-model',
+        run_origin: 'consolidated',
+        playbook_id: 'pb-1',
+        playbook_name: 'My Playbook',
+      }),
+    ]
+
+    it('defaults to the Runs sub-tab, showing only manual/undefined-origin runs', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={mixedRuns} />)
+      expect(screen.getByText('manual-model')).toBeInTheDocument()
+      expect(screen.queryByText('pb-model')).not.toBeInTheDocument()
+      expect(screen.queryByText('consolidated-model')).not.toBeInTheDocument()
+    })
+
+    it('a run with no run_origin at all (legacy row) counts as a manual run', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ llm_model: 'legacy-model', run_origin: undefined })]} />)
+      expect(screen.getByText('legacy-model')).toBeInTheDocument()
+    })
+
+    it('shows the per-tab counts', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={mixedRuns} />)
+      expect(screen.getByRole('button', { name: /^Runs \(1\)$/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Playbook Runs \(1\)$/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Consolidated Runs \(1\)$/ })).toBeInTheDocument()
+    })
+
+    it('switching to Playbook Runs shows only playbook-origin runs, with the playbook name badge', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={mixedRuns} />)
+      fireEvent.click(screen.getByRole('button', { name: /Playbook Runs/ }))
+      expect(screen.getByText('pb-model')).toBeInTheDocument()
+      expect(screen.queryByText('manual-model')).not.toBeInTheDocument()
+      expect(screen.queryByText('consolidated-model')).not.toBeInTheDocument()
+      expect(screen.getByText(/playbook · My Playbook/)).toBeInTheDocument()
+    })
+
+    it('switching to Consolidated Runs shows only consolidated-origin runs, labeled "consolidated"', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={mixedRuns} />)
+      fireEvent.click(screen.getByRole('button', { name: /Consolidated Runs/ }))
+      expect(screen.getByText('consolidated-model')).toBeInTheDocument()
+      expect(screen.queryByText('manual-model')).not.toBeInTheDocument()
+      expect(screen.queryByText('pb-model')).not.toBeInTheDocument()
+      expect(screen.getByText(/consolidated · My Playbook/)).toBeInTheDocument()
+    })
+
+    it('shows an empty-subtab message rather than an empty table when a tab has no runs', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ run_origin: 'manual' })]} />)
+      fireEvent.click(screen.getByRole('button', { name: /Playbook Runs/ }))
+      expect(screen.getByText(/no playbook runs yet/i)).toBeInTheDocument()
+      expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    })
+  })
 })

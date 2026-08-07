@@ -117,7 +117,7 @@ export default function ThreatHuntingSettingsTab() {
       <div>
         <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
           <Search className="w-4 h-4 text-brand-400" />
-          Threat Hunting Settings
+          Threat Hunting Packages
         </h3>
         <p className="text-xs text-gray-500 mt-1">
           Configure the default behaviour for hunt generation and report export. Individual hunt

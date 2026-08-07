@@ -191,6 +191,8 @@ describe('Configuration TH group tabs', () => {
 
     // Now the tab row should show the two new tabs
     expect(await screen.findByRole('button', { name: /agents configuration/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /threat hunting settings/i })).toBeTruthy()
+    // issue-local-040: renamed from "Threat Hunting Settings" now that its
+    // sibling "Hunt Playbooks" tab exists alongside it.
+    expect(screen.getByRole('button', { name: /threat hunting packages/i })).toBeTruthy()
   })
 })

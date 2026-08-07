@@ -9,6 +9,39 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Hunt Playbooks, Runs/Playbook Runs/Consolidated Runs sub-tabs, named comparison assessments, recommendation-synthesis runs (issue-local-040)
+
+- **New: Hunt Playbooks.** Configuration → Threat Hunting → **Hunt Playbooks** (the existing
+  "Threat Hunting Settings" tab is renamed **Threat Hunting Packages** alongside it) lets an admin
+  define a named, reusable automation config: a list of models to fire (one generation run each),
+  whether to auto-approve each run's Analysis phase, whether to auto-run a Comparison Assessment
+  once every fired run finishes (independently for the Preliminary and/or Full phase), whether to
+  auto-create a consolidated run from the Preliminary comparison's recommendations, and whether to
+  auto-generate a consolidated report of the Full comparison. Playbooks support edit/clone/delete
+  from their own cards, and appear alongside standalone models in every run-config model dropdown
+  (new run, re-run), labeled by type. SIEM execution is never automatic — a playbook run reaching
+  "completed" (approved analysis) is as far as unattended automation goes; a human still picks a
+  connector and SPL to execute, same as any other run.
+- **New: Runs / Playbook Runs / Consolidated Runs sub-tabs** on the Hunt Package detail page's runs
+  table. Every run is tagged with its origin (manual, playbook, or consolidated) plus, for the
+  latter two, the playbook that produced it (snapshotted at creation, so it's still shown even
+  after the playbook is later renamed or deleted) — shown as a badge next to the model.
+- **New: "Create a New Run from Recommendations"** on the Comparison Assessment tab's Recommended
+  Combination card, alongside the existing two "Re-run with..." actions. Unlike those (which clone
+  into a brand-new package), this reads each compared run's actual hypotheses/TTPs/hunting
+  leads/query drafts — not just the comparison's summary text — has the LLM synthesize one
+  consolidated hunt plan combining the best approach with consistent coverage, and starts a new run
+  **in the same package** (this is what populates the new Consolidated Runs tab).
+  Comparison Assessments can now be saved under a name (auto-generated as `manual_<timestamp>`,
+  or `<playbook-name>_<timestamp>` when triggered by a playbook, if left blank); a selector on the
+  tab lets you switch between every saved assessment for a phase, not just the latest one.
+- **Fixed: after the evidence-upload wizard closes, the Hunt Package detail page now lands on the
+  Analysis tab** (showing the new-run config) instead of the Evidence tab, which has nothing to
+  show yet — the agents haven't run. Revisiting an existing package still defaults to Evidence as
+  before. If you do navigate to Evidence before a run has started, a notice with a button now
+  explains why the pane is empty and links straight to Analysis, instead of showing a
+  content-less/broken-looking evidence viewer.
+
 ### Added — AI Assistant coverage expansion, admin-configurable provider + context budget (issue-local-039)
 
 - **The AI Assistant / search now index almost everything the platform produces**, not just hunt

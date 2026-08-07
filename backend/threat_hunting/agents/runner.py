@@ -175,7 +175,7 @@ async def _save_generation_state(
                    llm_provider=?, llm_model=?,
                    generation_status=?, generation_errors=?,
                    current_step=?, completed_steps=?, step_logs=?, research_effort=?,
-                   run_config=?
+                   run_config=?, playbook_id=?, playbook_name=?, run_origin=?
                    WHERE id=?""",
                 (
                     _to_json(state.get("threat_context")),
@@ -193,6 +193,9 @@ async def _save_generation_state(
                     _to_json(state.get("step_logs") or []),
                     state.get("research_effort", "medium"),
                     _to_json(state.get("run_config") or {}),
+                    state.get("playbook_id"),
+                    state.get("playbook_name"),
+                    state.get("run_origin") or "manual",
                     run_id,
                 ),
             )
@@ -217,8 +220,9 @@ async def _save_generation_state(
                     llm_provider, llm_model,
                     generation_status, generation_errors, created_at,
                     current_step, completed_steps, step_logs, research_effort,
-                    run_config, run_seq, created_by)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    run_config, run_seq, created_by, playbook_id, playbook_name,
+                    run_origin)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id,
                     pkg_id,
@@ -240,6 +244,9 @@ async def _save_generation_state(
                     _to_json(state.get("run_config") or {}),
                     next_run_seq,
                     state.get("created_by"),
+                    state.get("playbook_id"),
+                    state.get("playbook_name"),
+                    state.get("run_origin") or "manual",
                 ),
             )
         await db.commit()
@@ -352,6 +359,14 @@ async def _load_pipeline_state(run_id: str) -> dict[str, Any] | None:
         "step_logs": record.get("step_logs") or [],
         "completed_steps": record.get("completed_steps") or [],
         "current_step": record.get("current_step") or "",
+        # issue-local-040: must be restored here, not just written by
+        # _save_generation_state — a resume (approve_generation) re-enters
+        # _run_pipeline with THIS reconstructed state, which then saves again
+        # on every subsequent node; omitting these would null them out on
+        # the run's very next save after approval.
+        "playbook_id": record.get("playbook_id"),
+        "playbook_name": record.get("playbook_name"),
+        "run_origin": record.get("run_origin") or "manual",
         "approved": False,
         "rejected": False,
         "approval_notes": "",
@@ -474,6 +489,23 @@ async def _run_pipeline(
                     intel_exc,
                 )
 
+        # issue-local-040: a Hunt Playbook's auto_approve_analysis toggle
+        # skips the human approval gate. Fired as a NEW, separately-scheduled
+        # task rather than `await approve_generation(run_id)` inline — this
+        # current task is still the one tracked in _ACTIVE_JOBS[run_id] at
+        # this point, and approve_generation() cancels whatever task is
+        # currently registered there before starting the resumed one; calling
+        # it inline would have this task cancel itself mid-execution. Because
+        # nothing below this point awaits before the function returns into
+        # `finally` (which pops _ACTIVE_JOBS[run_id] synchronously, no
+        # `await`), this task is guaranteed to have already deregistered by
+        # the time the newly-scheduled approve_generation() task gets its
+        # first chance to run, so its own "cancel the currently active task"
+        # check finds nothing to cancel.
+        if final_status == "awaiting_approval" and final_state.get("auto_approve"):
+            log.info("TH pipeline: auto-approving analysis (Hunt Playbook)")
+            asyncio.create_task(approve_generation(run_id))
+
         # issue-008-2C-A: auto-generate a run-scoped report when the pipeline
         # completes (status 'completed' = approved, awaiting SIEM execution).
         # Soft-fail — report failure never blocks the hunt workflow.
@@ -552,6 +584,10 @@ async def start_generation(
     research_effort: str = "medium",
     run_config: dict[str, Any] | None = None,
     created_by: str | None = None,
+    playbook_id: str | None = None,
+    playbook_name: str | None = None,
+    run_origin: str = "manual",
+    auto_approve: bool = False,
 ) -> dict[str, Any]:
     """Start a new generation run for a hunt package.
 
@@ -566,6 +602,13 @@ async def start_generation(
 
     *created_by* (issue-local-026) is the username that triggered this run
     (None when auth is disabled), persisted to hunting_packages.created_by.
+
+    *playbook_id*/*playbook_name*/*run_origin* (issue-local-040) tag a run as
+    Hunt-Playbook-originated (or 'consolidated', for a recommendation-
+    synthesis run) — see HuntPipelineState's docstring for why the name is
+    snapshotted rather than looked up live. *auto_approve* skips the manual
+    approval gate once this run first reaches 'awaiting_approval', set by a
+    playbook's auto_approve_analysis toggle.
     """
     from backend.threat_hunting.agents.pipeline import build_initial_state
 
@@ -599,6 +642,10 @@ async def start_generation(
         research_effort=research_effort,
         run_config=run_config,
         created_by=created_by,
+        playbook_id=playbook_id,
+        playbook_name=playbook_name,
+        run_origin=run_origin,
+        auto_approve=auto_approve,
     )
     # Pre-register so sequential guard works before the task begins
     _ACTIVE_RUN_PKG[run_id] = pkg_id
@@ -616,6 +663,9 @@ async def start_generation(
         "research_effort": research_effort,
         "run_config": run_config or {},
         "created_by": created_by,
+        "playbook_id": playbook_id,
+        "playbook_name": playbook_name,
+        "run_origin": run_origin,
     }
 
 

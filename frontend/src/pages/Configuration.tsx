@@ -28,6 +28,7 @@ import LLMProvidersTab from './configuration/LLMProvidersTab'
 import SiemConnectorsTab from './configuration/SiemConnectorsTab'
 import AgentsConfigTab from './configuration/AgentsConfigTab'
 import ThreatHuntingSettingsTab from './configuration/ThreatHuntingSettingsTab'
+import HuntPlaybooksTab from './configuration/HuntPlaybooksTab'
 import SsoConfigTab from './configuration/SsoConfigTab'
 import { useJobProgress } from '../hooks/useJobProgress'
 import { useSourceRefresh, useRefreshingSources, useRefreshAll, useRefreshAllBusy, useRefreshAllResult, refreshId, type RefreshKind } from '../hooks/useExternalRefresh'
@@ -55,6 +56,7 @@ type Tab =
   | 'siem-connectors'
   | 'agents-config'
   | 'th-settings'
+  | 'th-playbooks'
   | 'sso-config'
 
 // General group: infrastructure / platform settings
@@ -92,7 +94,12 @@ const DEFAULT_TAB: Record<Group, Tab> = {
 // Threat Hunting group: agents and hunt settings
 const THREAT_HUNTING_TABS: { id: Tab; label: string }[] = [
   { id: 'agents-config', label: 'Agents Configuration' },
-  { id: 'th-settings',   label: 'Threat Hunting Settings' },
+  // issue-local-040: renamed from "Threat Hunting Settings" now that its
+  // sibling "Hunt Playbooks" tab exists alongside it — "Packages" reads
+  // more clearly as "settings for hunt packages" once there's a second,
+  // differently-scoped Threat Hunting tab next to it.
+  { id: 'th-settings',   label: 'Threat Hunting Packages' },
+  { id: 'th-playbooks',  label: 'Hunt Playbooks' },
 ]
 
 export default function Configuration() {
@@ -224,6 +231,7 @@ export default function Configuration() {
         {activeTab === 'siem-connectors'  && <SiemConnectorsTab />}
         {activeTab === 'agents-config'    && <AgentsConfigTab />}
         {activeTab === 'th-settings'      && <ThreatHuntingSettingsTab />}
+        {activeTab === 'th-playbooks'     && <HuntPlaybooksTab />}
         {activeTab === 'sso-config'       && <SsoConfigTab />}
       </div>
     </div>

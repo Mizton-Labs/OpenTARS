@@ -39,7 +39,12 @@ export default function ThreatHuntingNew() {
           list — go back to where "New Hunt Package" is actually launched from. */}
       <HuntPackageWizard
         onClose={() => navigate('../packages', { relative: 'path' })}
-        onCreated={(id) => navigate(`../${id}`, { relative: 'path' })}
+        // issue-local-040: land on the Analysis tab, not Evidence — right
+        // after the wizard closes there's no analysis content in Evidence
+        // yet either way (the agents haven't run), so Analysis (which shows
+        // the new-run config for the first generation) is the useful
+        // starting point. ThreatHuntingDetail.tsx reads this back out.
+        onCreated={(id) => navigate(`../${id}?tab=analysis`, { relative: 'path' })}
       />
     </div>
   )

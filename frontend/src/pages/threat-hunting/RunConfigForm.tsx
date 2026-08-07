@@ -13,7 +13,13 @@
  */
 
 import { clsx } from 'clsx'
-import { EFFORT_OPTIONS, type IocCleaningOptions, type ModelOption } from './runConfigUtils'
+import type { THPlaybook } from '../../api/client'
+import {
+  EFFORT_OPTIONS,
+  playbookChoiceValue,
+  type IocCleaningOptions,
+  type ModelOption,
+} from './runConfigUtils'
 
 const CLEANING_TOGGLES = [
   ['remove_noisy', 'Noisy', 'Remove noisy IOCs'],
@@ -29,6 +35,7 @@ export default function RunConfigForm({
   modelChoice,
   onModelChoiceChange,
   modelOptions,
+  playbookOptions = [],
   iocMode,
   onIocModeChange,
   iocCleaningOptions,
@@ -44,6 +51,10 @@ export default function RunConfigForm({
   modelChoice: string
   onModelChoiceChange: (choice: string) => void
   modelOptions: ModelOption[]
+  /** issue-local-040: Hunt Playbooks offered alongside standalone models in
+   *  the same selector, grouped under their own optgroup so the type
+   *  ("standalone model" vs "playbook") is clear at a glance. */
+  playbookOptions?: THPlaybook[]
   iocMode: 'tagging_only' | 'active_cleaning'
   onIocModeChange: (mode: 'tagging_only' | 'active_cleaning') => void
   iocCleaningOptions: IocCleaningOptions
@@ -80,11 +91,24 @@ export default function RunConfigForm({
             onChange={(e) => onModelChoiceChange(e.target.value)}
           >
             <option value="">Configured default</option>
-            {modelOptions.map((o, i) => (
-              <option key={`${o.provider}\x00${o.model}`} value={String(i)}>
-                {o.provider} · {o.model}
-              </option>
-            ))}
+            {modelOptions.length > 0 && (
+              <optgroup label="Standalone model">
+                {modelOptions.map((o, i) => (
+                  <option key={`${o.provider}\x00${o.model}`} value={String(i)}>
+                    {o.provider} · {o.model}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {playbookOptions.length > 0 && (
+              <optgroup label="Playbook">
+                {playbookOptions.map((p) => (
+                  <option key={p.id} value={playbookChoiceValue(p.id)}>
+                    {p.name} ({p.models.length} model{p.models.length === 1 ? '' : 's'})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
         <div className="flex flex-col items-center gap-1.5 text-sm">
@@ -148,11 +172,24 @@ export default function RunConfigForm({
             onChange={(e) => onModelChoiceChange(e.target.value)}
           >
             <option value="">Configured default</option>
-            {modelOptions.map((opt, i) => (
-              <option key={`${opt.provider}:${opt.model}`} value={String(i)}>
-                {opt.provider} · {opt.model}
-              </option>
-            ))}
+            {modelOptions.length > 0 && (
+              <optgroup label="Standalone model">
+                {modelOptions.map((opt, i) => (
+                  <option key={`${opt.provider}:${opt.model}`} value={String(i)}>
+                    {opt.provider} · {opt.model}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {playbookOptions.length > 0 && (
+              <optgroup label="Playbook">
+                {playbookOptions.map((p) => (
+                  <option key={p.id} value={playbookChoiceValue(p.id)}>
+                    {p.name} ({p.models.length} model{p.models.length === 1 ? '' : 's'})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
       </div>

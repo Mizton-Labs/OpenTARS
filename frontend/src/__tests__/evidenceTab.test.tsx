@@ -50,11 +50,11 @@ function makeItem(overrides: Partial<THEvidenceItem> = {}): THEvidenceItem {
   }
 }
 
-function renderTab(isResearcher = true) {
+function renderTab(isResearcher = true, hasRuns = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <EvidenceTab pkgId="pkg-1" isResearcher={isResearcher} />
+      <EvidenceTab pkgId="pkg-1" isResearcher={isResearcher} hasRuns={hasRuns} />
     </QueryClientProvider>,
   )
 }
@@ -69,6 +69,31 @@ describe('EvidenceTab — empty state', () => {
     vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
     renderTab()
     expect(await screen.findByText('No evidence items yet.')).toBeInTheDocument()
+  })
+})
+
+describe('EvidenceTab — run not started yet (issue-local-040)', () => {
+  it('shows a notice + button to Analysis when evidence exists but no run has started', async () => {
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem()])
+    const onGoToAnalysis = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <EvidenceTab pkgId="pkg-1" isResearcher={true} hasRuns={false} onGoToAnalysis={onGoToAnalysis} />
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByText(/run hasn't started yet/i)).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: /go to analysis/i })
+    fireEvent.click(button)
+    expect(onGoToAnalysis).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show the notice once a run exists, even mid-analysis', async () => {
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem()])
+    renderTab(true, true)
+    expect(await screen.findByText('Hello from the file.')).toBeInTheDocument()
+    expect(screen.queryByText(/run hasn't started yet/i)).not.toBeInTheDocument()
   })
 })
 
