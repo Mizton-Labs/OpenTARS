@@ -1003,6 +1003,152 @@ async def test_connector(conn_id: str) -> dict:
     }
 
 
+# ── Hunt Playbooks (issue-local-040) ─────────────────────────────────────────
+# Global, DB-backed automation configs — same "any researcher/admin can
+# manage" role model as SIEM connectors above (no per-object ownership exists
+# anywhere in this codebase; every write here relies on the app-wide auth
+# middleware's path-prefix role gate, not a per-route Depends()).
+
+
+class PlaybookModelEntry(BaseModel):
+    provider_name: str | None = None
+    model_name: str
+
+
+class PlaybookCreateBody(BaseModel):
+    name: str
+    models: list[PlaybookModelEntry]
+    auto_approve_analysis: bool = False
+    auto_run_comparison: bool = False
+    auto_compare_preliminary: bool = False
+    auto_compare_full: bool = False
+    auto_create_run_from_recommendations: bool = False
+    auto_generate_full_report: bool = False
+
+
+class PlaybookUpdateBody(BaseModel):
+    name: str | None = None
+    models: list[PlaybookModelEntry] | None = None
+    auto_approve_analysis: bool | None = None
+    auto_run_comparison: bool | None = None
+    auto_compare_preliminary: bool | None = None
+    auto_compare_full: bool | None = None
+    auto_create_run_from_recommendations: bool | None = None
+    auto_generate_full_report: bool | None = None
+
+
+class PlaybookCloneBody(BaseModel):
+    name: str
+
+
+@router.get("/playbooks")
+async def list_playbooks_route() -> list[dict]:
+    """List all Hunt Playbooks."""
+    return await th_db.list_playbooks()
+
+
+@router.post("/playbooks", status_code=201)
+async def create_playbook_route(body: PlaybookCreateBody, request: Request) -> dict:
+    """Create a new Hunt Playbook."""
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    try:
+        return await th_db.create_playbook(
+            body.name,
+            models=[m.model_dump() for m in body.models],
+            auto_approve_analysis=body.auto_approve_analysis,
+            auto_run_comparison=body.auto_run_comparison,
+            auto_compare_preliminary=body.auto_compare_preliminary,
+            auto_compare_full=body.auto_compare_full,
+            auto_create_run_from_recommendations=body.auto_create_run_from_recommendations,
+            auto_generate_full_report=body.auto_generate_full_report,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/playbooks/{playbook_id}")
+async def get_playbook_route(playbook_id: str) -> dict:
+    """Get a Hunt Playbook by ID."""
+    playbook = await th_db.get_playbook(playbook_id)
+    if not playbook:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    return playbook
+
+
+@router.put("/playbooks/{playbook_id}")
+async def update_playbook_route(playbook_id: str, body: PlaybookUpdateBody) -> dict:
+    """Update a Hunt Playbook. Only supplied fields are changed."""
+    try:
+        result = await th_db.update_playbook(
+            playbook_id,
+            name=body.name,
+            models=[m.model_dump() for m in body.models] if body.models is not None else None,
+            auto_approve_analysis=body.auto_approve_analysis,
+            auto_run_comparison=body.auto_run_comparison,
+            auto_compare_preliminary=body.auto_compare_preliminary,
+            auto_compare_full=body.auto_compare_full,
+            auto_create_run_from_recommendations=body.auto_create_run_from_recommendations,
+            auto_generate_full_report=body.auto_generate_full_report,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    return result
+
+
+@router.delete("/playbooks/{playbook_id}", status_code=204)
+async def delete_playbook_route(playbook_id: str) -> None:
+    """Delete a Hunt Playbook. Runs already tagged with it keep their
+    snapshotted playbook_id/playbook_name — they are untouched."""
+    deleted = await th_db.delete_playbook(playbook_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+
+@router.post("/playbooks/{playbook_id}/clone", status_code=201)
+async def clone_playbook_route(playbook_id: str, body: PlaybookCloneBody, request: Request) -> dict:
+    """Clone a Hunt Playbook's config under a new name."""
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name must not be empty")
+    result = await th_db.clone_playbook(playbook_id, name, created_by)
+    if not result:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    return result
+
+
+@router.post("/packages/{pkg_id}/playbooks/{playbook_id}/run", status_code=202)
+async def run_playbook_route(pkg_id: str, playbook_id: str, request: Request) -> dict:
+    """Fire a Hunt Playbook against this package's evidence and return the
+    tracking job immediately — poll GET .../playbooks/status for progress."""
+    from backend.threat_hunting.agents.playbook_runner import run_playbook
+
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+    try:
+        return await run_playbook(pkg_id, playbook_id, created_by=created_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/packages/{pkg_id}/playbooks/status")
+async def get_playbook_job_status(pkg_id: str) -> dict:
+    """Poll the latest playbook job's status for this package."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    job = await th_db.get_latest_playbook_job(pkg_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No playbook job found.")
+    return job
+
+
 # ── Execution endpoints (Phase 5) ─────────────────────────────────────────────
 
 
@@ -1406,6 +1552,9 @@ class CompareRunsBody(BaseModel):
     # write — "preliminary" (pre-SIEM-execution) or "full" (post-execution,
     # the only phase that existed before issue-local-035).
     phase: Literal["preliminary", "full"] = "full"
+    # issue-local-040: optional name to save this assessment under. Blank
+    # auto-generates "manual_<timestamp>" — see th_db.create_comparison_report.
+    name: str | None = None
 
 
 async def _run_comparison_job(
@@ -1417,6 +1566,7 @@ async def _run_comparison_job(
     model_name: str | None,
     created_by: str | None,
     phase: str,
+    name: str | None = None,
 ) -> None:
     """Background task: run the comparison and report progress via *job_id*.
 
@@ -1439,6 +1589,7 @@ async def _run_comparison_job(
             created_by=created_by,
             phase=phase,
             job_id=job_id,
+            name=name,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("comparison job %s failed: %s", job_id[:8], exc)
@@ -1488,9 +1639,21 @@ async def compare_package_runs(pkg_id: str, body: CompareRunsBody, request: Requ
             model_name=body.model_name,
             created_by=created_by,
             phase=body.phase,
+            name=body.name,
         )
     )
     return job
+
+
+@router.get("/packages/{pkg_id}/comparisons")
+async def list_package_comparisons(
+    pkg_id: str, phase: Literal["preliminary", "full"] | None = Query(None)
+) -> list[dict]:
+    """List every saved comparison assessment for a package, newest first
+    (issue-local-040) — unlike GET .../comparison, which only ever returns
+    the single most recent one. Backs the saved-assessment selector."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    return await th_db.list_comparison_reports(pkg_id, phase=phase)
 
 
 @router.get("/packages/{pkg_id}/compare/status")
@@ -1777,6 +1940,48 @@ async def rerun_from_recommendation(
         created_by=created_by,
     )
     return {"package": new_pkg, "generation": record}
+
+
+class RecommendationRunBody(BaseModel):
+    run_ids: list[str] | None = None
+    phase: Literal["preliminary", "full"] = "preliminary"
+    provider_name: str | None = None
+    model_name: str | None = None
+    research_effort: str | None = None
+
+
+@router.post("/packages/{pkg_id}/compare/recommendation-run", status_code=202)
+async def create_recommendation_run(
+    pkg_id: str, body: RecommendationRunBody, request: Request
+) -> dict:
+    """"Create a new run from recommendations" (issue-local-040) — unlike
+    /compare/rerun above, this does NOT clone into a new package: it
+    synthesizes one consolidated hunt plan from the comparison's compared
+    runs' actual outputs (not just its summary text) and starts a new run
+    IN THIS SAME PACKAGE, tagged run_origin='consolidated'. Backs the Hunt
+    Packages page's "Consolidated Runs" sub-tab.
+    """
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    created_by = None
+    if hasattr(request.state, "user") and request.state.user:
+        created_by = request.state.user.get("username")
+
+    from backend.threat_hunting.agents.nodes.recommendation_synthesizer import (
+        synthesize_recommendation_run,
+    )
+
+    try:
+        return await synthesize_recommendation_run(
+            pkg_id,
+            phase=body.phase,
+            run_ids=body.run_ids,
+            provider_name=body.provider_name,
+            model_name=body.model_name,
+            research_effort=body.research_effort,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ── Run Comments (issue-local-018) ────────────────────────────────────────────

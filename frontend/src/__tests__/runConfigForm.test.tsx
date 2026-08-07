@@ -9,7 +9,8 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import RunConfigForm from '../pages/threat-hunting/RunConfigForm'
-import { DEFAULT_IOC_CLEANING_OPTIONS } from '../pages/threat-hunting/runConfigUtils'
+import { DEFAULT_IOC_CLEANING_OPTIONS, playbookChoiceValue } from '../pages/threat-hunting/runConfigUtils'
+import type { THPlaybook } from '../api/client'
 
 function baseProps(overrides: Partial<React.ComponentProps<typeof RunConfigForm>> = {}) {
   return {
@@ -58,5 +59,54 @@ describe('RunConfigForm', () => {
     render(<RunConfigForm {...baseProps({ effort: 'medium', onEffortChange })} />)
     fireEvent.click(screen.getByRole('button', { name: 'high' }))
     expect(onEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  describe('issue-local-040: playbook options in the model dropdown', () => {
+    const playbooks: THPlaybook[] = [
+      {
+        id: 'pb-1',
+        name: 'Multi-model triage',
+        models: [
+          { provider_name: 'openai', model_name: 'gpt-oss' },
+          { provider_name: 'anthropic', model_name: 'claude' },
+        ],
+        auto_approve_analysis: false,
+        auto_run_comparison: false,
+        auto_compare_preliminary: false,
+        auto_compare_full: false,
+        auto_create_run_from_recommendations: false,
+        auto_generate_full_report: false,
+        created_at: '2026-01-01T00:00:00Z',
+        created_by: null,
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ]
+
+    it('does not render a Playbook optgroup when none are passed', () => {
+      render(<RunConfigForm {...baseProps({ variant: 'dialog' })} />)
+      expect(screen.queryByText(/Multi-model triage/)).not.toBeInTheDocument()
+    })
+
+    it('lists each playbook in both variants, showing its model count', () => {
+      const { unmount } = render(
+        <RunConfigForm {...baseProps({ variant: 'dialog', playbookOptions: playbooks })} />,
+      )
+      expect(screen.getByText('Multi-model triage (2 models)')).toBeInTheDocument()
+      unmount()
+      render(<RunConfigForm {...baseProps({ variant: 'compact', playbookOptions: playbooks })} />)
+      expect(screen.getByText('Multi-model triage (2 models)')).toBeInTheDocument()
+    })
+
+    it('selecting a playbook option calls onModelChoiceChange with the playbook-prefixed value', () => {
+      const onModelChoiceChange = vi.fn()
+      render(
+        <RunConfigForm
+          {...baseProps({ variant: 'dialog', playbookOptions: playbooks, onModelChoiceChange })}
+        />,
+      )
+      const select = screen.getByText('Multi-model triage (2 models)').closest('select')!
+      fireEvent.change(select, { target: { value: playbookChoiceValue('pb-1') } })
+      expect(onModelChoiceChange).toHaveBeenCalledWith('playbook:pb-1')
+    })
   })
 })

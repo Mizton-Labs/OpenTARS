@@ -13,6 +13,7 @@ import {
   type THQueryDraft,
   type THHuntTask,
   type LLMProviderSummary,
+  type THPlaybookJob,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import WorkflowVisualizer from './WorkflowVisualizer'
@@ -21,6 +22,7 @@ import RunConfigForm from './RunConfigForm'
 import {
   buildRunConfig,
   modelOptionsFromProviders,
+  playbookIdFromChoice,
   DEFAULT_IOC_MODE,
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
@@ -128,7 +130,16 @@ export default function AnalysisTab({
     [providers],
   )
 
-  const chosenModel = modelChoice !== '' ? (modelOptions[Number(modelChoice)] ?? null) : null
+  // issue-local-040: Hunt Playbooks offered alongside standalone models.
+  const { data: playbooks = [] } = useQuery({
+    queryKey: ['hunt-playbooks'],
+    queryFn: () => api.threatHunting.playbooks.list(),
+    staleTime: 60_000,
+  })
+
+  const chosenPlaybookId = playbookIdFromChoice(modelChoice)
+  const chosenModel =
+    modelChoice !== '' && !chosenPlaybookId ? (modelOptions[Number(modelChoice)] ?? null) : null
 
   // Poll generation status for the active run (or latest if no runId)
   const { data: genRecord, isLoading } = useQuery({
@@ -143,8 +154,14 @@ export default function AnalysisTab({
     },
   })
 
-  const startMut = useMutation({
+  const startMut = useMutation<THGenerationRecord | THPlaybookJob, Error, void>({
     mutationFn: () => {
+      // issue-local-040: a Hunt Playbook selection fires the whole
+      // playbook (N runs, one per its enabled model) instead of a single
+      // standalone-model run.
+      if (chosenPlaybookId) {
+        return api.threatHunting.playbooks.run(pkgId, chosenPlaybookId)
+      }
       const effort = selectedEffort || effortData?.th_research_effort || 'high'
       return api.threatHunting.startGeneration(pkgId, {
         research_effort: effort,
@@ -154,8 +171,14 @@ export default function AnalysisTab({
       })
     },
     onSuccess: (data) => {
-      const newRunId = data.run_id ?? data.id
-      if (newRunId && onRunCreated) onRunCreated(newRunId)
+      // A playbook job (identified by its run_ids array — unique to
+      // THPlaybookJob) has no single run_id, since it fires several — just
+      // refresh the runs list so they show up. A standalone-model run still
+      // hands off its one run_id to the caller so it can jump straight to it.
+      if (!('run_ids' in data)) {
+        const newRunId = data.run_id ?? data.id
+        if (newRunId && onRunCreated) onRunCreated(newRunId)
+      }
       qc.invalidateQueries({ queryKey: ['th-generation', pkgId] })
       qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
     },
@@ -226,6 +249,7 @@ export default function AnalysisTab({
                 modelChoice={modelChoice}
                 onModelChoiceChange={setModelChoice}
                 modelOptions={modelOptions}
+                playbookOptions={playbooks}
                 iocMode={iocMode}
                 onIocModeChange={setIocMode}
                 iocCleaningOptions={iocCleaningOptions}

@@ -16,6 +16,10 @@ export default function ThreatHuntingDetail() {
   // newest run when this doesn't match any run in the package.
   const [searchParams] = useSearchParams()
   const runId = searchParams.get('run') ?? undefined
+  // issue-local-040: `?tab=analysis` set by ThreatHuntingNew.tsx right after
+  // the evidence-upload wizard closes — the general default tab stays
+  // 'evidence' for every other page load (revisiting an existing package).
+  const initialTab = searchParams.get('tab') === 'analysis' ? 'analysis' : undefined
 
   if (!id) return null
 
@@ -23,6 +27,7 @@ export default function ThreatHuntingDetail() {
     <HuntDetail
       pkgId={id}
       initialRunId={runId}
+      initialTab={initialTab}
       // issue-local-032: '..' now resolves to the Dashboard, not the package
       // list — this page is only reached FROM the package list (or a direct
       // link), so "back" should return there, not to the Dashboard.

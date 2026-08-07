@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 13
+_TH_SCHEMA_VERSION = 14
 
 
 def _utc_now_iso() -> str:
@@ -170,7 +170,10 @@ CREATE TABLE IF NOT EXISTS hunting_packages (
     run_seq             INTEGER,
     threat_intel_status TEXT,
     created_by          TEXT,
-    archived            INTEGER NOT NULL DEFAULT 0
+    archived            INTEGER NOT NULL DEFAULT 0,
+    playbook_id         TEXT,
+    playbook_name       TEXT,
+    run_origin          TEXT NOT NULL DEFAULT 'manual'
 );
 """
 
@@ -202,7 +205,8 @@ CREATE TABLE IF NOT EXISTS hunt_reports (
     executive_summary TEXT,
     full_report      TEXT,
     created_at       TEXT NOT NULL,
-    created_by       TEXT
+    created_by       TEXT,
+    name             TEXT
 );
 """
 
@@ -274,6 +278,55 @@ CREATE TABLE IF NOT EXISTS comparison_jobs (
     created_by       TEXT,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
+);
+"""
+
+# issue-local-040: a Hunt Playbook is a named, reusable automation config —
+# which models to run, and which of the normally-manual gates (analysis
+# approval, comparison assessment, recommendation-run, full-assessment
+# consolidation) proceed automatically instead of waiting on a human. Global,
+# DB-backed objects with full CRUD + clone, same shape as siem_connectors —
+# not per-package, and not YAML config like the plain Threat Hunting settings.
+CREATE_HUNT_PLAYBOOKS_TABLE = """
+CREATE TABLE IF NOT EXISTS hunt_playbooks (
+    id                                    TEXT PRIMARY KEY,
+    name                                  TEXT NOT NULL,
+    models                                TEXT NOT NULL DEFAULT '[]',
+    auto_approve_analysis                 INTEGER NOT NULL DEFAULT 0,
+    auto_run_comparison                   INTEGER NOT NULL DEFAULT 0,
+    auto_compare_preliminary              INTEGER NOT NULL DEFAULT 0,
+    auto_compare_full                     INTEGER NOT NULL DEFAULT 0,
+    auto_create_run_from_recommendations  INTEGER NOT NULL DEFAULT 0,
+    auto_generate_full_report             INTEGER NOT NULL DEFAULT 0,
+    created_at                            TEXT NOT NULL,
+    created_by                            TEXT,
+    updated_at                            TEXT NOT NULL
+);
+"""
+
+# issue-local-040: a playbook execution fires N concurrent generation runs
+# (one per enabled model) and, depending on the playbook's toggles, chains
+# into a comparison assessment, a recommendation-synthesis run, and a
+# consolidated report — all as a single detached background task, same
+# "survive the triggering request" rationale as CREATE_COMPARISON_JOBS_TABLE.
+# The frontend polls this row for overall progress across the whole chain.
+CREATE_PLAYBOOK_JOBS_TABLE = """
+CREATE TABLE IF NOT EXISTS playbook_jobs (
+    id                                TEXT PRIMARY KEY,
+    hunt_package_id                   TEXT NOT NULL REFERENCES hunt_packages(id),
+    playbook_id                       TEXT NOT NULL,
+    playbook_name                     TEXT NOT NULL,
+    status                            TEXT NOT NULL,
+    current_step                      TEXT,
+    error_message                     TEXT,
+    run_ids                           TEXT,
+    comparison_preliminary_report_id  TEXT,
+    comparison_full_report_id         TEXT,
+    recommendation_run_id             TEXT,
+    consolidated_report_id            TEXT,
+    created_by                        TEXT,
+    created_at                        TEXT NOT NULL,
+    updated_at                        TEXT NOT NULL
 );
 """
 
@@ -548,6 +601,31 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         # needed to become a trackable background job.
         await db.execute(CREATE_COMPARISON_JOBS_TABLE)
         logger.info("Migrated threat_hunting.db to schema v13 (added comparison_jobs table)")
+    if current_version < 14:
+        # v14 (issue-local-040): Hunt Playbooks — hunt_playbooks (the
+        # playbook definitions) + playbook_jobs (background execution
+        # tracking, mirroring comparison_jobs). hunting_packages gains
+        # playbook_id/playbook_name (snapshotted at run creation so a run
+        # still shows its origin after the playbook is later renamed or
+        # deleted) and run_origin ('manual'|'playbook'|'consolidated', for
+        # the Runs/Playbook Runs/Consolidated Runs sub-tabs). hunt_reports
+        # gains name, for saved/named comparison assessments.
+        await db.execute(CREATE_HUNT_PLAYBOOKS_TABLE)
+        await db.execute(CREATE_PLAYBOOK_JOBS_TABLE)
+        for table, col_def in (
+            ("hunting_packages", "ADD COLUMN playbook_id TEXT"),
+            ("hunting_packages", "ADD COLUMN playbook_name TEXT"),
+            ("hunting_packages", "ADD COLUMN run_origin TEXT NOT NULL DEFAULT 'manual'"),
+            ("hunt_reports", "ADD COLUMN name TEXT"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v14 "
+            "(added hunt_playbooks, playbook_jobs, run_origin/playbook columns, report name)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -566,6 +644,8 @@ async def init_threat_hunting_db() -> None:
         await db.execute(CREATE_SIEM_CONNECTORS_TABLE)
         await db.execute(CREATE_THREAT_INTEL_ANALYSIS_TABLE)
         await db.execute(CREATE_COMPARISON_JOBS_TABLE)
+        await db.execute(CREATE_HUNT_PLAYBOOKS_TABLE)
+        await db.execute(CREATE_PLAYBOOK_JOBS_TABLE)
         try:
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_extracted_iocs_ioc ON extracted_iocs(ioc)"
@@ -2347,6 +2427,326 @@ async def get_connector_for_use(conn_id: str) -> dict[str, Any] | None:
     return _load_connector_for_use(raw) if raw else None
 
 
+# ── Hunt Playbook CRUD (issue-local-040) ─────────────────────────────────────
+# A playbook is a global, reusable automation config — no per-object ownership
+# (this codebase has none anywhere; every object CRUD is role-gated only, same
+# as siem_connectors) so any researcher/admin can create/edit/clone/delete
+# any playbook. `models` is a JSON list of {"provider_name", "model_name"}
+# pairs — one generation run is fired per entry when the playbook runs.
+
+_PLAYBOOK_TOGGLE_COLUMNS = (
+    "auto_approve_analysis",
+    "auto_run_comparison",
+    "auto_compare_preliminary",
+    "auto_compare_full",
+    "auto_create_run_from_recommendations",
+    "auto_generate_full_report",
+)
+
+
+def _validate_playbook_models(models: list[dict[str, Any]]) -> None:
+    if not isinstance(models, list) or not models:
+        raise ValueError("models must be a non-empty list")
+    for entry in models:
+        if not isinstance(entry, dict) or not entry.get("model_name"):
+            raise ValueError("each model entry needs at least a model_name")
+
+
+def _decode_playbook_row(d: dict[str, Any]) -> dict[str, Any]:
+    import json as _json
+
+    try:
+        d["models"] = _json.loads(d.get("models") or "[]")
+    except Exception:
+        d["models"] = []
+    for col in _PLAYBOOK_TOGGLE_COLUMNS:
+        d[col] = bool(d.get(col))
+    return d
+
+
+async def create_playbook(
+    name: str,
+    *,
+    models: list[dict[str, Any]],
+    auto_approve_analysis: bool = False,
+    auto_run_comparison: bool = False,
+    auto_compare_preliminary: bool = False,
+    auto_compare_full: bool = False,
+    auto_create_run_from_recommendations: bool = False,
+    auto_generate_full_report: bool = False,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    import json as _json
+
+    if not name or not name.strip():
+        raise ValueError("name must not be empty")
+    _validate_playbook_models(models)
+
+    playbook_id = _new_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO hunt_playbooks
+               (id, name, models, auto_approve_analysis, auto_run_comparison,
+                auto_compare_preliminary, auto_compare_full,
+                auto_create_run_from_recommendations, auto_generate_full_report,
+                created_at, created_by, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                playbook_id,
+                name.strip(),
+                _json.dumps(models),
+                int(auto_approve_analysis),
+                int(auto_run_comparison),
+                int(auto_compare_preliminary),
+                int(auto_compare_full),
+                int(auto_create_run_from_recommendations),
+                int(auto_generate_full_report),
+                now,
+                created_by,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_playbook(playbook_id) or {}
+
+
+async def get_playbook(playbook_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM hunt_playbooks WHERE id = ?", (playbook_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return _decode_playbook_row(dict(row)) if row else None
+
+
+async def list_playbooks() -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM hunt_playbooks ORDER BY created_at")
+        rows = await cur.fetchall()
+        await cur.close()
+    return [_decode_playbook_row(dict(r)) for r in rows]
+
+
+async def update_playbook(
+    playbook_id: str,
+    *,
+    name: str | None = None,
+    models: list[dict[str, Any]] | None = None,
+    auto_approve_analysis: bool | None = None,
+    auto_run_comparison: bool | None = None,
+    auto_compare_preliminary: bool | None = None,
+    auto_compare_full: bool | None = None,
+    auto_create_run_from_recommendations: bool | None = None,
+    auto_generate_full_report: bool | None = None,
+) -> dict[str, Any] | None:
+    import json as _json
+
+    existing = await get_playbook(playbook_id)
+    if not existing:
+        return None
+
+    if name is not None and not name.strip():
+        raise ValueError("name must not be empty")
+    if models is not None:
+        _validate_playbook_models(models)
+
+    new_name = name.strip() if name is not None else existing["name"]
+    new_models = models if models is not None else existing["models"]
+    toggles = {
+        "auto_approve_analysis": auto_approve_analysis,
+        "auto_run_comparison": auto_run_comparison,
+        "auto_compare_preliminary": auto_compare_preliminary,
+        "auto_compare_full": auto_compare_full,
+        "auto_create_run_from_recommendations": auto_create_run_from_recommendations,
+        "auto_generate_full_report": auto_generate_full_report,
+    }
+    resolved = {
+        col: (int(value) if value is not None else int(existing[col]))
+        for col, value in toggles.items()
+    }
+    now = _utc_now_iso()
+
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """UPDATE hunt_playbooks SET
+               name=?, models=?, auto_approve_analysis=?, auto_run_comparison=?,
+               auto_compare_preliminary=?, auto_compare_full=?,
+               auto_create_run_from_recommendations=?, auto_generate_full_report=?,
+               updated_at=?
+               WHERE id=?""",
+            (
+                new_name,
+                _json.dumps(new_models),
+                resolved["auto_approve_analysis"],
+                resolved["auto_run_comparison"],
+                resolved["auto_compare_preliminary"],
+                resolved["auto_compare_full"],
+                resolved["auto_create_run_from_recommendations"],
+                resolved["auto_generate_full_report"],
+                now,
+                playbook_id,
+            ),
+        )
+        await db.commit()
+    return await get_playbook(playbook_id)
+
+
+async def delete_playbook(playbook_id: str) -> bool:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        cur = await db.execute("DELETE FROM hunt_playbooks WHERE id = ?", (playbook_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def clone_playbook(
+    playbook_id: str, new_name: str, created_by: str | None = None
+) -> dict[str, Any] | None:
+    """Clone an existing playbook's config under a new name. Mirrors
+    clone_hunt_package's shape — a fresh id, everything else copied verbatim."""
+    source = await get_playbook(playbook_id)
+    if not source:
+        return None
+    return await create_playbook(
+        new_name,
+        models=source["models"],
+        auto_approve_analysis=source["auto_approve_analysis"],
+        auto_run_comparison=source["auto_run_comparison"],
+        auto_compare_preliminary=source["auto_compare_preliminary"],
+        auto_compare_full=source["auto_compare_full"],
+        auto_create_run_from_recommendations=source["auto_create_run_from_recommendations"],
+        auto_generate_full_report=source["auto_generate_full_report"],
+        created_by=created_by,
+    )
+
+
+# ── Playbook jobs (issue-local-040) ──────────────────────────────────────────
+# Background-job tracking for a fired playbook — see CREATE_PLAYBOOK_JOBS_TABLE
+# for why (same "survive the triggering request" rationale as comparison_jobs).
+# One job row per "run this playbook" call; the LATEST job for a
+# hunt_package_id is what the frontend polls.
+
+
+def _decode_playbook_job_row(d: dict[str, Any]) -> dict[str, Any]:
+    import json as _json
+
+    if d.get("run_ids"):
+        try:
+            d["run_ids"] = _json.loads(d["run_ids"])
+        except Exception:
+            d["run_ids"] = None
+    return d
+
+
+async def create_playbook_job(
+    hunt_package_id: str,
+    *,
+    playbook_id: str,
+    playbook_name: str,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    job_id = _new_job_id()
+    now = _utc_now_iso()
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO playbook_jobs
+               (id, hunt_package_id, playbook_id, playbook_name, status, current_step,
+                error_message, run_ids, comparison_preliminary_report_id,
+                comparison_full_report_id, recommendation_run_id, consolidated_report_id,
+                created_by, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                job_id,
+                hunt_package_id,
+                playbook_id,
+                playbook_name,
+                "running",
+                "starting_runs",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_playbook_job(job_id) or {}
+
+
+async def update_playbook_job(
+    job_id: str,
+    *,
+    current_step: str | None = None,
+    status: str | None = None,
+    error_message: str | None = None,
+    run_ids: list[str] | None = None,
+    comparison_preliminary_report_id: str | None = None,
+    comparison_full_report_id: str | None = None,
+    recommendation_run_id: str | None = None,
+    consolidated_report_id: str | None = None,
+) -> None:
+    import json as _json
+
+    fields: list[str] = []
+    values: list[Any] = []
+    for col, value in (
+        ("current_step", current_step),
+        ("status", status),
+        ("error_message", error_message),
+        ("comparison_preliminary_report_id", comparison_preliminary_report_id),
+        ("comparison_full_report_id", comparison_full_report_id),
+        ("recommendation_run_id", recommendation_run_id),
+        ("consolidated_report_id", consolidated_report_id),
+    ):
+        if value is not None:
+            fields.append(f"{col} = ?")
+            values.append(value)
+    if run_ids is not None:
+        fields.append("run_ids = ?")
+        values.append(_json.dumps(run_ids))
+    if not fields:
+        return
+    fields.append("updated_at = ?")
+    values.append(_utc_now_iso())
+    values.append(job_id)
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        await db.execute(
+            f"UPDATE playbook_jobs SET {', '.join(fields)} WHERE id = ?",  # noqa: S608
+            values,
+        )
+        await db.commit()
+
+
+async def get_playbook_job(job_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM playbook_jobs WHERE id = ?", (job_id,))
+        row = await cur.fetchone()
+        await cur.close()
+    return _decode_playbook_job_row(dict(row)) if row else None
+
+
+async def get_latest_playbook_job(hunt_package_id: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT id FROM playbook_jobs
+               WHERE hunt_package_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (hunt_package_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    if not row:
+        return None
+    return await get_playbook_job(row["id"])
+
+
 # ── Task Results CRUD ─────────────────────────────────────────────────────────
 
 
@@ -2596,7 +2996,7 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
             """SELECT id, hunt_package_id, generation_status,
                       llm_provider, llm_model, research_effort, created_at,
                       step_logs, deep_retrohunt, run_seq, threat_intel_status, created_by,
-                      archived
+                      archived, playbook_id, playbook_name, run_origin
                FROM hunting_packages
                WHERE hunt_package_id = ?
                ORDER BY created_at DESC""",
@@ -2671,6 +3071,7 @@ async def create_hunt_report(
     full_report: dict,
     created_by: str | None = None,
     run_id: str | None = None,
+    name: str | None = None,
 ) -> dict[str, Any]:
     import json as _json
 
@@ -2679,8 +3080,9 @@ async def create_hunt_report(
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         await db.execute(
             """INSERT INTO hunt_reports
-               (id, hunt_package_id, run_id, executive_summary, full_report, created_at, created_by)
-               VALUES (?,?,?,?,?,?,?)""",
+               (id, hunt_package_id, run_id, executive_summary, full_report, created_at,
+                created_by, name)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 report_id,
                 hunt_package_id,
@@ -2689,6 +3091,7 @@ async def create_hunt_report(
                 _json.dumps(full_report, ensure_ascii=False, default=str),
                 now,
                 created_by,
+                name,
             ),
         )
         await db.commit()
@@ -2859,18 +3262,32 @@ async def create_comparison_report(
     full_report: dict[str, Any],
     created_by: str | None = None,
     phase: str = "full",
+    name: str | None = None,
+    name_prefix: str = "manual",
 ) -> dict[str, Any]:
     # issue-local-035: "phase" splits comparison reports into two independent
     # slots per package — "preliminary" (pre-SIEM-execution state) and "full"
     # (post-SIEM-execution, the only phase that existed before issue-local-035
     # — see get_latest_comparison_report's back-compat note).
+    #
+    # issue-local-040: every comparison assessment is now named — a blank
+    # *name* auto-generates one from *name_prefix* (the triggering playbook's
+    # name when fired by a playbook, else "manual") plus a timestamp, same
+    # convention as the Assistant's auto-named sessions ("TARS-assistant-
+    # YYYYMMDD-HHMMSS").
     full_report = {**full_report, "report_kind": "comparison", "phase": phase}
+    resolved_name = (
+        name.strip()
+        if name and name.strip()
+        else f"{name_prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    )
     await create_hunt_report(
         hunt_package_id,
         executive_summary=executive_summary,
         full_report=full_report,
         created_by=created_by,
         run_id=None,
+        name=resolved_name,
     )
     result = await get_latest_comparison_report(hunt_package_id, phase=phase)
     return result or {}
@@ -2908,6 +3325,40 @@ async def get_latest_comparison_report(
         ):
             return decoded
     return None
+
+
+async def list_comparison_reports(
+    hunt_package_id: str, *, phase: str | None = None
+) -> list[dict[str, Any]]:
+    """Return every saved comparison report for a package, newest first
+    (issue-local-040) — unlike get_latest_comparison_report, which only ever
+    returns the single most recent one per phase. Backs the saved-assessment
+    selector: naming and saving an assessment is only useful if earlier ones
+    stay reachable instead of being shadowed by the next "Assess & Compare".
+
+    *phase*, when given, narrows to "preliminary" or "full"; None returns
+    both.
+    """
+    async with aiosqlite.connect(_TH_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT * FROM hunt_reports
+               WHERE hunt_package_id = ? AND run_id IS NULL
+               ORDER BY created_at DESC""",
+            (hunt_package_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        decoded = _decode_report_row(dict(row))
+        full_report = decoded.get("full_report")
+        if not isinstance(full_report, dict) or full_report.get("report_kind") != "comparison":
+            continue
+        if phase is not None and full_report.get("phase", "full") != phase:
+            continue
+        result.append(decoded)
+    return result
 
 
 # ── Consolidated reports (issue-local-035) ───────────────────────────────────

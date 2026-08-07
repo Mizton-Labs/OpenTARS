@@ -216,6 +216,10 @@ def build_initial_state(
     research_effort: str = "medium",
     run_config: dict[str, Any] | None = None,
     created_by: str | None = None,
+    playbook_id: str | None = None,
+    playbook_name: str | None = None,
+    run_origin: str = "manual",
+    auto_approve: bool = False,
 ) -> HuntPipelineState:
     """Build the initial pipeline state for a new generation run."""
     return HuntPipelineState(
@@ -225,6 +229,10 @@ def build_initial_state(
         research_effort=research_effort,
         run_config=run_config or {},
         created_by=created_by,
+        playbook_id=playbook_id,
+        playbook_name=playbook_name,
+        run_origin=run_origin,
+        auto_approve=auto_approve,
         approved=False,
         rejected=False,
         approval_notes="",

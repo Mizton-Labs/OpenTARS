@@ -38,12 +38,14 @@ vi.mock('../api/client', async () => {
         compareRuns: vi.fn(),
         getComparisonJobStatus: vi.fn(),
         getComparison: vi.fn(),
+        listComparisons: vi.fn(),
         downloadComparisonMarkdown: vi.fn(() => 'http://x/comparison/markdown'),
         downloadComparisonPdf: vi.fn(() => 'http://x/comparison/pdf'),
         consolidateComparison: vi.fn(),
         downloadConsolidatedMarkdown: vi.fn(() => 'http://x/consolidated/markdown'),
         downloadConsolidatedPdf: vi.fn(() => 'http://x/consolidated/pdf'),
         rerunFromRecommendation: vi.fn(),
+        createRecommendationRun: vi.fn(),
       },
     },
   }
@@ -202,6 +204,7 @@ beforeEach(() => {
   vi.mocked(api.threatHunting.getThreatIntel).mockRejectedValue(new Error('none'))
   vi.mocked(api.threatHunting.getComparisonJobStatus).mockRejectedValue(new Error('no job'))
   vi.mocked(api.threatHunting.getComparison).mockRejectedValue(new Error('none'))
+  vi.mocked(api.threatHunting.listComparisons).mockResolvedValue([])
 })
 
 describe('HuntDetail tabs (issue-local-020)', () => {
@@ -487,5 +490,90 @@ describe('ComparisonAssessmentTab and Assess & Compare (issue-local-020)', () =>
         phase: 'full',
       }),
     )
+  })
+
+  it('issue-local-040: typing a name in the Assess & Compare dialog is sent to compareRuns', async () => {
+    vi.mocked(api.threatHunting.compareRuns).mockResolvedValue(makeJob({ status: 'running' }))
+    renderDetail()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Assess & Compare' }))
+    fireEvent.change(await screen.findByPlaceholderText(/auto-named/i), {
+      target: { value: 'Q1 review' },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.compareRuns).toHaveBeenCalledWith('pkg-1', {
+        run_ids: undefined,
+        provider_name: undefined,
+        model_name: undefined,
+        phase: 'full',
+        name: 'Q1 review',
+      }),
+    )
+  })
+
+  it('issue-local-040: a blank name is sent as undefined (server auto-names it)', async () => {
+    vi.mocked(api.threatHunting.compareRuns).mockResolvedValue(makeJob({ status: 'running' }))
+    renderDetail()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Assess & Compare' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Compare' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.compareRuns).toHaveBeenCalledWith(
+        'pkg-1',
+        expect.objectContaining({ name: undefined }),
+      ),
+    )
+  })
+
+  it('issue-local-040: shows a saved-assessment selector when more than one exists, and switching selection swaps the shown report', async () => {
+    const latest = makeComparison({ id: 'cmp-2', name: 'Second' })
+    const older = makeComparison({ id: 'cmp-1', name: 'First' })
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(latest)
+    vi.mocked(api.threatHunting.listComparisons).mockResolvedValue([latest, older])
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    expect((await screen.findByText('Saved as')).closest('p')).toHaveTextContent('Saved as Second')
+
+    const selector = screen.getByTitle(
+      'View a different saved comparison assessment',
+    ) as HTMLSelectElement
+    expect(within(selector).getByText('Second')).toBeInTheDocument()
+    expect(selector.value).toBe('')
+
+    fireEvent.change(selector, { target: { value: 'cmp-1' } })
+
+    await waitFor(() =>
+      expect(screen.getByText('Saved as').closest('p')).toHaveTextContent('Saved as First'),
+    )
+  })
+
+  it('issue-local-040: "Create a New Run from Recommendations" calls createRecommendationRun and shows a success banner', async () => {
+    vi.mocked(api.threatHunting.getComparison).mockResolvedValue(makeComparison())
+    vi.mocked(api.threatHunting.createRecommendationRun).mockResolvedValue({
+      id: 'run-new',
+      run_id: 'run-new',
+      hunt_package_id: 'pkg-1',
+      generation_status: 'running',
+      run_origin: 'consolidated',
+    } as never)
+    renderDetail()
+    fireEvent.click(await screen.findByRole('button', { name: 'Comparison Assessment' }))
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Create a New Run from Recommendations' }),
+    )
+
+    await waitFor(() =>
+      expect(api.threatHunting.createRecommendationRun).toHaveBeenCalledWith('pkg-1', {
+        phase: 'full',
+      }),
+    )
+    expect(await screen.findByText(/new run started in this package/i)).toBeInTheDocument()
   })
 })

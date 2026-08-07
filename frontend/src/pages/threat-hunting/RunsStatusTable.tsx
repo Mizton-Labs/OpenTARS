@@ -300,6 +300,20 @@ function RunActions({
   )
 }
 
+// issue-local-040: which sub-tab a run belongs to. Undefined/missing
+// run_origin (runs created before this field existed) counts as 'manual'.
+type RunSubTab = 'runs' | 'playbook' | 'consolidated'
+
+const SUB_TABS: { id: RunSubTab; label: string }[] = [
+  { id: 'runs', label: 'Runs' },
+  { id: 'playbook', label: 'Playbook Runs' },
+  { id: 'consolidated', label: 'Consolidated Runs' },
+]
+
+function subTabOf(run: THuntPackageRun): RunSubTab {
+  return run.run_origin === 'playbook' ? 'playbook' : run.run_origin === 'consolidated' ? 'consolidated' : 'runs'
+}
+
 export default function RunsStatusTable({
   pkgId,
   runs,
@@ -324,89 +338,129 @@ export default function RunsStatusTable({
   isAdmin?: boolean
 }) {
   const defaultModelLabel = useDefaultModelLabel()
+  const [subTab, setSubTab] = useState<RunSubTab>('runs')
   if (runs.length === 0) return null
   const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
   const showActions = isResearcher || isAdmin
+  const counts: Record<RunSubTab, number> = { runs: 0, playbook: 0, consolidated: 0 }
+  for (const run of runs) counts[subTabOf(run)] += 1
+  const visibleRuns = runs.filter((run) => subTabOf(run) === subTab)
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-800">
-      <table className="w-full min-w-[900px]">
-        <thead>
-          <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
-            <th className="text-left py-1.5 px-2">Run ID</th>
-            <th className="text-left py-1.5 px-2">Model</th>
-            <th className="text-left py-1.5 px-2">Status</th>
-            <th className="text-left py-1.5 px-2">Workflow</th>
-            <th className="text-left py-1.5 px-2">Duration</th>
-            <th className="text-left py-1.5 px-2">IOCs</th>
-            <th className="text-left py-1.5 px-2">Report</th>
-            <th className="text-left py-1.5 px-2">Created</th>
-            <th className="text-left py-1.5 px-2">Created by</th>
-            {showActions && <th className="text-left py-1.5 px-2">Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr
-              key={run.id}
-              className={clsx(
-                'border-t border-gray-800/60',
-                run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
-              )}
-            >
-              <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
-                <span className="flex items-center gap-1.5">
-                  {onSelectRun ? (
-                    <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                      {run.run_id_display || '—'}
-                    </button>
-                  ) : (
-                    run.run_id_display || '—'
+    <div className="space-y-1.5">
+      <nav className="flex gap-1 text-[11px]">
+        {SUB_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setSubTab(tab.id)}
+            className={clsx(
+              'px-2 py-1 rounded transition-colors font-medium',
+              subTab === tab.id
+                ? 'bg-brand-900/30 text-brand-300'
+                : 'text-gray-500 hover:text-gray-300',
+            )}
+          >
+            {tab.label} <span className="text-gray-600">({counts[tab.id]})</span>
+          </button>
+        ))}
+      </nav>
+      {visibleRuns.length === 0 ? (
+        <p className="text-xs text-gray-600 italic py-2">
+          No {SUB_TABS.find((t) => t.id === subTab)?.label.toLowerCase()} yet.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-gray-800">
+          <table className="w-full min-w-[900px]">
+            <thead>
+              <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+                <th className="text-left py-1.5 px-2">Run ID</th>
+                <th className="text-left py-1.5 px-2">Model</th>
+                <th className="text-left py-1.5 px-2">Status</th>
+                <th className="text-left py-1.5 px-2">Workflow</th>
+                <th className="text-left py-1.5 px-2">Duration</th>
+                <th className="text-left py-1.5 px-2">IOCs</th>
+                <th className="text-left py-1.5 px-2">Report</th>
+                <th className="text-left py-1.5 px-2">Created</th>
+                <th className="text-left py-1.5 px-2">Created by</th>
+                {showActions && <th className="text-left py-1.5 px-2">Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRuns.map((run) => (
+                <tr
+                  key={run.id}
+                  className={clsx(
+                    'border-t border-gray-800/60',
+                    run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
                   )}
-                  {run.archived && <ArchivedBadge />}
-                </span>
-              </td>
-              <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
-                {onSelectRun ? (
-                  <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                    {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
-                  </button>
-                ) : (
-                  run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
-                )}
-                {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
-              </td>
-              <td className="py-1.5 px-2">
-                <span className={clsx('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
-                  {run.generation_status}
-                </span>
-              </td>
-              <td className="py-1.5 px-2">
-                <MiniPhaseTrack run={run} />
-              </td>
-              <td className="py-1.5 px-2 text-[10px] text-gray-400 whitespace-nowrap">
-                {formatDuration(run.total_elapsed_s)}
-              </td>
-              <td className="py-1.5 px-2">
-                <IocCounts run={run} />
-              </td>
-              <td className="py-1.5 px-2">
-                <ReportLinks pkgId={pkgId} run={run} />
-              </td>
-              <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
-                {run.created_at.slice(0, 19).replace('T', ' ')}
-              </td>
-              <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
-                {run.created_by ?? '—'}
-              </td>
-              {showActions && (
-                <td className="py-1.5 px-2">
-                  <RunActions pkgId={pkgId} run={run} isResearcher={isResearcher} isAdmin={isAdmin} />
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                >
+                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
+                      {onSelectRun ? (
+                        <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                          {run.run_id_display || '—'}
+                        </button>
+                      ) : (
+                        run.run_id_display || '—'
+                      )}
+                      {run.archived && <ArchivedBadge />}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
+                    {onSelectRun ? (
+                      <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                        {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
+                      </button>
+                    ) : (
+                      run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
+                    )}
+                    {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
+                    {/* issue-local-040: playbook provenance, shown next to
+                        the model for both 'playbook' and 'consolidated'
+                        runs — a consolidated (recommendation-synthesis) run
+                        started from inside a playbook still carries its
+                        playbook_id/name. */}
+                    {run.playbook_name && (
+                      <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap">
+                        {run.run_origin === 'consolidated' ? 'consolidated · ' : 'playbook · '}
+                        {run.playbook_name}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 px-2">
+                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
+                      {run.generation_status}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2">
+                    <MiniPhaseTrack run={run} />
+                  </td>
+                  <td className="py-1.5 px-2 text-[10px] text-gray-400 whitespace-nowrap">
+                    {formatDuration(run.total_elapsed_s)}
+                  </td>
+                  <td className="py-1.5 px-2">
+                    <IocCounts run={run} />
+                  </td>
+                  <td className="py-1.5 px-2">
+                    <ReportLinks pkgId={pkgId} run={run} />
+                  </td>
+                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                    {run.created_at.slice(0, 19).replace('T', ' ')}
+                  </td>
+                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                    {run.created_by ?? '—'}
+                  </td>
+                  {showActions && (
+                    <td className="py-1.5 px-2">
+                      <RunActions pkgId={pkgId} run={run} isResearcher={isResearcher} isAdmin={isAdmin} />
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

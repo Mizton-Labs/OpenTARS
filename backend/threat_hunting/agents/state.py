@@ -198,6 +198,24 @@ class HuntPipelineState(TypedDict, total=False):
     # disabled) — persisted so the Runs table can show who started each run,
     # distinct from hunt_packages.created_by (the package's original creator).
     created_by: str | None
+    # issue-local-040: Hunt Playbooks. playbook_id/playbook_name are
+    # snapshotted at run creation (not a live FK lookup) so a run still shows
+    # its origin after the playbook is later renamed or deleted; run_origin
+    # is 'manual' (default) | 'playbook' | 'consolidated', driving the Runs/
+    # Playbook Runs/Consolidated Runs sub-tabs. All three are persisted (see
+    # runner._save_generation_state) and therefore must also be restored by
+    # runner._load_pipeline_state on resume, or an approve-triggered resume
+    # would silently null them back out on its next save.
+    playbook_id: str | None
+    playbook_name: str | None
+    run_origin: str
+    # issue-local-040: transient, NEVER persisted to the DB (there is nothing
+    # to resume it FROM — it only matters once, at the moment this run first
+    # reaches 'awaiting_approval'). Set by a Hunt Playbook's
+    # auto_approve_analysis toggle; runner._run_pipeline auto-resumes the
+    # pipeline past the approval gate when this is True instead of waiting
+    # for a human POST /approve.
+    auto_approve: bool
     # issue-local-015: per-run IOC handling config —
     # {"ioc_mode": "tagging_only"|"active_cleaning",
     #  "ioc_cleaning_options": {"remove_noisy": bool, "remove_legit_domains": bool,

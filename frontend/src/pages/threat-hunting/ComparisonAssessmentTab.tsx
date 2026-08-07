@@ -32,6 +32,7 @@ import {
   RefreshCw,
   ListChecks,
   CheckCircle2,
+  Wand2,
 } from 'lucide-react'
 import {
   api,
@@ -115,11 +116,23 @@ function ComparisonPhasePanel({
   const qc = useQueryClient()
   const navigate = useNavigate()
 
-  const { data: report, isLoading } = useQuery({
+  const { data: latestReport, isLoading } = useQuery({
     queryKey: ['th-comparison', pkgId, phase],
     queryFn: () => api.threatHunting.getComparison(pkgId, phase).catch(() => null),
     retry: false,
   })
+
+  // issue-local-040: every saved assessment for this phase, so a named one
+  // stays reachable instead of being shadowed by the next "Assess & Compare".
+  const { data: savedReports = [] } = useQuery({
+    queryKey: ['th-comparisons', pkgId, phase],
+    queryFn: () => api.threatHunting.listComparisons(pkgId, phase),
+  })
+  const [selectedReportId, setSelectedReportId] = useState<string>('')
+  const report =
+    selectedReportId && savedReports.length > 0
+      ? (savedReports.find((r) => r.id === selectedReportId) ?? latestReport)
+      : latestReport
 
   // issue-local-035 follow-up: the comparison now runs as a backend job
   // decoupled from this dialog — poll its status so progress renders
@@ -142,6 +155,10 @@ function ComparisonPhasePanel({
     if (job?.status === 'completed' && lastHandledJobId.current !== job.id) {
       lastHandledJobId.current = job.id
       qc.invalidateQueries({ queryKey: ['th-comparison', pkgId, phase] })
+      qc.invalidateQueries({ queryKey: ['th-comparisons', pkgId, phase] })
+      // A freshly completed job's report is the one to look at — drop any
+      // older saved-assessment selection so the new one shows immediately.
+      setSelectedReportId('')
     }
   }, [job, qc, pkgId, phase])
 
@@ -162,11 +179,26 @@ function ComparisonPhasePanel({
     },
   })
 
+  // issue-local-040: "Create a new run from recommendations" — unlike
+  // rerunMut above, this does NOT clone into a new package. It synthesizes
+  // one consolidated plan from the compared runs' actual outputs and seeds
+  // a new run IN THIS SAME PACKAGE (run_origin='consolidated'), surfaced by
+  // the Hunt Packages page's "Consolidated Runs" sub-tab.
+  const recommendationRunMut = useMutation({
+    mutationFn: () => api.threatHunting.createRecommendationRun(pkgId, { phase }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+    },
+  })
+
   // issue-local-021: Assess & Compare dialog — run picker (all selected by
   // default) + model dropdown.
   const [showCompareDialog, setShowCompareDialog] = useState(false)
   const [compareModelChoice, setCompareModelChoice] = useState('')
   const [compareRunIds, setCompareRunIds] = useState<Set<string>>(new Set())
+  // issue-local-040: optional saved-assessment name; blank auto-names it
+  // "manual_<timestamp>" server-side.
+  const [compareName, setCompareName] = useState('')
 
   const { data: providers = [] } = useQuery({
     queryKey: ['llm-providers'],
@@ -204,6 +236,7 @@ function ComparisonPhasePanel({
         provider_name: chosenModel?.provider ?? undefined,
         model_name: chosenModel?.model ?? undefined,
         phase,
+        name: compareName.trim() || undefined,
       })
     },
     onSuccess: (startedJob) => {
@@ -216,6 +249,7 @@ function ComparisonPhasePanel({
 
   const openDialog = () => {
     setCompareRunIds(new Set(runs.map((r) => r.id)))
+    setCompareName('')
     setShowCompareDialog(true)
   }
 
@@ -247,6 +281,17 @@ function ComparisonPhasePanel({
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="block text-sm text-gray-400">Name (optional)</label>
+          <input
+            type="text"
+            className="input w-full text-sm"
+            placeholder={`Auto-named "manual_<timestamp>" if left blank`}
+            value={compareName}
+            onChange={(e) => setCompareName(e.target.value)}
+          />
         </div>
 
         <div className="space-y-1.5">
@@ -408,11 +453,33 @@ function ComparisonPhasePanel({
             {report.created_at.slice(0, 19).replace('T', ' ')} UTC
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* issue-local-040: saved-assessment selector — every named
+              comparison stays reachable, not just the latest one. */}
+          {savedReports.length > 1 && (
+            <select
+              className="input text-[11px] py-1 max-w-[220px]"
+              value={selectedReportId}
+              onChange={(e) => setSelectedReportId(e.target.value)}
+              title="View a different saved comparison assessment"
+            >
+              <option value="">Latest</option>
+              {savedReports.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name || r.created_at.slice(0, 19).replace('T', ' ')}
+                </option>
+              ))}
+            </select>
+          )}
           <ComparisonDownloadLinks pkgId={pkgId} report={report} phase={phase} />
           {assessButton}
         </div>
       </div>
+      {report.name && (
+        <p className="text-[11px] text-gray-500 -mt-3">
+          Saved as <span className="text-gray-300 font-mono">{report.name}</span>
+        </p>
+      )}
 
       {/* Summary */}
       <div className="card space-y-2">
@@ -634,6 +701,20 @@ function ComparisonPhasePanel({
                 <ListChecks className="w-3.5 h-3.5" />
                 Re-run with Selected Runs…
               </button>
+              <button
+                type="button"
+                className="btn-secondary text-sm flex items-center gap-1.5"
+                disabled={recommendationRunMut.isPending}
+                onClick={() => recommendationRunMut.mutate()}
+                title="Synthesize one consolidated plan from the compared runs' actual outputs and start a new run in THIS package"
+              >
+                {recommendationRunMut.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                Create a New Run from Recommendations
+              </button>
             </div>
           )}
 
@@ -674,6 +755,25 @@ function ComparisonPhasePanel({
               <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
               <p className="text-[11px] text-red-300">
                 {rerunMut.error instanceof Error ? rerunMut.error.message : 'Re-run failed'}
+              </p>
+            </div>
+          )}
+          {recommendationRunMut.isSuccess && (
+            <div className="flex items-start gap-2 p-2 rounded-lg bg-green-900/20 border border-green-800/30">
+              <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-green-300">
+                New run started in this package from the synthesized recommendations — see the
+                Consolidated Runs tab in the runs table above.
+              </p>
+            </div>
+          )}
+          {recommendationRunMut.isError && (
+            <div className="flex items-start gap-2 p-2 rounded-lg bg-red-900/20 border border-red-800/30">
+              <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+              <p className="text-[11px] text-red-300">
+                {recommendationRunMut.error instanceof Error
+                  ? recommendationRunMut.error.message
+                  : 'Failed to create a run from recommendations'}
               </p>
             </div>
           )}

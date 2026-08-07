@@ -31,9 +31,16 @@ const PARSE_STATUS_ICON: Record<string, React.ReactNode> = {
 export default function EvidenceTab({
   pkgId,
   isResearcher,
+  hasRuns,
+  onGoToAnalysis,
 }: {
   pkgId: string
   isResearcher: boolean
+  /** issue-local-040: whether this package has ever had a generation run
+   *  started — drives the "analysis hasn't started" notice below, distinct
+   *  from the "no evidence at all" case just below it. */
+  hasRuns?: boolean
+  onGoToAnalysis?: () => void
 }) {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -68,6 +75,26 @@ export default function EvidenceTab({
 
   if (evidence.length === 0) {
     return <p className="text-sm text-gray-500 text-center py-8">No evidence items yet.</p>
+  }
+
+  // issue-local-040: evidence rows exist right at upload time, but their
+  // content only gets fetched/parsed once a run's intake_classifier step
+  // actually processes them — before the first run starts, this pane has
+  // nothing meaningful to show even though evidence.length > 0.
+  if (!hasRuns) {
+    return (
+      <div className="text-center py-10 space-y-3">
+        <p className="text-sm text-gray-400 max-w-sm mx-auto">
+          Evidence has been added, but the run hasn&apos;t started yet — its content isn&apos;t
+          fetched or parsed until the analysis pipeline runs.
+        </p>
+        {onGoToAnalysis && (
+          <button type="button" className="btn-primary text-sm" onClick={onGoToAnalysis}>
+            Go to Analysis to start the run
+          </button>
+        )}
+      </div>
+    )
   }
 
   const selected = (evidence as THEvidenceItem[]).find((e) => e.id === selectedId)

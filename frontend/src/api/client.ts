@@ -1664,6 +1664,8 @@ export const api = {
         model_name?: string | null
         run_ids?: string[]
         phase?: 'preliminary' | 'full'
+        /** issue-local-040: optional saved-assessment name; blank auto-names it. */
+        name?: string | null
       } = {},
     ) =>
       request<THComparisonJob>(`/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare`, {
@@ -1677,6 +1679,12 @@ export const api = {
     getComparison: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
       request<THComparisonReport>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison?phase=${phase}`,
+      ),
+    /** issue-local-040: every saved comparison assessment, newest first —
+     *  unlike getComparison, which only ever returns the latest one. */
+    listComparisons: (pkgId: string, phase?: 'preliminary' | 'full') =>
+      request<THComparisonReport[]>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparisons${phase ? `?phase=${phase}` : ''}`,
       ),
     downloadComparisonMarkdown: (pkgId: string, phase: 'preliminary' | 'full' = 'full') =>
       `${BASE}/threat-hunting/packages/${encodeURIComponent(pkgId)}/comparison/markdown?phase=${phase}`,
@@ -1712,6 +1720,62 @@ export const api = {
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare/rerun`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
+    /** issue-local-040: "Create a new run from recommendations" — unlike
+     *  rerunFromRecommendation above, this does NOT clone into a new
+     *  package. It synthesizes one consolidated hunt plan from the
+     *  comparison's compared runs' actual outputs and starts a new run IN
+     *  THIS SAME PACKAGE (run_origin='consolidated'). */
+    createRecommendationRun: (
+      pkgId: string,
+      body: {
+        run_ids?: string[]
+        phase?: 'preliminary' | 'full'
+        provider_name?: string | null
+        model_name?: string | null
+        research_effort?: string
+      } = {},
+    ) =>
+      request<THGenerationRecord>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/compare/recommendation-run`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+
+    // ── Hunt Playbooks (issue-local-040) ──────────────────────────────────────
+    playbooks: {
+      list: () => request<THPlaybook[]>('/threat-hunting/playbooks'),
+      get: (playbookId: string) =>
+        request<THPlaybook>(`/threat-hunting/playbooks/${encodeURIComponent(playbookId)}`),
+      create: (body: THPlaybookInput) =>
+        request<THPlaybook>('/threat-hunting/playbooks', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      update: (playbookId: string, body: Partial<THPlaybookInput>) =>
+        request<THPlaybook>(`/threat-hunting/playbooks/${encodeURIComponent(playbookId)}`, {
+          method: 'PUT',
+          body: JSON.stringify(body),
+        }),
+      delete: (playbookId: string) =>
+        request<void>(`/threat-hunting/playbooks/${encodeURIComponent(playbookId)}`, {
+          method: 'DELETE',
+        }),
+      clone: (playbookId: string, name: string) =>
+        request<THPlaybook>(`/threat-hunting/playbooks/${encodeURIComponent(playbookId)}/clone`, {
+          method: 'POST',
+          body: JSON.stringify({ name }),
+        }),
+      /** Fires the playbook against a package's evidence; returns the
+       *  tracking job immediately — poll getJobStatus() for progress. */
+      run: (pkgId: string, playbookId: string) =>
+        request<THPlaybookJob>(
+          `/threat-hunting/packages/${encodeURIComponent(pkgId)}/playbooks/${encodeURIComponent(playbookId)}/run`,
+          { method: 'POST' },
+        ),
+      getJobStatus: (pkgId: string) =>
+        request<THPlaybookJob>(
+          `/threat-hunting/packages/${encodeURIComponent(pkgId)}/playbooks/status`,
+        ),
+    },
 
     // ── Threat Intel Tracking dashboard (issue-local-021) ────────────────────
     tracking: {
@@ -2390,6 +2454,69 @@ export interface THuntPackageRun extends THRunSummary {
    *  state) and of the parent package's own status — a single run can be
    *  archived without touching the rest of the package. */
   archived?: boolean
+  /** issue-local-040: which Hunt Playbook (if any) produced this run, and
+   *  the origin driving the Runs/Playbook Runs/Consolidated Runs sub-tabs.
+   *  playbook_id/name are snapshotted at run creation, so they still show
+   *  even after the playbook is later renamed or deleted. */
+  playbook_id?: string | null
+  playbook_name?: string | null
+  run_origin?: 'manual' | 'playbook' | 'consolidated'
+}
+
+/** issue-local-040: one model a Hunt Playbook fires a run for. */
+export interface THPlaybookModelEntry {
+  provider_name?: string | null
+  model_name: string
+}
+
+/** issue-local-040: a named, reusable Hunt Playbook automation config. */
+export interface THPlaybook {
+  id: string
+  name: string
+  models: THPlaybookModelEntry[]
+  auto_approve_analysis: boolean
+  auto_run_comparison: boolean
+  auto_compare_preliminary: boolean
+  auto_compare_full: boolean
+  auto_create_run_from_recommendations: boolean
+  auto_generate_full_report: boolean
+  created_at: string
+  created_by: string | null
+  updated_at: string
+}
+
+export type THPlaybookInput = Pick<THPlaybook, 'name' | 'models'> &
+  Partial<
+    Pick<
+      THPlaybook,
+      | 'auto_approve_analysis'
+      | 'auto_run_comparison'
+      | 'auto_compare_preliminary'
+      | 'auto_compare_full'
+      | 'auto_create_run_from_recommendations'
+      | 'auto_generate_full_report'
+    >
+  >
+
+/** issue-local-040: background job tracking a fired playbook's whole chain
+ *  (N runs -> optional comparison(s) -> optional recommendation-run ->
+ *  optional consolidated report). */
+export interface THPlaybookJob {
+  id: string
+  hunt_package_id: string
+  playbook_id: string
+  playbook_name: string
+  status: 'running' | 'completed' | 'error'
+  current_step: string | null
+  error_message: string | null
+  run_ids: string[] | null
+  comparison_preliminary_report_id: string | null
+  comparison_full_report_id: string | null
+  recommendation_run_id: string | null
+  consolidated_report_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
 }
 
 /** issue-local-018: an analyst's free-text note on a specific run. */
@@ -2437,6 +2564,10 @@ export interface THGenerationRecord {
   query_drafts?: THQueryDraft[] | null
   generation_errors?: string[] | null
   created_at?: string
+  /** issue-local-040 */
+  playbook_id?: string | null
+  playbook_name?: string | null
+  run_origin?: 'manual' | 'playbook' | 'consolidated'
 }
 
 export interface THHypothesis {
@@ -2780,6 +2911,10 @@ export interface THComparisonReport {
   full_report: THComparisonFullReport
   created_at: string
   created_by: string | null
+  /** issue-local-040: saved assessment name — auto-generated
+   *  ("manual_<timestamp>" or "<playbook-name>_<timestamp>") when the
+   *  triggering request left it blank. */
+  name?: string | null
 }
 
 /** issue-local-035 follow-up: background job tracking for "Assess &
