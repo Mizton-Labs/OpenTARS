@@ -15,8 +15,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Pencil, Copy, Loader2 } from 'lucide-react'
+import { clsx } from 'clsx'
 import { api, type THPlaybook, type THPlaybookInput, type THPlaybookModelEntry } from '../../api/client'
-import { modelOptionsFromProviders } from '../threat-hunting/runConfigUtils'
+import { modelOptionsFromProviders, EFFORT_OPTIONS } from '../threat-hunting/runConfigUtils'
+import Toggle from '../../components/Toggle'
 
 const EMPTY_FORM: THPlaybookInput = {
   name: '',
@@ -67,6 +69,15 @@ function PlaybookForm({
         : [...f.models, entry],
     }))
   }
+  // issue-local-042: per-model research-effort override — a null/undefined
+  // 'effort' means "use the configured default" when the playbook fires.
+  const setModelEffort = (provider: string, model: string, effort: string | null) => {
+    const key = modelKey({ provider_name: provider, model_name: model })
+    setForm((f) => ({
+      ...f,
+      models: f.models.map((m) => (modelKey(m) === key ? { ...m, effort } : m)),
+    }))
+  }
 
   const valid = form.name.trim() !== '' && form.models.length > 0
 
@@ -96,22 +107,39 @@ function PlaybookForm({
             No models discovered yet — configure and test an LLM provider first.
           </p>
         ) : (
-          <div className="space-y-1 max-h-48 overflow-y-auto border border-gray-800 rounded-lg p-2">
+          <div className="space-y-1 max-h-64 overflow-y-auto border border-gray-800 rounded-lg p-2">
             {modelOptions.map((opt) => {
               const key = modelKey({ provider_name: opt.provider, model_name: opt.model })
+              const selected = selectedKeys.has(key)
+              const entry = form.models.find((m) => modelKey(m) === key)
               return (
-                <label
-                  key={key}
-                  className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer py-0.5"
-                >
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 accent-brand-500"
-                    checked={selectedKeys.has(key)}
-                    onChange={() => toggleModel(opt.provider, opt.model)}
-                  />
-                  <span className="font-mono text-xs">{opt.provider} · {opt.model}</span>
-                </label>
+                <div key={key} className="flex items-center gap-2 py-0.5">
+                  <Toggle checked={selected} onChange={() => toggleModel(opt.provider, opt.model)} />
+                  <span className="font-mono text-xs text-gray-300 flex-1">{opt.provider} · {opt.model}</span>
+                  {/* issue-local-042: per-model effort override — reuses the
+                      same low/medium/high options as a manual run's Research
+                      effort picker. Unset = configured default at run time. */}
+                  {selected && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {EFFORT_OPTIONS.map((e) => (
+                        <button
+                          key={e}
+                          type="button"
+                          onClick={() => setModelEffort(opt.provider, opt.model, entry?.effort === e ? null : e)}
+                          className={clsx(
+                            'text-[10px] px-1.5 py-0.5 rounded border capitalize transition-colors',
+                            entry?.effort === e
+                              ? 'bg-brand-900/40 border-brand-600 text-brand-200'
+                              : 'bg-transparent border-gray-700 text-gray-500 hover:text-gray-300',
+                          )}
+                          title={entry?.effort === e ? `Click to unset — use the configured default` : `Use ${e} effort for this model`}
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )
             })}
           </div>
@@ -119,23 +147,18 @@ function PlaybookForm({
       </div>
 
       <div className="space-y-2 border-t border-gray-800 pt-3">
-        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-          <input
-            type="checkbox"
-            className="w-4 h-4 accent-brand-500"
-            checked={form.auto_approve_analysis}
-            onChange={(e) => set('auto_approve_analysis', e.target.checked)}
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <Toggle
+            checked={form.auto_approve_analysis ?? false}
+            onChange={(v) => set('auto_approve_analysis', v)}
           />
-          Automatically approve the Analysis phase
-        </label>
+          <span>Automatically approve the Analysis phase</span>
+        </div>
 
-        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-          <input
-            type="checkbox"
-            className="w-4 h-4 accent-brand-500"
-            checked={form.auto_run_comparison}
-            onChange={(e) => {
-              const checked = e.target.checked
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <Toggle
+            checked={form.auto_run_comparison ?? false}
+            onChange={(checked) => {
               setForm((f) => ({
                 ...f,
                 auto_run_comparison: checked,
@@ -148,65 +171,54 @@ function PlaybookForm({
               }))
             }}
           />
-          Automatically run Comparison assessment (once every fired run finishes analysis)
-        </label>
+          <span>Automatically run Comparison assessment (once every fired run finishes analysis)</span>
+        </div>
 
         {form.auto_run_comparison && (
           <div className="ml-6 space-y-2 border-l border-gray-800 pl-3">
-            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-              <input
-                type="checkbox"
-                className="w-4 h-4 accent-brand-500"
-                checked={form.auto_compare_preliminary}
-                onChange={(e) => set('auto_compare_preliminary', e.target.checked)}
+            <div className="flex items-center gap-2 text-sm text-gray-300">
+              <Toggle
+                checked={form.auto_compare_preliminary ?? false}
+                onChange={(v) => set('auto_compare_preliminary', v)}
               />
-              Preliminary Analysis
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-              <input
-                type="checkbox"
-                className="w-4 h-4 accent-brand-500"
-                checked={form.auto_compare_full}
-                onChange={(e) => set('auto_compare_full', e.target.checked)}
-              />
-              Full Assessment
-            </label>
+              <span>Preliminary Analysis</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-300">
+              <Toggle checked={form.auto_compare_full ?? false} onChange={(v) => set('auto_compare_full', v)} />
+              <span>Full Assessment</span>
+            </div>
 
-            <label
-              className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"
+            <div
+              className="flex items-center gap-2 text-sm text-gray-300"
               title={
                 form.auto_compare_preliminary
                   ? undefined
                   : 'Requires Preliminary Analysis above — the new run is synthesized from it'
               }
             >
-              <input
-                type="checkbox"
-                className="w-4 h-4 accent-brand-500"
-                checked={form.auto_create_run_from_recommendations}
+              <Toggle
+                checked={form.auto_create_run_from_recommendations ?? false}
                 disabled={!form.auto_compare_preliminary}
-                onChange={(e) => set('auto_create_run_from_recommendations', e.target.checked)}
+                onChange={(v) => set('auto_create_run_from_recommendations', v)}
               />
-              Automatically create a new run from the Preliminary Analysis recommendations
-            </label>
+              <span>Automatically create a new run from the Preliminary Analysis recommendations</span>
+            </div>
 
-            <label
-              className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"
+            <div
+              className="flex items-center gap-2 text-sm text-gray-300"
               title={
                 form.auto_compare_full
                   ? undefined
                   : 'Requires Full Assessment above'
               }
             >
-              <input
-                type="checkbox"
-                className="w-4 h-4 accent-brand-500"
-                checked={form.auto_generate_full_report}
+              <Toggle
+                checked={form.auto_generate_full_report ?? false}
                 disabled={!form.auto_compare_full}
-                onChange={(e) => set('auto_generate_full_report', e.target.checked)}
+                onChange={(v) => set('auto_generate_full_report', v)}
               />
-              Automatically generate a consolidated report of the Full Assessment
-            </label>
+              <span>Automatically generate a consolidated report of the Full Assessment</span>
+            </div>
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy, Pencil } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob, type THQueryLanguages } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
@@ -79,9 +79,6 @@ export default function HuntDetail({
   }
   const [newComment, setNewComment] = useState('')
 
-  // issue-local-019: cancel-run confirmation
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
-
   // issue-local-034: permanent-package-delete confirmation (admin-only)
   const [showDeletePackageConfirm, setShowDeletePackageConfirm] = useState(false)
 
@@ -91,6 +88,8 @@ export default function HuntDetail({
   // issue-local-038: clone dialog state — mirrors the list page's own
   // CloneTarget dialog (ThreatHunting.tsx), just scoped to this one package.
   const [cloneName, setCloneName] = useState<string | null>(null)
+  // issue-local-042: rename dialog state — mirrors cloneName above.
+  const [renameName, setRenameName] = useState<string | null>(null)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
   // issue-local-041: '' (not a hardcoded level) so the effective effort
   // below falls through to the configured default until the user actually
@@ -283,15 +282,9 @@ export default function HuntDetail({
     },
   })
 
-  // issue-local-019: cancel a currently-running run
-  const cancelMut = useMutation({
-    mutationFn: () => api.threatHunting.cancelRun(pkgId, activeRunId!),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
-      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, activeRunId] })
-      setShowCancelConfirm(false)
-    },
-  })
+  // issue-local-042 (item 8): cancel moved to a per-run action in
+  // RunsStatusTable.tsx — no longer a single header button tied to whichever
+  // run the run-selector happened to have active.
 
   // issue-local-034: Archive/Unarchive the whole package (reversible,
   // researcher+ — same as every other TH mutation) — reuses the existing
@@ -330,6 +323,18 @@ export default function HuntDetail({
       qc.invalidateQueries({ queryKey: ['th-packages'] })
       setCloneName(null)
       onBack()
+    },
+  })
+
+  // issue-local-042: rename this package — reuses the existing PUT
+  // /packages/{id} route (already supports a name-only partial update), no
+  // new backend endpoint needed.
+  const renameMut = useMutation({
+    mutationFn: (name: string) => api.threatHunting.updatePackage(pkgId, { name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setRenameName(null)
     },
   })
 
@@ -374,7 +379,9 @@ export default function HuntDetail({
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
+      {/* Header — issue-local-042: title/description on their own row, every
+          action button on a second row below it (previously all inline on
+          one row, which crowded out the title on narrower viewports). */}
       <div className="flex items-center gap-3">
         <button className="btn-ghost p-1.5" onClick={onBack}>
           <ArrowLeft className="w-4 h-4" />
@@ -396,80 +403,79 @@ export default function HuntDetail({
           </h1>
           {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
         </div>
-        <div className="flex items-center gap-2">
-          {/* issue-local-019: cancel the active run — only while it's actually running */}
-          {isResearcher && activeRun?.generation_status === 'running' && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
-              disabled={cancelMut.isPending}
-              onClick={() => setShowCancelConfirm(true)}
-              title="Cancel this run"
-            >
-              <XCircle className="w-4 h-4" />
-              Cancel
-            </button>
-          )}
-          {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
-          {canRerun && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={rerunMut.isPending || threatIntelRunning}
-              onClick={() => setShowRerunDialog(true)}
-              title={
-                threatIntelRunning
-                  ? 'Threat Intel analysis is still running for this run'
-                  : 'Re-run this hunt package — choose model and effort level'
-              }
-            >
-              <RefreshCw className="w-4 h-4" />
-              Re-run
-            </button>
-          )}
-          {isResearcher && (
-            <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
-              <Plus className="w-4 h-4" />
-              Add Item
-            </button>
-          )}
-          {/* issue-local-038: clone this package */}
-          {isResearcher && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              onClick={() => setCloneName(`Copy of ${pkg?.name ?? ''}`)}
-              title="Clone this hunt package"
-            >
-              <Copy className="w-4 h-4" />
-              Clone
-            </button>
-          )}
-          {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
-          {isResearcher && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={archivePackageMut.isPending}
-              onClick={() => archivePackageMut.mutate()}
-              title={pkg?.status === 'archived' ? 'Unarchive this hunt package' : 'Archive this hunt package'}
-            >
-              {pkg?.status === 'archived' ? (
-                <ArchiveRestore className="w-4 h-4" />
-              ) : (
-                <Archive className="w-4 h-4" />
-              )}
-              {pkg?.status === 'archived' ? 'Unarchive' : 'Archive'}
-            </button>
-          )}
-          {/* issue-local-034: permanent, cascading delete — admin-only */}
-          {isAdmin && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
-              onClick={() => setShowDeletePackageConfirm(true)}
-              title="Permanently delete this hunt package and everything in it"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </button>
-          )}
-        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* issue-local-042: rename this package */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            onClick={() => setRenameName(pkg?.name ?? '')}
+            title="Rename this hunt package"
+          >
+            <Pencil className="w-4 h-4" />
+            Rename
+          </button>
+        )}
+        {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
+        {canRerun && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            disabled={rerunMut.isPending || threatIntelRunning}
+            onClick={() => setShowRerunDialog(true)}
+            title={
+              threatIntelRunning
+                ? 'Threat Intel analysis is still running for this run'
+                : 'Re-run this hunt package — choose model and effort level'
+            }
+          >
+            <RefreshCw className="w-4 h-4" />
+            Re-run
+          </button>
+        )}
+        {isResearcher && (
+          <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
+            <Plus className="w-4 h-4" />
+            Add Item
+          </button>
+        )}
+        {/* issue-local-038: clone this package */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            onClick={() => setCloneName(`Copy of ${pkg?.name ?? ''}`)}
+            title="Clone this hunt package"
+          >
+            <Copy className="w-4 h-4" />
+            Clone
+          </button>
+        )}
+        {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            disabled={archivePackageMut.isPending}
+            onClick={() => archivePackageMut.mutate()}
+            title={pkg?.status === 'archived' ? 'Unarchive this hunt package' : 'Archive this hunt package'}
+          >
+            {pkg?.status === 'archived' ? (
+              <ArchiveRestore className="w-4 h-4" />
+            ) : (
+              <Archive className="w-4 h-4" />
+            )}
+            {pkg?.status === 'archived' ? 'Unarchive' : 'Archive'}
+          </button>
+        )}
+        {/* issue-local-034: permanent, cascading delete — admin-only */}
+        {isAdmin && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
+            onClick={() => setShowDeletePackageConfirm(true)}
+            title="Permanently delete this hunt package and everything in it"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
+        )}
       </div>
 
       {/* Run selector — shown when there are multiple runs */}
@@ -862,17 +868,6 @@ export default function HuntDetail({
       )}
 
 
-      {/* issue-local-019: cancel-run confirmation dialog */}
-      {showCancelConfirm && (
-        <ConfirmDialog
-          title="Cancel this run?"
-          message="This stops the run immediately, including any in-progress LLM or tool calls. It will be marked as cancelled and cannot be resumed — you can start a new run afterward."
-          confirmLabel="Cancel run"
-          onConfirm={() => cancelMut.mutate()}
-          onCancel={() => setShowCancelConfirm(false)}
-        />
-      )}
-
       {/* issue-local-034: permanent-package-delete confirmation */}
       {showDeletePackageConfirm && (
         <ConfirmDialog
@@ -882,6 +877,43 @@ export default function HuntDetail({
           onConfirm={() => deletePackageMut.mutate()}
           onCancel={() => setShowDeletePackageConfirm(false)}
         />
+      )}
+
+      {/* issue-local-042: rename dialog */}
+      {renameName !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+            <h2 className="text-base font-semibold text-gray-100">Rename Hunt Package</h2>
+            <input
+              className="input w-full"
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              placeholder="Hunt package name"
+              autoFocus
+            />
+            {renameMut.isError && (
+              <p className="text-sm text-red-400">
+                Rename failed: {renameMut.error instanceof Error ? renameMut.error.message : String(renameMut.error)}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn-ghost text-sm"
+                onClick={() => { setRenameName(null); renameMut.reset() }}
+                disabled={renameMut.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-sm flex items-center gap-2"
+                disabled={!renameName.trim() || renameName.trim() === pkg?.name || renameMut.isPending}
+                onClick={() => renameMut.mutate(renameName.trim())}
+              >
+                {renameMut.isPending ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Renaming…</> : 'Rename'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* issue-local-038: clone dialog */}

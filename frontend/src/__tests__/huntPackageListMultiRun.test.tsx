@@ -309,6 +309,53 @@ describe('ThreatHunting list — Simple density mode (issue-local-038)', () => {
   })
 })
 
+// issue-local-042 (item 9): a one-sentence, auto-derived subtitle once
+// analysis has produced one — only shown when the package has no
+// user-written description, in every density mode.
+describe('ThreatHunting list — brief_summary subtitle (issue-local-042)', () => {
+  it('shows brief_summary as the subtitle when there is no description (card view)', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: '', brief_summary: 'APT42 targets defense contractors.' }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    expect(screen.getByText('APT42 targets defense contractors.')).toBeInTheDocument()
+  })
+
+  it('prefers the user-written description over brief_summary (card view)', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: 'My own notes', brief_summary: 'APT42 targets defense contractors.' }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    expect(screen.getByText('My own notes')).toBeInTheDocument()
+    expect(screen.queryByText('APT42 targets defense contractors.')).not.toBeInTheDocument()
+  })
+
+  it('shows neither line when both description and brief_summary are empty', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: '', brief_summary: null }),
+    ])
+    renderList()
+    expect(await screen.findByText('Test Package')).toBeInTheDocument()
+  })
+
+  it('shows brief_summary as the subtitle in Table density mode too', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        description: '',
+        brief_summary: 'APT42 targets defense contractors.',
+        runs: [{ id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' }],
+        run_count: 1,
+      }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+    expect(await screen.findByText('APT42 targets defense contractors.')).toBeInTheDocument()
+  })
+})
+
 describe('ThreatHunting list — Table density mode (issue-local-017)', () => {
   it('switching to Table mode replaces the card list with a per-package runs table', async () => {
     // Start from a card mode — Table is the default since issue-local-038,

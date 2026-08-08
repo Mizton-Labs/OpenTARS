@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -946,6 +947,34 @@ def _parse_deep_retrohunt_counts(
     return len(sanitized_iocs) - removed, removed
 
 
+_BRIEF_SUMMARY_MAX_LEN = 180
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _brief_summary_from_threat_context(threat_context_json: str | None) -> str | None:
+    """First sentence of a run's ``threat_context.summary`` (issue-local-042
+    item 9) — a free, always-fresh one-line subtitle for the package list,
+    derived from a field the Threat Context Builder step already writes
+    during analysis, not a dedicated LLM call. Truncated (word boundary) if
+    that first sentence alone is unusually long, so one run's summary can
+    never blow out every row's height in the list view.
+    """
+    import json as _json
+
+    try:
+        ctx: dict[str, Any] = _json.loads(threat_context_json or "")
+    except Exception:  # noqa: BLE001
+        return None
+    summary = str(ctx.get("summary") or "").strip()
+    if not summary:
+        return None
+    first_sentence = _SENTENCE_END_RE.split(summary, maxsplit=1)[0].strip()
+    if len(first_sentence) <= _BRIEF_SUMMARY_MAX_LEN:
+        return first_sentence
+    truncated = first_sentence[:_BRIEF_SUMMARY_MAX_LEN].rsplit(" ", 1)[0]
+    return f"{truncated}…"
+
+
 def _escape_like(term: str) -> str:
     """Escape LIKE wildcards (%, _) and the escape char itself in *term*,
     so search input containing them is matched literally, not as a pattern.
@@ -1049,7 +1078,7 @@ async def list_hunt_packages(
             cur3 = await db.execute(
                 "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
                 "       research_effort, created_at, step_logs, deep_retrohunt, run_seq, "
-                "       created_by "
+                "       created_by, threat_context "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY hunt_package_id, created_at DESC",
                 pkg_ids,
@@ -1116,11 +1145,26 @@ async def list_hunt_packages(
         row["id"]: format_hunt_id(prefix, row["hunt_seq"], row["created_at"]) for row in rows
     }
 
+    # issue-local-042 (item 9): a one-sentence subtitle for the package list,
+    # so the user can see the hunt's context at a glance without opening it.
+    # Derived from the newest run's already-generated threat_context.summary
+    # (first sentence only) rather than a dedicated LLM call — that summary
+    # already exists by the time analysis finishes (Threat Context Builder
+    # runs well before Report generation), so this is free at read time and
+    # naturally follows whichever run is newest, no stored/stale copy to
+    # invalidate. `all_run_rows` is ordered newest-first per package, so the
+    # first row seen for a given pkg_id is the one to use.
+    brief_summary_by_pkg: dict[str, str] = {}
+
     # Build lookup: hunt_package_id → [run summary dicts, newest first]
     runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
     for r in all_run_rows:
         phases, total_elapsed_s, token_usage_total = _parse_step_logs(r["step_logs"])
         sanitized_count, removed_count = _parse_deep_retrohunt_counts(r["deep_retrohunt"])
+        if r["hunt_package_id"] not in brief_summary_by_pkg:
+            brief = _brief_summary_from_threat_context(r["threat_context"])
+            if brief:
+                brief_summary_by_pkg[r["hunt_package_id"]] = brief
         runs_by_pkg.setdefault(r["hunt_package_id"], []).append(
             {
                 "id": r["id"],
@@ -1167,6 +1211,7 @@ async def list_hunt_packages(
         pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
         pkg["run_count"] = len(pkg["runs"])
         pkg["hunt_id_display"] = hunt_id_by_pkg.get(pkg["id"], "")
+        pkg["brief_summary"] = brief_summary_by_pkg.get(pkg["id"])
         if search:
             pkg["search_snippet"] = _deep_match_snippet(
                 search, deep_fields_by_pkg.get(pkg["id"], []), matched_ioc_by_pkg.get(pkg["id"])

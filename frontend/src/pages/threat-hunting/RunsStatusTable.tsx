@@ -150,8 +150,9 @@ function IocCounts({ run }: { run: THuntPackageRun }) {
       <span className="text-gray-600"> · </span>
       <span className="text-red-400">{removed} removed</span>
       {/* issue-local-026: explicit total, always the sum shown alongside it —
-          never a separately-computed number that could drift from these two. */}
-      <span className="text-gray-500"> · {sanitized + removed} total</span>
+          never a separately-computed number that could drift from these two.
+          issue-local-042 (item 11): on its own row within the cell. */}
+      <span className="block text-gray-500">{sanitized + removed} total</span>
     </span>
   )
 }
@@ -253,6 +254,7 @@ function RunActions({
 }) {
   const qc = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   const archiveMut = useMutation({
     mutationFn: () => api.threatHunting.setRunArchived(pkgId, run.id, !run.archived),
@@ -266,11 +268,34 @@ function RunActions({
       setConfirmDelete(false)
     },
   })
+  // issue-local-042 (item 8): cancel used to be a single header button tied
+  // to whichever run the run-selector happened to have active — moved here
+  // so it's scoped to the specific row's run, and reachable for any running
+  // run without first switching the selector to it.
+  const cancelMut = useMutation({
+    mutationFn: () => api.threatHunting.cancelRun(pkgId, run.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, run.id] })
+      setConfirmCancel(false)
+    },
+  })
 
   if (!isResearcher && !isAdmin) return null
 
   return (
     <span className="flex items-center gap-2">
+      {isResearcher && run.generation_status === 'running' && (
+        <button
+          type="button"
+          onClick={() => setConfirmCancel(true)}
+          disabled={cancelMut.isPending}
+          className="text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
+          title="Cancel this run"
+        >
+          <XCircle className="w-3.5 h-3.5" />
+        </button>
+      )}
       {isResearcher && (
         <button
           type="button"
@@ -291,6 +316,15 @@ function RunActions({
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+      )}
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Cancel this run?"
+          message={`This stops ${run.run_id_display || 'this run'} in place — progress made so far is kept, but the run will not continue.`}
+          confirmLabel="Cancel run"
+          onConfirm={() => cancelMut.mutate()}
+          onCancel={() => setConfirmCancel(false)}
+        />
       )}
       {confirmDelete && (
         <ConfirmDialog
@@ -397,10 +431,13 @@ export default function RunsStatusTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-800">
-          {/* issue-local-041: no forced min-width — every column below now
-              wraps its text content (only the Workflow/phases column stays
-              single-line), so rows grow taller instead of forcing a fixed
-              table width + horizontal scroll for normal viewing. */}
+          {/* issue-local-041: no forced min-width — most columns below wrap
+              their text content so rows grow taller instead of forcing a
+              fixed table width + horizontal scroll for normal viewing.
+              issue-local-042 (item 10): Run ID joins Workflow/phases as a
+              column that stays single-line instead — Model/IOCs/Created
+              deliberately split their content across two fixed rows within
+              the cell (items 11-13) rather than wrapping freely. */}
           <table className="w-full">
             <thead>
               <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
@@ -425,8 +462,10 @@ export default function RunsStatusTable({
                     run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
                   )}
                 >
-                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono break-words">
-                    <span className="flex items-center gap-1.5 flex-wrap">
+                  {/* issue-local-042 (item 10): run ID never wraps to a
+                      second row, unlike most other cells in this table. */}
+                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
                       {onSelectRun ? (
                         <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
                           {run.run_id_display || '—'}
@@ -437,22 +476,26 @@ export default function RunsStatusTable({
                       {run.archived && <ArchivedBadge />}
                     </span>
                   </td>
+                  {/* issue-local-042 (item 13): model name and effort on
+                      their own rows within the cell. */}
                   <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono break-words">
-                    {onSelectRun ? (
-                      <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                        {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
-                      </button>
-                    ) : (
-                      run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
+                    <span className="block">
+                      {onSelectRun ? (
+                        <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                          {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
+                        </button>
+                      ) : (
+                        run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
+                      )}
+                    </span>
+                    {run.research_effort && (
+                      <span className="block text-[10px] text-gray-600">{run.research_effort}</span>
                     )}
-                    {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
-                    {/* issue-local-040: playbook provenance, shown next to
-                        the model for both 'playbook' and 'consolidated'
-                        runs — a consolidated (recommendation-synthesis) run
-                        started from inside a playbook still carries its
-                        playbook_id/name. */}
+                    {/* issue-local-040: playbook provenance — a consolidated
+                        (recommendation-synthesis) run started from inside a
+                        playbook still carries its playbook_id/name. */}
                     {run.playbook_name && (
-                      <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap">
+                      <span className="block mt-0.5 text-[9px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap w-fit">
                         {run.run_origin === 'consolidated' ? 'consolidated · ' : 'playbook · '}
                         {run.playbook_name}
                       </span>
@@ -483,8 +526,11 @@ export default function RunsStatusTable({
                   <td className="py-1.5 px-2">
                     <ReportLinks pkgId={pkgId} run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
-                    {run.created_at.slice(0, 19).replace('T', ' ')}
+                  {/* issue-local-042 (item 12): date on its own row, time on
+                      the next, within the cell. */}
+                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                    <span className="block">{run.created_at.slice(0, 10)}</span>
+                    <span className="block text-gray-600">{run.created_at.slice(11, 19)}</span>
                   </td>
                   <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
                     {run.created_by ?? '—'}

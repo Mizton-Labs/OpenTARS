@@ -2333,6 +2333,9 @@ export interface THuntPackage {
   /** issue-local-018: human-readable HuntID (e.g. "TH01"), computed
    *  dynamically from the configured prefix. Empty string if not yet backfilled. */
   hunt_id_display?: string
+  /** issue-local-042 (item 9): one-sentence subtitle derived from the newest
+   *  run's threat_context.summary — null until analysis has produced one. */
+  brief_summary?: string | null
 }
 
 export interface THEvidenceItem {
@@ -2519,6 +2522,11 @@ export interface THuntPackageRun extends THRunSummary {
 export interface THPlaybookModelEntry {
   provider_name?: string | null
   model_name: string
+  /** issue-local-042: per-model research effort override — 'low'|'medium'|
+   *  'high'. Unset/null falls back to the configured default effort when
+   *  this playbook fires, same as a manual run/re-run with no explicit
+   *  choice. */
+  effort?: string | null
 }
 
 /** issue-local-040: a named, reusable Hunt Playbook automation config. */
@@ -2788,6 +2796,8 @@ export interface THReportRetrohuntSummary {
   high_noise_iocs: number
   spl_macro_name: string
   search_hint: string
+  /** issue-local-042 (item 4): the macro's actual SPL text. */
+  spl_draft?: string
 }
 
 export interface THReportExecutionResult {
@@ -2817,6 +2827,9 @@ export interface THFullReport {
   hunting_leads: THHuntingLead[]
   deep_retrohunt_summary: THReportRetrohuntSummary | null
   ttp_analysis: THBehavioralTTPAnalysis | null
+  /** issue-local-042 (item 4): the actual drafted queries — previously only
+   *  query_drafts_count (a number) was frozen into the report. */
+  query_drafts?: THQueryDraft[]
   query_drafts_count: number
   execution_results: THReportExecutionResult[]
   recommendations: string[]

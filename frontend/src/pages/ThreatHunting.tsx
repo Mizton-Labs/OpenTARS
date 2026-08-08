@@ -413,8 +413,16 @@ function PackageCard({
               </span>
             )}
           </div>
-          {pkg.description && (
+          {/* issue-local-042 (item 9): a one-sentence, auto-derived subtitle
+              once analysis has produced one — falls back only when the
+              user hasn't written their own description, so this never
+              duplicates or buries an intentional one. */}
+          {pkg.description ? (
             <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.description}</p>
+          ) : (
+            pkg.brief_summary && (
+              <p className="text-sm text-gray-400 truncate mt-0.5">{pkg.brief_summary}</p>
+            )
           )}
           <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
             <span>{pkg.evidence_count} evidence item{pkg.evidence_count !== 1 ? 's' : ''}</span>
@@ -777,6 +785,11 @@ export default function ThreatHunting() {
                   </span>
                 )}
               </button>
+              {/* issue-local-042 (item 9): same auto-derived one-sentence
+                  subtitle as the Classic card view. */}
+              {(pkg.description || pkg.brief_summary) && (
+                <p className="text-sm text-gray-400 truncate px-3">{pkg.description || pkg.brief_summary}</p>
+              )}
               {pkg.runs && pkg.runs.length > 0 ? (
                 <RunsStatusTable
                   pkgId={pkg.id}

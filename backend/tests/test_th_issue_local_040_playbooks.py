@@ -571,6 +571,49 @@ class TestRunPlaybookJobChain:
         assert len(final_job["run_ids"]) == 2
 
     @pytest.mark.asyncio
+    async def test_per_model_effort_overrides_default(self, tmp_path: Path) -> None:
+        """issue-local-042: a model entry's 'effort' overrides the configured
+        default for that model's run only; a model with no 'effort' still
+        falls back to the configured default, same as a manual run.
+
+        start_generation itself only builds in-memory state and spawns the
+        real pipeline as a task (the DB row is written inside that task) —
+        every other test in this class mocks asyncio.create_task, so that
+        task never runs and no row is ever persisted for it (confirmed by
+        test_full_chain_with_all_toggles_on's own comment: it seeds rows
+        directly for exactly this reason). So effort resolution is asserted
+        on the call args passed to start_generation, not a DB row.
+        """
+        from backend.config.loader import load_th_research_effort
+
+        db_path = tmp_path / "th.db"
+        calls: list[dict] = []
+
+        async def _fake_start_generation(pkg_id, **kwargs):
+            calls.append(kwargs)
+            return {"run_id": f"run-{len(calls)}", "hunt_package_id": pkg_id}
+
+        with (
+            patch.object(th_db, "_TH_DB_PATH", db_path),
+            patch.object(playbook_runner, "start_generation", _fake_start_generation),
+        ):
+            await th_db.init_threat_hunting_db()
+            pkg = await th_db.create_hunt_package("pkg", "")
+            pb = await th_db.create_playbook(
+                "PB1",
+                models=[{"model_name": "m1", "effort": "low"}, {"model_name": "m2"}],
+                auto_approve_analysis=False,
+            )
+            job = await th_db.create_playbook_job(
+                pkg["id"], playbook_id=pb["id"], playbook_name=pb["name"]
+            )
+            await playbook_runner._run_playbook_job(job["id"], pkg["id"], pb, created_by=None)
+
+        by_model = {c["model_name"]: c for c in calls}
+        assert by_model["m1"]["research_effort"] == "low"
+        assert by_model["m2"]["research_effort"] == load_th_research_effort()
+
+    @pytest.mark.asyncio
     async def test_full_chain_with_all_toggles_on(self, tmp_path: Path) -> None:
         db_path = tmp_path / "th.db"
         with (

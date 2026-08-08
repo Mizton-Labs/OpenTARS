@@ -36,6 +36,15 @@ vi.mock('../api/client', async () => {
 import { api } from '../api/client'
 import HuntPlaybooksTab from '../pages/configuration/HuntPlaybooksTab'
 
+// issue-local-042: checkboxes became Toggle (role="switch") buttons with no
+// associated <label>, so tests locate the switch via its row's descriptive
+// text instead of getByLabelText — same "find text, scope to its row"
+// pattern apiAccessTab.test.tsx/userManagementOrg.test.tsx already use for
+// their own multi-checkbox lists (there via closest('label')).
+function switchNear(text: string | RegExp): HTMLElement {
+  return screen.getByText(text).closest('div')!.querySelector('[role="switch"]') as HTMLElement
+}
+
 function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -112,7 +121,7 @@ describe('HuntPlaybooksTab — create', () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
 
-    await screen.findByLabelText(/openai-prod · gpt-4o-mini/)
+    await screen.findByText(/openai-prod · gpt-4o-mini/)
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 
     fireEvent.change(screen.getByPlaceholderText(/multi-model triage/i), {
@@ -120,7 +129,7 @@ describe('HuntPlaybooksTab — create', () => {
     })
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 
-    fireEvent.click(screen.getByLabelText(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 
@@ -132,8 +141,8 @@ describe('HuntPlaybooksTab — create', () => {
     fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
       target: { value: 'PB1' },
     })
-    fireEvent.click(screen.getByLabelText(/openai-prod · gpt-4o-mini/))
-    fireEvent.click(screen.getByText(/automatically approve the analysis phase/i))
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/automatically approve the analysis phase/i))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
@@ -147,33 +156,51 @@ describe('HuntPlaybooksTab — create', () => {
     )
   })
 
+  it('lets a per-model effort be picked, and submits it on the model entry', async () => {
+    vi.mocked(api.threatHunting.playbooks.create).mockResolvedValue(makePlaybook())
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
+      target: { value: 'PB1' },
+    })
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(screen.getByRole('button', { name: 'high' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.playbooks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          models: [{ provider_name: 'openai-prod', model_name: 'gpt-4o-mini', effort: 'high' }],
+        }),
+      ),
+    )
+  })
+
   it('reveals the preliminary/full sub-toggles only once auto_run_comparison is on, and hides them again when turned off', async () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
 
     expect(screen.queryByText('Preliminary Analysis')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
     expect(screen.getByText('Preliminary Analysis')).toBeInTheDocument()
     expect(screen.getByText('Full Assessment')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
     expect(screen.queryByText('Preliminary Analysis')).not.toBeInTheDocument()
   })
 
   it('the recommendation-run toggle is disabled until Preliminary Analysis is checked', async () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
 
-    const recToggle = screen
-      .getByText(/automatically create a new run from the preliminary analysis recommendations/i)
-      .closest('label')!
-      .querySelector('input')!
-    expect(recToggle).toBeDisabled()
+    const recToggle = switchNear(/automatically create a new run from the preliminary analysis recommendations/i)
+    expect(recToggle).toHaveAttribute('disabled')
 
-    fireEvent.click(screen.getByText('Preliminary Analysis'))
-    expect(recToggle).toBeEnabled()
+    fireEvent.click(switchNear('Preliminary Analysis'))
+    expect(recToggle).not.toHaveAttribute('disabled')
   })
 
   it('cancel discards the form without calling create()', async () => {

@@ -55,6 +55,10 @@ class HuntPackageOut(BaseModel):
     # dynamically from the configured prefix — same declare-or-get-stripped
     # trap as the fields above.
     hunt_id_display: str = ""
+    # issue-local-042 (item 9): one-sentence subtitle derived from the newest
+    # run's threat_context.summary, once analysis has produced one — same
+    # declare-or-get-stripped trap as the fields above.
+    brief_summary: str | None = None
 
 
 # ── Evidence ──────────────────────────────────────────────────────────────────

@@ -125,13 +125,20 @@ async def _run_playbook_job(
     playbook_id = playbook["id"]
     playbook_name = playbook["name"]
 
+    from backend.config.loader import load_th_research_effort
+
     try:
         run_ids: list[str] = []
         for entry in playbook["models"]:
+            # issue-local-042: per-model effort override — falls back to the
+            # configured default effort, same resolution a manual run/re-run
+            # with no explicit choice uses.
+            effort = entry.get("effort") or load_th_research_effort()
             record = await start_generation(
                 hunt_package_id,
                 provider_name=entry.get("provider_name"),
                 model_name=entry.get("model_name"),
+                research_effort=effort,
                 run_config={},
                 created_by=created_by,
                 playbook_id=playbook_id,

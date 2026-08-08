@@ -471,3 +471,29 @@
 :root[data-theme='light'] .text-gray-500 { color: rgb(90 96 107); }
 :root[data-theme='light'] .text-gray-600 { color: rgb(71 77 89); }
 :root[data-theme='light'] .text-gray-700 { color: rgb(51 57 68); }
+
+/* issue-local-042 (item 3): a second contrast pass on the four DARK themes —
+ * issue-local-041 already brightened the `--color-gray-400/500/600`
+ * variables once, but that variable is also what `border-gray-*`/`bg-gray-*`
+ * key off (see the grep-confirmed usages: selected-state borders, toggle
+ * borders, ...), so it couldn't be pushed further without also washing out
+ * borders that were never the complaint. Same scoped-override idiom as
+ * Light above — only the `.text-*` utility for the app's muted-body-text
+ * stops (500/600/700), computed roughly halfway toward each theme's next
+ * lighter stop. Never touches `--color-gray-*` itself, so every
+ * border/background usage of these stops is completely unaffected. */
+:root[data-theme='classic'] .text-gray-500 { color: rgb(145 151 162); }
+:root[data-theme='classic'] .text-gray-600 { color: rgb(107 113 125); }
+:root[data-theme='classic'] .text-gray-700 { color: rgb(74 82 96); }
+
+:root[data-theme='energy'] .text-gray-500 { color: rgb(148 148 148); }
+:root[data-theme='energy'] .text-gray-600 { color: rgb(112 112 112); }
+:root[data-theme='energy'] .text-gray-700 { color: rgb(71 71 71); }
+
+:root[data-theme='ocean'] .text-gray-500 { color: rgb(113 165 175); }
+:root[data-theme='ocean'] .text-gray-600 { color: rgb(82 133 143); }
+:root[data-theme='ocean'] .text-gray-700 { color: rgb(49 89 98); }
+
+:root[data-theme='redhunter'] .text-gray-500 { color: rgb(134 134 134); }
+:root[data-theme='redhunter'] .text-gray-600 { color: rgb(104 104 104); }
+:root[data-theme='redhunter'] .text-gray-700 { color: rgb(77 77 77); }

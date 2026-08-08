@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../../auth/useAuth'
 import WorkflowVisualizer from './WorkflowVisualizer'
 import { asDisplayText } from './llmTextUtils'
+import ReportMarkdown from '../../components/ReportMarkdown'
 import RunConfigForm from './RunConfigForm'
 import {
   buildRunConfig,
@@ -572,7 +573,7 @@ function HuntingPackageDraft({
                   <p className={clsx('text-base font-semibold', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                     {h.title}
                   </p>
-                  <p className="text-sm text-gray-400">{h.description}</p>
+                  {h.description && <ReportMarkdown>{h.description}</ReportMarkdown>}
                   {h.justification && <p className="text-sm text-gray-500 italic">{h.justification}</p>}
                   {/* issue-006-E: ioc_basis — issue-local-041: labeled "Related IOCs" subcard */}
                   {h.ioc_basis && h.ioc_basis.length > 0 && (
@@ -789,7 +790,7 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
   return (
     <div className="card space-y-3">
       <p className="text-base font-semibold text-gray-200">Threat Context</p>
-      {summary      && <p className="text-sm text-gray-300">{summary}</p>}
+      {summary      && <ReportMarkdown>{summary}</ReportMarkdown>}
       <div className="grid grid-cols-2 gap-2 text-sm">
         {threatActor  && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{threatActor}</span></div>}
         {campaignName && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-300">{campaignName}</span></div>}

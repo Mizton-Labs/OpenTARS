@@ -78,7 +78,9 @@ describe('RunsStatusTable', () => {
   it('shows the model (and effort) as the first column', () => {
     render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ llm_model: 'Mistral-Large-3', research_effort: 'high' })]} />)
     expect(screen.getByText('Mistral-Large-3')).toBeInTheDocument()
-    expect(screen.getByText('· high')).toBeInTheDocument()
+    // issue-local-042 (item 13): effort is now on its own row within the
+    // cell, not a "· effort" suffix on the model name's line.
+    expect(screen.getByText('high')).toBeInTheDocument()
   })
 
   it('falls back to the provider when llm_model is absent', () => {
@@ -150,6 +152,37 @@ describe('RunsStatusTable', () => {
     const phaseTrack = within(screen.getByRole('table').querySelector('tbody')!).getByText('Evidence').closest('div.flex-nowrap')!
     expect(phaseTrack).toHaveClass('flex-nowrap')
     expect(phaseTrack.closest('td')).toHaveClass('whitespace-nowrap')
+  })
+
+  // issue-local-042 (item 10): Run ID joins Workflow as a column that never
+  // wraps to a second row, unlike Model/IOCs/Created (which now deliberately
+  // split their own content across two rows instead — see the tests below).
+  it('keeps the Run ID cell single-line', () => {
+    render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ run_id_display: 'TH01-X02' })]} />)
+    const runIdCell = screen.getByText('TH01-X02').closest('td')!
+    expect(runIdCell).toHaveClass('whitespace-nowrap')
+  })
+
+  // issue-local-042 (item 13): model name and effort each on their own row.
+  it('puts the model name and effort on separate rows within the Model cell', () => {
+    render(
+      <RunsStatusTable
+        pkgId="pkg-1"
+        runs={[makeRun({ llm_model: 'gpt-oss', research_effort: 'high' })]}
+      />,
+    )
+    const modelSpan = screen.getByText('gpt-oss')
+    const effortSpan = screen.getByText('high')
+    expect(modelSpan).toHaveClass('block')
+    expect(effortSpan).toHaveClass('block')
+    expect(modelSpan.closest('td')).toBe(effortSpan.closest('td'))
+  })
+
+  // issue-local-042 (item 12): date and time each on their own row.
+  it('puts the created date and time on separate rows within the Created cell', () => {
+    render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ created_at: '2026-03-05T14:22:07Z' })]} />)
+    expect(screen.getByText('2026-03-05')).toHaveClass('block')
+    expect(screen.getByText('14:22:07')).toHaveClass('block')
   })
 
   // issue-local-041: per-run token total (alongside Duration) + a
