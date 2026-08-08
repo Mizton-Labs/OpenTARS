@@ -18,6 +18,7 @@ import ThreatHuntingNew from './pages/threat-hunting/ThreatHuntingNew'
 import ThreatHuntingDetail from './pages/threat-hunting/ThreatHuntingDetail'
 import ThreatIntelTracking from './pages/threat-hunting/ThreatIntelTracking'
 import DataExplorer from './pages/threat-hunting/DataExplorer'
+import PlaybooksPage from './pages/threat-hunting/PlaybooksPage'
 import { api } from './api/client'
 import { useAuth } from './auth/useAuth'
 import { KNOWN_ROUTES } from './utils/basePrefix'
@@ -81,7 +82,16 @@ function RequireAuthEnabled({ children }: { children: React.ReactElement }) {
   return authEnabled ? children : <Navigate to="/viewer" replace />
 }
 
-export { RequireAdmin, RequireAuthEnabled }
+// issue-local-041: Hunt Playbooks — researcher-or-admin, not a plain
+// authenticated (threat-viewer) user. Admins pass isAdmin, so this is a
+// min-role check (researcher and above), the same tier the backend's own
+// middleware already enforces for /api/threat-hunting/ writes.
+function RequireResearcher({ children }: { children: React.ReactElement }) {
+  const { isResearcher, isAdmin } = useAuth()
+  return isResearcher || isAdmin ? children : <Navigate to="/viewer" replace />
+}
+
+export { RequireAdmin, RequireAuthEnabled, RequireResearcher }
 
 function guard(slug: ShellRoute, element: React.ReactElement): React.ReactElement {
   if (ADMIN_ONLY_ROUTES.has(slug)) return <RequireAdmin>{element}</RequireAdmin>
@@ -126,6 +136,12 @@ export default function App() {
         <Route path="threat-hunting/tracking" element={<ThreatIntelTracking />} />
         {/* issue-local-033: row-level data behind each Dashboard panel. */}
         <Route path="threat-hunting/explorer" element={<DataExplorer />} />
+        {/* issue-local-041: moved out of admin-only Configuration — researcher
+            or admin (not threat-viewer). */}
+        <Route
+          path="threat-hunting/playbooks"
+          element={<RequireResearcher><PlaybooksPage /></RequireResearcher>}
+        />
         <Route path="threat-hunting/:id" element={<ThreatHuntingDetail />} />
       </Route>
     </Routes>

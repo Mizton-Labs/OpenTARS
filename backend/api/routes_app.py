@@ -32,6 +32,7 @@ from backend.config.loader import (
     load_th_llm_max_retries,
     load_th_llm_retry_backoff_seconds,
     load_th_node_timeout_seconds,
+    load_th_query_languages,
     load_th_report_formats,
     load_th_research_effort,
     load_watcher_max_events,
@@ -51,6 +52,7 @@ from backend.config.loader import (
     save_th_llm_max_retries,
     save_th_llm_retry_backoff_seconds,
     save_th_node_timeout_seconds,
+    save_th_query_languages,
     save_th_report_formats,
     save_th_research_effort,
     save_watcher_max_events,
@@ -372,7 +374,7 @@ async def set_agent_verbosity(
 ) -> dict[str, str]:
     """Set the agentic workflow verbosity level.
 
-    Body: {"agent_workflow_verbosity": "info" | "verbose" | "debug"}
+    Body: {"agent_workflow_verbosity": "info" | "detailed" | "verbose" | "debug"}
     """
     value = body.get("agent_workflow_verbosity")
     if not isinstance(value, str):
@@ -594,6 +596,37 @@ async def set_th_report_formats(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"th_report_formats": value}
+
+
+# ── Threat Hunting default query languages (issue-local-041) ────────────────
+
+
+@router.get("/th-query-languages")
+async def get_th_query_languages() -> dict[str, Any]:
+    """Return the configured default query-language toggles."""
+    return {"th_query_languages": load_th_query_languages()}
+
+
+@router.put("/th-query-languages")
+async def set_th_query_languages(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
+    """Set the default query-language toggles.
+
+    Body: {"th_query_languages": {"spl": true, "kql": true, "cql": false, "elasticsearch": true}}
+    """
+    value = body.get("th_query_languages")
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_query_languages' as an object with spl/kql/cql/elasticsearch booleans",
+        )
+    try:
+        save_th_query_languages(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_query_languages": value}
 
 
 # ── Agent tools + document parsers toggles (issue-007) ──────────────────────

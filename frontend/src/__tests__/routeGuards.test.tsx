@@ -13,11 +13,12 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../auth/useAuth', () => ({ useAuth: vi.fn() }))
 
 import { useAuth } from '../auth/useAuth'
-import { RequireAdmin, RequireAuthEnabled } from '../App'
+import { RequireAdmin, RequireAuthEnabled, RequireResearcher } from '../App'
 
 type AuthShape = {
   authEnabled: boolean
   isAdmin: boolean
+  isResearcher?: boolean
 }
 
 function mockAuth(shape: AuthShape) {
@@ -33,6 +34,7 @@ function renderGuarded(guarded: React.ReactElement, initialPath: string) {
         <Route>
           <Route path="configuration" element={guarded} />
           <Route path="account" element={guarded} />
+          <Route path="threat-hunting/playbooks" element={guarded} />
           <Route path="viewer" element={<div data-testid="viewer">viewer</div>} />
         </Route>
       </Routes>
@@ -98,5 +100,52 @@ describe('RequireAuthEnabled', () => {
     )
     expect(screen.getByTestId('viewer')).toBeInTheDocument()
     expect(screen.queryByTestId('account')).toBeNull()
+  })
+})
+
+describe('RequireResearcher (issue-local-041, Hunt Playbooks)', () => {
+  it('redirects a plain threat-viewer to viewer', () => {
+    mockAuth({ authEnabled: true, isAdmin: false, isResearcher: false })
+    renderGuarded(
+      <RequireResearcher>
+        <div data-testid="playbooks">playbooks</div>
+      </RequireResearcher>,
+      '/threat-hunting/playbooks',
+    )
+    expect(screen.getByTestId('viewer')).toBeInTheDocument()
+    expect(screen.queryByTestId('playbooks')).toBeNull()
+  })
+
+  it('renders the page for a threat-researcher', () => {
+    mockAuth({ authEnabled: true, isAdmin: false, isResearcher: true })
+    renderGuarded(
+      <RequireResearcher>
+        <div data-testid="playbooks">playbooks</div>
+      </RequireResearcher>,
+      '/threat-hunting/playbooks',
+    )
+    expect(screen.getByTestId('playbooks')).toBeInTheDocument()
+  })
+
+  it('renders the page for an admin', () => {
+    mockAuth({ authEnabled: true, isAdmin: true, isResearcher: false })
+    renderGuarded(
+      <RequireResearcher>
+        <div data-testid="playbooks">playbooks</div>
+      </RequireResearcher>,
+      '/threat-hunting/playbooks',
+    )
+    expect(screen.getByTestId('playbooks')).toBeInTheDocument()
+  })
+
+  it('renders the page in open mode (auth disabled → admin-equivalent)', () => {
+    mockAuth({ authEnabled: false, isAdmin: true, isResearcher: false })
+    renderGuarded(
+      <RequireResearcher>
+        <div data-testid="playbooks">playbooks</div>
+      </RequireResearcher>,
+      '/threat-hunting/playbooks',
+    )
+    expect(screen.getByTestId('playbooks')).toBeInTheDocument()
   })
 })

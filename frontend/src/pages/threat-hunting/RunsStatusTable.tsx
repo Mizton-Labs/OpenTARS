@@ -98,7 +98,12 @@ function deriveCoarsePhases(run: THuntPackageRun): { label: string; state: Phase
 function MiniPhaseTrack({ run }: { run: THuntPackageRun }) {
   const phases = deriveCoarsePhases(run)
   return (
-    <div className="flex items-center gap-0.5 flex-wrap">
+    // issue-local-041: the ONE column that must stay single-line ("so that
+    // the progress is seen clearly from left to right") while every other
+    // cell in this table now wraps — flex-nowrap (was flex-wrap, which had
+    // this backwards: the phase track wrapped while text cells forced
+    // horizontal scroll instead).
+    <div className="flex items-center gap-0.5 flex-nowrap whitespace-nowrap">
       {phases.map((phase, idx) => (
         <div key={phase.label} className="flex items-center shrink-0">
           <div
@@ -140,7 +145,7 @@ function IocCounts({ run }: { run: THuntPackageRun }) {
   const sanitized = run.sanitized_ioc_count ?? 0
   const removed = run.removed_ioc_count ?? 0
   return (
-    <span className="text-[10px] whitespace-nowrap">
+    <span className="text-[10px]">
       <span className="text-green-400">{sanitized} sanitized</span>
       <span className="text-gray-600"> · </span>
       <span className="text-red-400">{removed} removed</span>
@@ -302,7 +307,7 @@ function RunActions({
 
 // issue-local-040: which sub-tab a run belongs to. Undefined/missing
 // run_origin (runs created before this field existed) counts as 'manual'.
-type RunSubTab = 'runs' | 'playbook' | 'consolidated'
+export type RunSubTab = 'runs' | 'playbook' | 'consolidated'
 
 const SUB_TABS: { id: RunSubTab; label: string }[] = [
   { id: 'runs', label: 'Runs' },
@@ -310,7 +315,7 @@ const SUB_TABS: { id: RunSubTab; label: string }[] = [
   { id: 'consolidated', label: 'Consolidated Runs' },
 ]
 
-function subTabOf(run: THuntPackageRun): RunSubTab {
+export function subTabOf(run: THuntPackageRun): RunSubTab {
   return run.run_origin === 'playbook' ? 'playbook' : run.run_origin === 'consolidated' ? 'consolidated' : 'runs'
 }
 
@@ -321,6 +326,8 @@ export default function RunsStatusTable({
   activeRunId,
   isResearcher = false,
   isAdmin = false,
+  subTab: subTabProp,
+  onSubTabChange,
 }: {
   pkgId: string
   runs: THuntPackageRun[]
@@ -336,15 +343,35 @@ export default function RunsStatusTable({
    *  (hidden) for read-only call sites that don't pass them. */
   isResearcher?: boolean
   isAdmin?: boolean
+  /** issue-local-041: when provided (with onSubTabChange), the sub-tab
+   *  becomes controlled by the parent — used by HuntDetail so switching to
+   *  "Consolidated Runs"/"Playbook Runs" can also drive which run's content
+   *  the tabs below show, instead of only filtering this table's rows.
+   *  Omitted call sites (e.g. the dashboard) keep the previous
+   *  self-contained/uncontrolled behavior. */
+  subTab?: RunSubTab
+  onSubTabChange?: (tab: RunSubTab) => void
 }) {
   const defaultModelLabel = useDefaultModelLabel()
-  const [subTab, setSubTab] = useState<RunSubTab>('runs')
+  const [internalSubTab, setInternalSubTab] = useState<RunSubTab>('runs')
+  const subTab = subTabProp ?? internalSubTab
+  function handleSubTabChange(tab: RunSubTab) {
+    setInternalSubTab(tab)
+    onSubTabChange?.(tab)
+  }
   if (runs.length === 0) return null
   const cellLinkClass = 'hover:text-brand-400 hover:underline transition-colors text-left'
   const showActions = isResearcher || isAdmin
   const counts: Record<RunSubTab, number> = { runs: 0, playbook: 0, consolidated: 0 }
   for (const run of runs) counts[subTabOf(run)] += 1
   const visibleRuns = runs.filter((run) => subTabOf(run) === subTab)
+  // issue-local-041: "a sum for the whole Hunt package" — every run in the
+  // package, regardless of which sub-tab is currently selected.
+  const packageTokenTotal = runs.reduce(
+    (sum, run) => sum + (run.token_usage_total?.total_tokens ?? 0),
+    0,
+  )
+  const packageHasTokenData = runs.some((run) => run.token_usage_total?.total_tokens != null)
   return (
     <div className="space-y-1.5">
       <nav className="flex gap-1 text-[11px]">
@@ -352,7 +379,7 @@ export default function RunsStatusTable({
           <button
             key={tab.id}
             type="button"
-            onClick={() => setSubTab(tab.id)}
+            onClick={() => handleSubTabChange(tab.id)}
             className={clsx(
               'px-2 py-1 rounded transition-colors font-medium',
               subTab === tab.id
@@ -370,7 +397,11 @@ export default function RunsStatusTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-800">
-          <table className="w-full min-w-[900px]">
+          {/* issue-local-041: no forced min-width — every column below now
+              wraps its text content (only the Workflow/phases column stays
+              single-line), so rows grow taller instead of forcing a fixed
+              table width + horizontal scroll for normal viewing. */}
+          <table className="w-full">
             <thead>
               <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
                 <th className="text-left py-1.5 px-2">Run ID</th>
@@ -394,8 +425,8 @@ export default function RunsStatusTable({
                     run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
                   )}
                 >
-                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
-                    <span className="flex items-center gap-1.5">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono break-words">
+                    <span className="flex items-center gap-1.5 flex-wrap">
                       {onSelectRun ? (
                         <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
                           {run.run_id_display || '—'}
@@ -406,7 +437,7 @@ export default function RunsStatusTable({
                       {run.archived && <ArchivedBadge />}
                     </span>
                   </td>
-                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono break-words">
                     {onSelectRun ? (
                       <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
                         {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
@@ -432,11 +463,19 @@ export default function RunsStatusTable({
                       {run.generation_status}
                     </span>
                   </td>
-                  <td className="py-1.5 px-2">
+                  <td className="py-1.5 px-2 whitespace-nowrap">
                     <MiniPhaseTrack run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-400 whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[10px] text-gray-400 break-words">
                     {formatDuration(run.total_elapsed_s)}
+                    {/* issue-local-041: per-run token total, alongside the
+                        other run-level stat (duration) — applies at every
+                        logging level, not just debug. */}
+                    {run.token_usage_total?.total_tokens != null && (
+                      <span className="block text-amber-600">
+                        {run.token_usage_total.total_tokens.toLocaleString()} tok
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 px-2">
                     <IocCounts run={run} />
@@ -444,10 +483,10 @@ export default function RunsStatusTable({
                   <td className="py-1.5 px-2">
                     <ReportLinks pkgId={pkgId} run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
                     {run.created_at.slice(0, 19).replace('T', ' ')}
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
                     {run.created_by ?? '—'}
                   </td>
                   {showActions && (
@@ -460,6 +499,14 @@ export default function RunsStatusTable({
             </tbody>
           </table>
         </div>
+      )}
+      {/* issue-local-041: package-wide token total, across every run
+          regardless of the selected sub-tab. */}
+      {packageHasTokenData && (
+        <p className="text-[10px] text-amber-600 text-right pr-1">
+          Hunt package total: {packageTokenTotal.toLocaleString()} tokens across {runs.length} run
+          {runs.length === 1 ? '' : 's'}
+        </p>
       )}
     </div>
   )

@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob } from '../../api/client'
+import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob, type THQueryLanguages } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
@@ -19,7 +19,7 @@ import IocVerdictToggle from './IocVerdictToggle'
 import IocApplyBar from './IocApplyBar'
 import RetrohuntPanel from './RetrohuntPanel'
 import { useIocVerdictStaging } from './useIocVerdictStaging'
-import RunsStatusTable from './RunsStatusTable'
+import RunsStatusTable, { subTabOf, type RunSubTab } from './RunsStatusTable'
 import RunConfigForm from './RunConfigForm'
 import {
   buildRunConfig,
@@ -28,6 +28,7 @@ import {
   DEFAULT_IOC_MODE,
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
+  DEFAULT_QUERY_LANGUAGES,
 } from './runConfigUtils'
 
 type DetailTab = 'evidence' | 'iocs' | 'analysis' | 'execution' | 'threat-intel' | 'comparison' | 'report' | 'comments'
@@ -58,6 +59,24 @@ export default function HuntDetail({
   const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>(initialTab ?? 'evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
+  // issue-local-041: which of the Runs/Playbook Runs/Consolidated Runs
+  // sub-tabs is selected — lifted up from RunsStatusTable so switching it
+  // can also drive activeRunId (and, when the sub-tab is empty, show a real
+  // empty state below instead of leaking whichever run was active before).
+  const [runSubTab, setRunSubTab] = useState<RunSubTab>('runs')
+  // issue-local-041: "center the view from where the row with phases
+  // starts" when a new analysis run begins — this page renders a tall
+  // header + run selector + all-runs table above the tab panels, so a
+  // newly-started run's phase progress (PipelineStepper, just below the run
+  // selector) can be scrolled off-screen. rAF (not a plain call) defers the
+  // scroll until after the runs list has re-rendered with the new run — the
+  // run-selector block (and its ref) only mounts once runs.length > 0.
+  const phasesRowRef = useRef<HTMLDivElement | null>(null)
+  function scrollToPhasesRow() {
+    requestAnimationFrame(() => {
+      phasesRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }
   const [newComment, setNewComment] = useState('')
 
   // issue-local-019: cancel-run confirmation
@@ -73,13 +92,21 @@ export default function HuntDetail({
   // CloneTarget dialog (ThreatHunting.tsx), just scoped to this one package.
   const [cloneName, setCloneName] = useState<string | null>(null)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
-  const [rerunEffort, setRerunEffort] = useState<string>('medium')
+  // issue-local-041: '' (not a hardcoded level) so the effective effort
+  // below falls through to the configured default until the user actually
+  // picks one — mirrors AnalysisTab.tsx's first-run form, which this dialog
+  // previously didn't (it hardcoded 'medium', silently overriding a
+  // configured 'high' default on every re-run).
+  const [rerunEffort, setRerunEffort] = useState<string>('')
   // issue-local-022 (item 3): shared defaults with AnalysisTab.tsx's
   // first-run form via RunConfigForm.tsx, instead of an independently-
   // drifted copy.
   const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>(DEFAULT_IOC_MODE)
   const [iocCleaningOptions, setIocCleaningOptions] = useState(DEFAULT_IOC_CLEANING_OPTIONS)
   const [includeThreatIntel, setIncludeThreatIntel] = useState(DEFAULT_INCLUDE_THREAT_INTEL)
+  // issue-local-041: null until the user touches a toggle — see
+  // buildRunConfig's docstring.
+  const [queryLanguagesOverride, setQueryLanguagesOverride] = useState<THQueryLanguages | null>(null)
 
   const { data: pkg } = useQuery({
     queryKey: ['th-package', pkgId],
@@ -145,6 +172,28 @@ export default function HuntDetail({
     queryFn: () => api.threatHunting.listRunComments(pkgId, activeRunId!),
     enabled: activeTab === 'comments' && !!activeRunId,
   })
+
+  // issue-local-041: configured default effort, same query key AnalysisTab.tsx
+  // uses — react-query dedupes it, so this doesn't add an extra fetch when
+  // both are mounted.
+  const { data: rerunEffortData } = useQuery({
+    queryKey: ['th-research-effort'],
+    queryFn: () => api.getThResearchEffort(),
+    staleTime: 30_000,
+    enabled: showRerunDialog,
+  })
+  const effectiveRerunEffort = rerunEffort || rerunEffortData?.th_research_effort || 'high'
+
+  // issue-local-041: configured default query languages, same query key
+  // AnalysisTab.tsx uses.
+  const { data: rerunQueryLanguagesData } = useQuery({
+    queryKey: ['th-query-languages'],
+    queryFn: () => api.getThQueryLanguages(),
+    staleTime: 30_000,
+    enabled: showRerunDialog,
+  })
+  const effectiveQueryLanguages =
+    queryLanguagesOverride ?? rerunQueryLanguagesData?.th_query_languages ?? DEFAULT_QUERY_LANGUAGES
 
   // issue-006-G: LLM providers for re-run dialog model selector
   const { data: rerunProviders = [] } = useQuery({
@@ -213,10 +262,10 @@ export default function HuntDetail({
         return api.threatHunting.playbooks.run(pkgId, rerunChosenPlaybookId)
       }
       return api.threatHunting.startGeneration(pkgId, {
-        research_effort: rerunEffort || 'medium',
+        research_effort: effectiveRerunEffort,
         provider_name: rerunChosenModel?.provider ?? undefined,
         model_name: rerunChosenModel?.model ?? undefined,
-        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
+        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel, queryLanguagesOverride),
       })
     },
     onSuccess: (data) => {
@@ -230,6 +279,7 @@ export default function HuntDetail({
       }
       setActiveTab('analysis')
       setShowRerunDialog(false)
+      scrollToPhasesRow()
     },
   })
 
@@ -291,6 +341,19 @@ export default function HuntDetail({
   // run-selector status pill share one lookup instead of each re-scanning
   // `runs` inline.
   const activeRun = runs.find((r) => r.id === activeRunId)
+
+  // issue-local-041: runs belonging to the currently-selected sub-tab, and a
+  // handler that both updates the sub-tab and jumps activeRunId to that
+  // sub-tab's newest run (list_generation_runs already returns runs newest
+  // first) — or leaves activeRunId untouched when the sub-tab is empty, so
+  // the "empty" branch below renders instead of AnalysisTab/ReportPanel
+  // silently falling back to the package's latest run when runId is unset.
+  const runsInSubTab = useMemo(() => runs.filter((r) => subTabOf(r) === runSubTab), [runs, runSubTab])
+  function handleRunSubTabChange(tab: RunSubTab) {
+    setRunSubTab(tab)
+    const match = runs.filter((r) => subTabOf(r) === tab)
+    if (match.length > 0) setActiveRunId(match[0].id)
+  }
 
   // issue-local-022 (item 5): gated on the ACTIVE RUN's own generation_status,
   // not the package's — pkg.status only ever moves forward and is never reset
@@ -411,7 +474,7 @@ export default function HuntDetail({
 
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
-        <div className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
+        <div ref={phasesRowRef} className="space-y-2 px-3 py-2 bg-gray-800/40 rounded-lg border border-gray-700/50">
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500 shrink-0">Run:</span>
             <div className="relative flex-1 max-w-xs">
@@ -493,10 +556,31 @@ export default function HuntDetail({
             activeRunId={activeRunId}
             isResearcher={isResearcher}
             isAdmin={isAdmin}
+            subTab={runSubTab}
+            onSubTabChange={handleRunSubTabChange}
           />
         </div>
       )}
 
+      {/* issue-local-041: the selected sub-tab has no runs yet — show a real
+          empty state instead of falling through to ArrowTabs/AnalysisTab/
+          ReportPanel, which would otherwise keep displaying whichever run
+          was active before (typically a manual run), reading as if the
+          Consolidated/Playbook Runs sub-tab silently showed the main run's
+          content. */}
+      {runSubTab !== 'runs' && runsInSubTab.length === 0 ? (
+        <div className="card text-center py-10 space-y-2">
+          <p className="text-sm font-medium text-gray-300">
+            No {runSubTab === 'consolidated' ? 'consolidated' : 'playbook'} runs yet.
+          </p>
+          <p className="text-sm text-gray-500">
+            {runSubTab === 'consolidated'
+              ? 'Create one from the Comparison Assessment tab after comparing runs and generating recommendations.'
+              : 'Fire a Hunt Playbook to see its runs here.'}
+          </p>
+        </div>
+      ) : (
+      <>
       {/* Tabs — issue-local-022 (item 5): SmartArt-style connected arrow
           segments; disabled (not-yet-reached) phases stay visibly greyed. */}
       <ArrowTabs
@@ -681,6 +765,7 @@ export default function HuntDetail({
           onRunCreated={(id) => {
             setActiveRunId(id)
             qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+            scrollToPhasesRow()
           }}
           onShowIocs={() => setActiveTab('iocs')}
           iocVerdictsDirty={iocStaging.isDirty}
@@ -758,6 +843,8 @@ export default function HuntDetail({
             </div>
           )}
         </div>
+      )}
+      </>
       )}
 
       {/* Add item modal */}
@@ -853,7 +940,7 @@ export default function HuntDetail({
 
             <RunConfigForm
               variant="dialog"
-              effort={rerunEffort}
+              effort={effectiveRerunEffort}
               onEffortChange={setRerunEffort}
               modelChoice={rerunModelChoice}
               onModelChoiceChange={setRerunModelChoice}
@@ -865,6 +952,10 @@ export default function HuntDetail({
               onIocCleaningOptionsChange={setIocCleaningOptions}
               includeThreatIntel={includeThreatIntel}
               onIncludeThreatIntelChange={setIncludeThreatIntel}
+              queryLanguages={effectiveQueryLanguages}
+              onQueryLanguagesChange={(updater) =>
+                setQueryLanguagesOverride((prev) => updater(prev ?? effectiveQueryLanguages))
+              }
             />
 
             {/* Selected summary */}
@@ -874,7 +965,7 @@ export default function HuntDetail({
                 : rerunChosenModel
                   ? `${rerunChosenModel.provider} / ${rerunChosenModel.model}`
                   : 'Default model'}{' '}
-              · effort: {rerunEffort} · IOC: {iocMode === 'tagging_only' ? 'tagging only' : 'active cleaning'}
+              · effort: {effectiveRerunEffort} · IOC: {iocMode === 'tagging_only' ? 'tagging only' : 'active cleaning'}
               {' '}· Threat Intel: {includeThreatIntel ? 'on' : 'off'}
             </p>
 

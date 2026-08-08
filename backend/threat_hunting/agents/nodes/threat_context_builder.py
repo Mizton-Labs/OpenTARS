@@ -127,12 +127,16 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
             ),
         )
 
+        usage: dict = {}
+        prompts: list = []
         response = await call_llm(
             user,
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
             max_tokens=1500,
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
 
         parsed = parse_json_response(response, context=step)
@@ -163,6 +167,8 @@ async def threat_context_builder(state: HuntPipelineState) -> dict:
                 "tools_used": tools_used,
                 "decision": decision,
                 "debug_lines": debug_lines,
+                "tokens": usage or None,
+                "prompts": prompts or None,
             }
         )
         completed.append(step)

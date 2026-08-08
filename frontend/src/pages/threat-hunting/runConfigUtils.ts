@@ -4,7 +4,7 @@
  * plain values trips the react-refresh/only-export-components lint rule.
  */
 
-import { type LLMProviderSummary, type THPlaybook } from '../../api/client'
+import { type LLMProviderSummary, type THPlaybook, type THQueryLanguages } from '../../api/client'
 
 export interface IocCleaningOptions {
   remove_noisy: boolean
@@ -25,6 +25,16 @@ export const DEFAULT_IOC_CLEANING_OPTIONS: IocCleaningOptions = {
 // issue-local-022 (item 3): Threat Intel analysis defaults to included for
 // every run-starting UI, not just the Re-run dialog.
 export const DEFAULT_INCLUDE_THREAT_INTEL = true
+
+// issue-local-041: local fallback only — used before api.getThQueryLanguages()
+// resolves, or if it fails. Mirrors the backend's own
+// _TH_QUERY_LANGUAGES_DEFAULT (config/loader.py).
+export const DEFAULT_QUERY_LANGUAGES: THQueryLanguages = {
+  spl: true,
+  kql: true,
+  cql: false,
+  elasticsearch: true,
+}
 
 export const EFFORT_OPTIONS = ['low', 'medium', 'high'] as const
 
@@ -78,14 +88,23 @@ export function buildRunConfig(
   iocMode: 'tagging_only' | 'active_cleaning',
   iocCleaningOptions: IocCleaningOptions,
   includeThreatIntel: boolean,
+  // issue-local-041: only set once the user has actually touched the
+  // toggles (see the null-until-touched pattern in AnalysisTab.tsx /
+  // HuntDetail.tsx) — an untouched form omits this key entirely so the
+  // backend's own "configured default at run-start time" resolution
+  // applies, rather than freezing in whatever the default happened to be
+  // when the page loaded.
+  queryLanguages?: THQueryLanguages | null,
 ): {
   ioc_mode: 'tagging_only' | 'active_cleaning'
   ioc_cleaning_options: IocCleaningOptions | undefined
   include_threat_intel: boolean
+  query_languages: THQueryLanguages | undefined
 } {
   return {
     ioc_mode: iocMode,
     ioc_cleaning_options: iocMode === 'active_cleaning' ? iocCleaningOptions : undefined,
     include_threat_intel: includeThreatIntel,
+    query_languages: queryLanguages ?? undefined,
   }
 }

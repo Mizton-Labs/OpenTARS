@@ -117,6 +117,41 @@ async def _call_with_retry(attempt_fn, *, max_tokens: int, retry_label: str):
             await asyncio.sleep(delay)
 
 
+def _debug_verbosity_enabled() -> bool:
+    """issue-local-041: True only at the deepest 'debug' verbosity tier —
+    the gate for capturing full prompt text (see ``_maybe_log_prompts``).
+    Token usage capture (``usage_out``) is NOT gated by this — the issue
+    asks for token counts at every level, prompts only at 'debug'."""
+    try:
+        from backend.config.loader import load_agent_verbosity
+
+        return load_agent_verbosity() == "debug"
+    except Exception:  # noqa: BLE001 — never let a config read break a call
+        return False
+
+
+def _maybe_log_prompts(
+    prompt_log_out: list[dict[str, str]] | None,
+    *,
+    system: str | None,
+    user: str,
+    agent: str,
+) -> None:
+    """issue-local-041: append typed prompt/response entries to
+    *prompt_log_out*, but only when verbosity is 'debug' — prompts (unlike
+    token counts) can be large, so this is opt-in per verbosity level rather
+    than always captured. No-ops entirely when *prompt_log_out* is None
+    (the caller didn't ask) or verbosity is below 'debug'.
+    """
+    if prompt_log_out is None or not _debug_verbosity_enabled():
+        return
+    if system:
+        prompt_log_out.append({"type": "system", "content": system})
+    prompt_log_out.append({"type": "user", "content": user})
+    if agent:
+        prompt_log_out.append({"type": "agent", "content": agent})
+
+
 # LangChain message helpers (used for prompt assembly only)
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -138,6 +173,8 @@ async def call_llm_with_tools(
     max_tokens: int = 2048,
     temperature: float = 0.0,
     timeout: float | None = 120.0,
+    usage_out: dict | None = None,
+    prompt_log_out: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[dict]]:
     """Call the configured LLM with tool definitions.
 
@@ -150,6 +187,22 @@ async def call_llm_with_tools(
     Args:
         tools: List of tool spec dicts in OpenAI function-calling format
                (name, description, parameters fields).
+        usage_out: issue-local-041 — when given a dict, it is updated
+            in-place with this call's token usage (see
+            ``LLMClient.last_usage()``'s ``LLMUsage`` shape) once the call
+            completes, or left untouched if the provider reported none.
+            ``client`` here is a fresh instance from ``get_client()``
+            (registry.get_client constructs a new one per call) so reading
+            its usage right after the threaded call returns is race-free
+            even with several playbook runs firing concurrently — no
+            shared/global state is touched. Optional and additive: existing
+            callers that don't pass it see no behavior change.
+        prompt_log_out: issue-local-041 — when given a list, typed
+            ``{"type": "system"|"user"|"agent", "content": str}`` entries for
+            this call are appended to it, but ONLY when the configured agent
+            verbosity is 'debug' (prompts can be large — unlike usage_out,
+            this is not captured at every level). Safe to pass
+            unconditionally; it silently no-ops below 'debug'.
     """
     # Use the module-level get_client (patched in tests via
     # 'backend.threat_hunting.agents.llm_bridge.get_client').
@@ -171,6 +224,9 @@ async def call_llm_with_tools(
         text = await _call_with_retry(
             _attempt, max_tokens=max_tokens, retry_label="call_llm_with_tools(no-tools fallback)"
         )
+        if usage_out is not None and client.last_usage():
+            usage_out.update(client.last_usage())
+        _maybe_log_prompts(prompt_log_out, system=system, user=prompt, agent=text)
         return text, []
 
     async def _attempt_with_tools(mt: int) -> tuple[str, list[dict]]:
@@ -188,6 +244,9 @@ async def call_llm_with_tools(
     text, tool_calls = await _call_with_retry(
         _attempt_with_tools, max_tokens=max_tokens, retry_label="call_llm_with_tools"
     )
+    if usage_out is not None and client.last_usage():
+        usage_out.update(client.last_usage())
+    _maybe_log_prompts(prompt_log_out, system=system, user=prompt, agent=text)
     return text, tool_calls
 
 
@@ -200,11 +259,19 @@ async def call_llm(
     max_tokens: int = 2048,
     temperature: float = 0.0,
     timeout: float | None = 120.0,
+    usage_out: dict | None = None,
+    prompt_log_out: list[dict[str, str]] | None = None,
 ) -> str:
     """Call the configured LLM and return the text response.
 
     All parameters are optional — when omitted, the default provider and
     model from ``config/llm-providers.yaml`` are used.
+
+    Args:
+        usage_out: issue-local-041 — see ``call_llm_with_tools``'s docstring;
+            same contract here.
+        prompt_log_out: issue-local-041 — see ``call_llm_with_tools``'s
+            docstring; same contract here.
 
     Raises:
         LLMDisabledError  — when LLM is disabled in config.
@@ -225,7 +292,11 @@ async def call_llm(
             model=model,
         )
 
-    return await _call_with_retry(_attempt, max_tokens=max_tokens, retry_label="call_llm")
+    text = await _call_with_retry(_attempt, max_tokens=max_tokens, retry_label="call_llm")
+    if usage_out is not None and client.last_usage():
+        usage_out.update(client.last_usage())
+    _maybe_log_prompts(prompt_log_out, system=system, user=prompt, agent=text)
+    return text
 
 
 def build_prompt(

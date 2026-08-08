@@ -650,19 +650,56 @@ def save_th_node_timeout_seconds(value: int) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
-# ── Agent workflow verbosity (issue-local-004) ───────────────────────────────
+# ── Agent workflow verbosity (issue-local-004, 4-tier issue-local-041) ───────
 # Controls how much live pipeline telemetry is surfaced in the UI.
-#   info    — clean summary; show current step only
-#   verbose — animated pipeline card: per-step status, tools, timing, item counts
-#   debug   — verbose + scoped backend log buffer in a bottom textbox
+#   info     — clean summary; show current step only
+#   detailed — animated pipeline card: per-step status, tools, timing, item counts
+#              (issue-local-041: renamed from the old 3-tier "verbose")
+#   verbose  — detailed + scoped backend log buffer in a bottom textbox
+#              (issue-local-041: renamed from the old 3-tier "debug")
+#   debug    — verbose + agent/component name highlighting, a full typed
+#              prompt inspector (system/user/agent/...), and token usage
+#              totals where the provider exposes them (issue-local-041, new)
 
-_AGENT_VERBOSITY_DEFAULT = "debug"  # issue-local-012: changed from "info"
-_AGENT_VERBOSITY_VALUES = frozenset({"info", "verbose", "debug"})
+_AGENT_VERBOSITY_DEFAULT = "verbose"  # issue-local-041: renamed from "debug" (same behavior, new name)
+_AGENT_VERBOSITY_VALUES = frozenset({"info", "detailed", "verbose", "debug"})
+
+# issue-local-041: one-time rename migration for values stored under the old
+# 3-tier vocabulary — "verbose" and "debug" both still exist as valid NEW
+# values (with different meanings), so this can't be a plain always-on
+# translation table without corrupting a legitimately-saved new-schema value
+# on every subsequent read. _AGENT_VERBOSITY_MIGRATED_KEY marks "this
+# application.yaml has already gone through the rename" — set the first time
+# either the migration runs or a value is saved under the new schema, so a
+# post-migration read of stored 'debug' (the new, deepest tier) is never
+# mistaken for the pre-migration 'debug' (now called 'verbose') again.
+_LEGACY_VERBOSITY_RENAME = {"verbose": "detailed", "debug": "verbose"}
+_AGENT_VERBOSITY_MIGRATED_KEY = "agent_workflow_verbosity_migrated_v2"
 
 
 def load_agent_verbosity() -> str:
-    """Return the configured agentic workflow verbosity level (default 'info')."""
-    raw = load_app_config().get("agent_workflow_verbosity", _AGENT_VERBOSITY_DEFAULT)
+    """Return the configured agentic workflow verbosity level (default 'verbose')."""
+    data = load_app_config()
+    stored = data.get("agent_workflow_verbosity")
+    if (
+        stored is not None
+        and not data.get(_AGENT_VERBOSITY_MIGRATED_KEY)
+        and stored in _LEGACY_VERBOSITY_RENAME
+    ):
+        migrated = _LEGACY_VERBOSITY_RENAME[stored]
+        logger.info(
+            "agent_workflow_verbosity: migrating legacy level %r -> %r "
+            "(issue-local-041 4-tier rename)",
+            stored,
+            migrated,
+        )
+        try:
+            save_agent_verbosity(migrated)
+        except Exception:  # noqa: BLE001 — migration is best-effort; still return the value
+            logger.warning("agent_workflow_verbosity: failed to persist migrated value", exc_info=True)
+        return migrated
+
+    raw = stored if stored is not None else _AGENT_VERBOSITY_DEFAULT
     if raw not in _AGENT_VERBOSITY_VALUES:
         logger.warning(
             "agent_workflow_verbosity %r is not valid; using default %r",
@@ -681,6 +718,7 @@ def save_agent_verbosity(value: str) -> None:
         )
     data = load_app_config()
     data["agent_workflow_verbosity"] = value
+    data[_AGENT_VERBOSITY_MIGRATED_KEY] = True
     _write_yaml(APP_CONFIG_PATH, data)
 
 
@@ -782,6 +820,52 @@ def save_th_report_formats(value: dict[str, bool]) -> None:
             raise ValueError(f"th_report_formats[{key!r}] must be a boolean")
     data = load_app_config()
     data["th_report_formats"] = dict(value)
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
+# ── Threat Hunting default query languages (issue-local-041) ────────────────
+# Which SIEM query languages query_drafting_agent generates by default for a
+# new run — a per-run run_config.query_languages override (see
+# runConfigUtils.ts / RunConfigForm.tsx) can enable/disable any of these for
+# that run specifically. spl/kql/elasticsearch default on (the three the
+# agent already drafted before this setting existed); cql (CrowdStrike Query
+# Language / LogScale) defaults off since it's new.
+
+_TH_QUERY_LANGUAGES_DEFAULT: dict[str, bool] = {
+    "spl": True,
+    "kql": True,
+    "cql": False,
+    "elasticsearch": True,
+}
+_TH_QUERY_LANGUAGE_KEYS = frozenset({"spl", "kql", "cql", "elasticsearch"})
+
+
+def load_th_query_languages() -> dict[str, bool]:
+    """Return the configured default query-language toggles."""
+    raw = load_app_config().get("th_query_languages", {})
+    if not isinstance(raw, dict):
+        logger.warning("th_query_languages in %s is not a dict; using defaults", APP_CONFIG_PATH)
+        return dict(_TH_QUERY_LANGUAGES_DEFAULT)
+    result = dict(_TH_QUERY_LANGUAGES_DEFAULT)
+    for key in _TH_QUERY_LANGUAGE_KEYS:
+        if key in raw:
+            result[key] = bool(raw[key])
+    return result
+
+
+def save_th_query_languages(value: dict[str, bool]) -> None:
+    """Persist the default query-language toggles to application.yaml."""
+    if not isinstance(value, dict):
+        raise ValueError("th_query_languages must be a dict with keys: spl, kql, cql, elasticsearch")
+    for key in value:
+        if key not in _TH_QUERY_LANGUAGE_KEYS:
+            raise ValueError(
+                f"Unknown query language key: {key!r}. Allowed: {sorted(_TH_QUERY_LANGUAGE_KEYS)}"
+            )
+        if not isinstance(value[key], bool):
+            raise ValueError(f"th_query_languages[{key!r}] must be a boolean")
+    data = load_app_config()
+    data["th_query_languages"] = dict(value)
     _write_yaml(APP_CONFIG_PATH, data)
 
 

@@ -20,6 +20,10 @@ vi.mock('../api/client', async (importOriginal) => {
       setThReportFormats: vi.fn(),
       getHuntIdPrefix: vi.fn().mockResolvedValue({ hunt_id_prefix: 'TH' }),
       setHuntIdPrefix: vi.fn().mockResolvedValue({ hunt_id_prefix: 'TH-%Y%m%d' }),
+      getThQueryLanguages: vi.fn().mockResolvedValue({
+        th_query_languages: { spl: true, kql: true, cql: false, elasticsearch: true },
+      }),
+      setThQueryLanguages: vi.fn(),
     },
   }
 })

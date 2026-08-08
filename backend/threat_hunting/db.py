@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 14
+_TH_SCHEMA_VERSION = 15
 
 
 def _utc_now_iso() -> str:
@@ -120,7 +120,8 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     watcher_snapshot TEXT,
     created_at       TEXT NOT NULL,
     provenance_notes TEXT,
-    source_entity    TEXT
+    source_entity    TEXT,
+    scope_run_id     TEXT
 );
 """
 
@@ -626,6 +627,21 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
             "Migrated threat_hunting.db to schema v14 "
             "(added hunt_playbooks, playbook_jobs, run_origin/playbook columns, report name)"
         )
+    if current_version < 15:
+        # v15 (issue-local-041): evidence_items.scope_run_id — a consolidated
+        # (recommendation-synthesis) run's synthetic "Consolidated plan"
+        # evidence item was previously ingested by EVERY subsequent run of
+        # the package (evidence_items has no run scoping at all), compounding
+        # with each new consolidated run. NULL (the default, and every
+        # pre-existing row) means "general evidence, every run ingests it" —
+        # unchanged behavior. A non-NULL value scopes the item to exactly one
+        # run's intake_classifier pass; it still shows up in the (unscoped)
+        # Evidence tab list and global search.
+        try:
+            await db.execute("ALTER TABLE evidence_items ADD COLUMN scope_run_id TEXT")
+        except Exception:
+            pass
+        logger.info("Migrated threat_hunting.db to schema v15 (added evidence_items.scope_run_id)")
 
 
 async def init_threat_hunting_db() -> None:
@@ -819,10 +835,42 @@ async def get_hunt_package(pkg_id: str) -> dict[str, Any] | None:
     return pkg
 
 
+_TOKEN_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+    "total_tokens",
+)
+
+
+def _sum_token_usage(step_logs: list[dict[str, Any]]) -> dict[str, int] | None:
+    """issue-local-041: sum every step's ``tokens`` block into one per-run
+    total. A field stays absent from the total if NO step reported it (kept
+    consistent with LLMUsage's own "None means not reported" convention);
+    present with a summed int otherwise. Returns None if no step in this run
+    reported any usage at all — the run predates issue-local-041, or every
+    provider involved doesn't expose usage.
+    """
+    totals: dict[str, int] = {}
+    seen_any = False
+    for log in step_logs:
+        tokens = log.get("tokens")
+        if not isinstance(tokens, dict):
+            continue
+        for field in _TOKEN_USAGE_FIELDS:
+            value = tokens.get(field)
+            if isinstance(value, int):
+                totals[field] = totals.get(field, 0) + value
+                seen_any = True
+    return totals if seen_any else None
+
+
 def _parse_step_logs(
     step_logs_json: str | None,
-) -> tuple[list[dict[str, Any]] | None, float | None]:
-    """Parse a run's ``step_logs`` JSON into a phase summary + total elapsed time.
+) -> tuple[list[dict[str, Any]] | None, float | None, dict[str, int] | None]:
+    """Parse a run's ``step_logs`` JSON into a phase summary + total elapsed
+    time + summed token usage.
 
     Shared by the latest-run merge and the per-run (issue-local-016) bulk pass
     in ``list_hunt_packages`` below — same projection either way.
@@ -831,8 +879,9 @@ def _parse_step_logs(
 
     phases: list[dict[str, Any]] = []
     total_elapsed: float = 0.0
+    step_logs: list[dict[str, Any]] = []
     try:
-        step_logs: list[dict[str, Any]] = _json.loads(step_logs_json or "[]")
+        step_logs = _json.loads(step_logs_json or "[]")
         for log in step_logs:
             step_name = log.get("step", "")
             if step_name:
@@ -853,11 +902,25 @@ def _parse_step_logs(
                     phase_entry["ioc_count"] = log["ioc_count"]
                 if log.get("noisy_count") is not None:
                     phase_entry["noisy_count"] = log["noisy_count"]
+                if log.get("tokens") is not None:
+                    phase_entry["tokens"] = log["tokens"]
                 phases.append(phase_entry)
                 total_elapsed += float(elapsed)
     except Exception:  # noqa: BLE001
+        # issue-local-041: preserves the original behavior — return whatever
+        # phases/elapsed were accumulated before the exception, not a hard
+        # None reset (a malformed entry mid-list shouldn't blank out every
+        # step already parsed before it).
         pass
-    return (phases if phases else None), (round(total_elapsed, 2) if phases else None)
+    try:
+        token_totals = _sum_token_usage(step_logs)
+    except Exception:  # noqa: BLE001
+        token_totals = None
+    return (
+        (phases if phases else None),
+        (round(total_elapsed, 2) if phases else None),
+        token_totals,
+    )
 
 
 def _parse_deep_retrohunt_counts(
@@ -1056,7 +1119,7 @@ async def list_hunt_packages(
     # Build lookup: hunt_package_id → [run summary dicts, newest first]
     runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
     for r in all_run_rows:
-        phases, total_elapsed_s = _parse_step_logs(r["step_logs"])
+        phases, total_elapsed_s, token_usage_total = _parse_step_logs(r["step_logs"])
         sanitized_count, removed_count = _parse_deep_retrohunt_counts(r["deep_retrohunt"])
         runs_by_pkg.setdefault(r["hunt_package_id"], []).append(
             {
@@ -1076,6 +1139,11 @@ async def list_hunt_packages(
                     hunt_id_by_pkg.get(r["hunt_package_id"], ""), r["run_seq"]
                 ),
                 "created_by": r["created_by"],
+                # issue-local-041: summed across every step of THIS run;
+                # summing across a package's runs (for the "sum for the
+                # whole Hunt package" total) happens client-side over this
+                # already-fetched runs list — no extra query needed.
+                "token_usage_total": token_usage_total,
             }
         )
 
@@ -1085,14 +1153,16 @@ async def list_hunt_packages(
         run = run_by_pkg.get(pkg["id"])
         if run:
             pkg["generation_status"] = run["generation_status"]
-            phases, total_elapsed_s = _parse_step_logs(run["step_logs_json"])
+            phases, total_elapsed_s, token_usage_total = _parse_step_logs(run["step_logs_json"])
             pkg["phases"] = phases
             pkg["total_elapsed_s"] = total_elapsed_s
+            pkg["token_usage_total"] = token_usage_total
             pkg["run_created_at"] = run.get("run_created_at")  # issue-008-2A: live timer
         else:
             pkg["generation_status"] = None
             pkg["phases"] = None
             pkg["total_elapsed_s"] = None
+            pkg["token_usage_total"] = None
             pkg["run_created_at"] = None
         pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
         pkg["run_count"] = len(pkg["runs"])
@@ -1305,7 +1375,7 @@ async def get_hunt_dashboard_stats(
                     items = []
                 stats[key] += len(items) if isinstance(items, list) else 0
 
-            phases, _elapsed = _parse_step_logs(r["step_logs"])
+            phases, _elapsed, _tokens = _parse_step_logs(r["step_logs"])
             for phase in phases or []:
                 if phase.get("step") == "siem_fetch" and phase.get("item_count") is not None:
                     stats["siem_events_total"] += int(phase["item_count"])
@@ -1841,6 +1911,7 @@ async def add_evidence_item(
     provenance_notes: str = "",
     blob_data: bytes | None = None,
     source_entity: str | None = None,
+    scope_run_id: str | None = None,
 ) -> dict[str, Any]:
     import json
 
@@ -1853,8 +1924,8 @@ async def add_evidence_item(
               (id, hunt_package_id, item_type, label, source_ref, content_hash,
                mime_type, fetch_url, final_url, extracted_text, parser_used,
                parser_version, parse_status, parse_warnings, fetch_metadata,
-               watcher_snapshot, created_at, provenance_notes, source_entity)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               watcher_snapshot, created_at, provenance_notes, source_entity, scope_run_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 item_id,
@@ -1876,6 +1947,7 @@ async def add_evidence_item(
                 now,
                 provenance_notes,
                 source_entity,
+                scope_run_id,
             ),
         )
         if blob_data is not None:
@@ -1923,15 +1995,37 @@ async def get_evidence_item(item_id: str) -> dict[str, Any] | None:
     return d
 
 
-async def list_evidence_items(hunt_package_id: str) -> list[dict[str, Any]]:
+async def list_evidence_items(
+    hunt_package_id: str, *, run_id: str | None = None
+) -> list[dict[str, Any]]:
+    """List evidence items for a package.
+
+    issue-local-041: pass *run_id* when the caller is about to feed these
+    items INTO a specific run's pipeline (intake_classifier) or report
+    (report_writer) — this excludes items whose ``scope_run_id`` is set to a
+    DIFFERENT run (e.g. a consolidated run's synthetic "Consolidated plan"
+    evidence item, which must only ever be ingested/reported by the one run
+    it was created for). General evidence (``scope_run_id`` NULL — every
+    item created before this field existed, and every item added the normal
+    way) is always included. Omitting *run_id* (the Evidence tab list,
+    global search, package clone, ...) returns every item unfiltered, same
+    as before.
+    """
     import json
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT * FROM evidence_items WHERE hunt_package_id = ? ORDER BY created_at",
-            (hunt_package_id,),
-        )
+        if run_id is not None:
+            cur = await db.execute(
+                "SELECT * FROM evidence_items WHERE hunt_package_id = ? "
+                "AND (scope_run_id IS NULL OR scope_run_id = ?) ORDER BY created_at",
+                (hunt_package_id, run_id),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT * FROM evidence_items WHERE hunt_package_id = ? ORDER BY created_at",
+                (hunt_package_id,),
+            )
         rows = await cur.fetchall()
         await cur.close()
     result = []
@@ -3028,10 +3122,11 @@ async def list_generation_runs(hunt_package_id: str) -> list[dict[str, Any]]:
         step_logs_json = run.pop("step_logs")
         deep_retrohunt_json = run.pop("deep_retrohunt")
         run_seq = run.pop("run_seq")
-        phases, total_elapsed_s = _parse_step_logs(step_logs_json)
+        phases, total_elapsed_s, token_usage_total = _parse_step_logs(step_logs_json)
         sanitized_count, removed_count = _parse_deep_retrohunt_counts(deep_retrohunt_json)
         run["phases"] = phases
         run["total_elapsed_s"] = total_elapsed_s
+        run["token_usage_total"] = token_usage_total
         run["sanitized_ioc_count"] = sanitized_count
         run["removed_ioc_count"] = removed_count
         run["has_report"] = run["id"] in report_run_ids

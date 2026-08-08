@@ -78,12 +78,16 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
         debug_lines.append(
             f"LLM_CALL: TTP analysis requested (effort={state.get('research_effort', 'medium')})"
         )
+        usage: dict = {}
+        prompts: list = []
         response = await call_llm(
             user,
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
             max_tokens=profile["ttp_tokens"],
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
 
         parsed = parse_json_response(response, context=step)
@@ -117,6 +121,8 @@ async def ttp_analyst(state: HuntPipelineState) -> dict:
                 "elapsed_s": round(elapsed, 2),
                 "effort": state.get("research_effort", "medium"),
                 "debug_lines": debug_lines,
+                "tokens": usage or None,
+                "prompts": prompts or None,
             }
         )
         completed.append(step)

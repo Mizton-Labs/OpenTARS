@@ -94,4 +94,22 @@ describe('ReactFlowVisualizer — trackWorkflow (issue-local-018 follow-up)', ()
       expect.objectContaining({ nodes: [{ id: 'intake_classifier' }] }),
     )
   })
+
+  // issue-local-041: regression for the "Track workflow" checkbox reading
+  // checked but doing nothing after switching tabs and back. AnalysisTab
+  // unmounts/remounts this component's whole subtree on tab switch — a
+  // fresh mount with trackWorkflow ALREADY true (its default) and an
+  // already-active step must fit-view on that step without requiring the
+  // user to uncheck/recheck the box.
+  it('fits view to the already-active step on a fresh mount with trackWorkflow already on', () => {
+    render(
+      <ReactFlowVisualizer
+        genRecord={makeGenRecord({ current_step: 'hypothesis_generator' })}
+        trackWorkflow={true}
+      />,
+    )
+    expect(fitViewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ nodes: [{ id: 'hypothesis_generator' }] }),
+    )
+  })
 })

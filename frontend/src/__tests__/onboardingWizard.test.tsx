@@ -157,6 +157,29 @@ describe('Onboarding wizard gate (issue-local-038)', () => {
     await waitFor(() => expect(api.auth.setOwnTheme).toHaveBeenCalledWith('ocean'))
   })
 
+  it('states clearly that the wizard is shown because this is the first sign-in (issue-local-041)', async () => {
+    vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
+    vi.mocked(api.auth.me).mockResolvedValue({ user: adminUser })
+
+    renderApp()
+
+    await screen.findByRole('heading', { name: /welcome to opentars/i })
+    expect(screen.getByText(/first sign-in/i)).toBeInTheDocument()
+  })
+
+  it('shows a real demo runs table in the preview, not just color swatches (issue-local-041)', async () => {
+    vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
+    vi.mocked(api.auth.me).mockResolvedValue({ user: adminUser })
+
+    renderApp()
+
+    await screen.findByRole('heading', { name: /welcome to opentars/i })
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByText('Run ID')).toBeInTheDocument()
+    expect(screen.getByText('TH01-X03')).toBeInTheDocument()
+    expect(screen.getAllByText('completed').length).toBeGreaterThan(0)
+  })
+
   it('picking a different view density writes it to localStorage on finish', async () => {
     vi.mocked(api.auth.status).mockResolvedValue({ auth_enabled: true })
     vi.mocked(api.auth.me)

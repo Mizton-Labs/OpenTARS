@@ -246,6 +246,8 @@ async def _enrich_with_llm(
     retrohunt_ioc_cap: int = 50,
     retrohunt_csv_cap: int = 3000,
     retrohunt_tokens: int = 3000,
+    usage_out: dict | None = None,
+    prompt_log_out: list | None = None,
 ) -> dict[str, str]:
     """Call the LLM to generate SPL draft, search hint, and analyst notes.
 
@@ -306,6 +308,8 @@ async def _enrich_with_llm(
         provider_name=provider_name,
         model=model_name,
         max_tokens=retrohunt_tokens,
+        usage_out=usage_out,
+        prompt_log_out=prompt_log_out,
     )
 
     parsed = parse_json_response(response, context="deep_retrohunt_planner")
@@ -426,6 +430,8 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
     search_hint = ""
     analyst_notes = ""
 
+    usage: dict = {}
+    prompts: list = []
     try:
         from backend.llm.errors import LLMDisabledError
 
@@ -438,6 +444,8 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             retrohunt_ioc_cap=profile["retrohunt_ioc_cap"],
             retrohunt_csv_cap=profile["retrohunt_csv_cap"],
             retrohunt_tokens=profile["retrohunt_tokens"],
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
         spl_draft = enrichment["spl_draft"]
         spl_macro_name = enrichment["spl_macro_name"] or spl_macro_name
@@ -517,6 +525,8 @@ async def deep_retrohunt_planner(state: HuntPipelineState) -> dict:
             "tools_used": tools_used,
             "decision": decision,
             "debug_lines": debug_lines,
+            "tokens": usage or None,
+            "prompts": prompts or None,
         }
     )
     completed.append(step)

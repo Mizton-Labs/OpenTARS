@@ -197,7 +197,11 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
         prefer_playwright = effort == "high"  # issue-008-2D: high effort → Playwright-first
 
         # ── 0. Load evidence items ────────────────────────────────────────────
-        evidence_items = await th_db.list_evidence_items(pkg_id)
+        # issue-local-041: scoped to this run — excludes another run's
+        # synthetic consolidated-plan evidence item (see
+        # recommendation_synthesizer.py / list_evidence_items' docstring).
+        run_id = state.get("run_id")
+        evidence_items = await th_db.list_evidence_items(pkg_id, run_id=run_id)
 
         # ── 1. Parse pending FILE evidence items (issue-local-011) ───────────
         # Files uploaded after issue-011 are stored with parse_status='pending';
@@ -275,7 +279,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                     log.warning("intake_classifier: file parse failed for %s: %s", label, parse_exc)
 
             # Reload after parsing
-            evidence_items = await th_db.list_evidence_items(pkg_id)
+            evidence_items = await th_db.list_evidence_items(pkg_id, run_id=run_id)
 
         # ── 2. Fetch pending URL evidence items ──────────────────────────────
         # Evidence items created via POST /evidence/url have parse_status='pending'.
@@ -323,7 +327,7 @@ async def intake_classifier(state: HuntPipelineState) -> dict:
                     log.warning("intake_classifier: URL fetch failed for %s: %s", url, fetch_exc)
 
             # Reload evidence items after fetching
-            evidence_items = await th_db.list_evidence_items(pkg_id)
+            evidence_items = await th_db.list_evidence_items(pkg_id, run_id=run_id)
 
         # ── 3. Build text corpus ──────────────────────────────────────────────
         texts: list[str] = []

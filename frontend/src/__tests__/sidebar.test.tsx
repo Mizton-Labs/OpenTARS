@@ -74,3 +74,42 @@ describe('Sidebar Threat Intel Tracking nav item (issue-local-021)', () => {
     expect(screen.getByText('Threat Intel Tracking')).toBeInTheDocument()
   })
 })
+
+describe('Sidebar Hunt Playbooks nav item — researcherOnly gating (issue-local-041)', () => {
+  it('shows for a researcher, below Data Explorer', () => {
+    vi.mocked(useAuth).mockReturnValue({
+      authEnabled: true,
+      isAdmin: false,
+      isResearcher: true,
+      user: { username: 'researcher1', role: 'threat-researcher' },
+      logout: vi.fn(),
+    } as unknown as ReturnType<typeof useAuth>)
+    renderSidebar()
+    const link = screen.getByText('Hunt Playbooks').closest('a')
+    expect(link).toHaveAttribute('href', '/threat-hunting/playbooks')
+  })
+
+  it('shows for an admin', () => {
+    vi.mocked(useAuth).mockReturnValue({
+      authEnabled: true,
+      isAdmin: true,
+      isResearcher: false,
+      user: { username: 'admin1', role: 'admin' },
+      logout: vi.fn(),
+    } as unknown as ReturnType<typeof useAuth>)
+    renderSidebar()
+    expect(screen.getByText('Hunt Playbooks')).toBeInTheDocument()
+  })
+
+  it('is hidden for a plain viewer', () => {
+    vi.mocked(useAuth).mockReturnValue({
+      authEnabled: true,
+      isAdmin: false,
+      isResearcher: false,
+      user: { username: 'viewer1', role: 'threat-viewer' },
+      logout: vi.fn(),
+    } as unknown as ReturnType<typeof useAuth>)
+    renderSidebar()
+    expect(screen.queryByText('Hunt Playbooks')).not.toBeInTheDocument()
+  })
+})

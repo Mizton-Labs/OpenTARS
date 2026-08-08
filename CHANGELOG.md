@@ -9,6 +9,94 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added/Fixed — Hunt Package UI fixes, Playbooks ownership + sidebar move, SIEM query-language defaults, theme contrast pass, 4-tier logging + token/prompt inspection (issue-local-041)
+
+**Hunt Package UI fixes**
+
+- **Fixed: "Consolidated Runs" showed the previously-active (usually manual) run's Analysis/Report
+  content instead of a real empty state** when a package had no consolidated run yet — the sub-tab
+  only ever filtered the runs table's own rows, never the run driving the tabs below it. Selecting
+  a sub-tab now also switches to a matching run when one exists, or shows an explicit "No
+  consolidated/playbook runs yet" card in place of the tabs when it doesn't.
+- **Fixed: the Report tab's "IOCs Extracted" stat always read 0** — it summed a column
+  (`evidence_items.ioc_count`) that never existed; it's now the real count of IOCs extracted for
+  that run.
+- **Fixed: a consolidated run's synthesized "Consolidated plan" evidence item leaked into every
+  later run's analysis** (manual, playbook, or another consolidated run), compounding with each new
+  consolidated run created. Evidence items can now be scoped to the one run they were created for;
+  the Evidence tab and global search still show them.
+- **Fixed: the "Track workflow" checkbox in the flowchart stopped re-centering the view after
+  switching tabs and back**, even though it still read as checked — required an uncheck/recheck to
+  work again. The chart's re-center effect now re-fires once the graph instance is actually ready
+  after a remount, not just when the checkbox itself changes.
+- **Fixed: the Re-run dialog hardcoded effort to "medium"**, silently downgrading from a configured
+  "high" default on every re-run — it now reads the same configured default the first-run form uses.
+- **Typography**: Analysis/Report card titles and section headers are now visibly bigger
+  (`text-base font-semibold`); body text throughout both tabs is unified to one consistent size
+  instead of three different micro-sizes.
+- **New: labeled "Related IOCs" / "Source" / "Suggested Actions" subcards** on hypotheses in the
+  Analysis and Report tabs, instead of unlabeled inline chip runs.
+- **New: the view scrolls to center the phases row** when a new analysis run starts (first-run or
+  re-run), so the newly-started run's progress isn't left off-screen below the page header/run
+  selector/all-runs table.
+- **Table cell wrapping**: every column in the Hunt Packages runs table now wraps long content
+  instead of forcing a fixed-width horizontal scroll — except the Workflow/phases column, which
+  stays single-line so run progress still reads left-to-right at a glance (previously the exact
+  opposite: the phase track wrapped, everything else didn't).
+- **New: flowchart node hover tooltips** — hovering a node in the React Flow visualization shows a
+  brief description of what that agent/step does, plus this run's actual status/elapsed
+  time/decision for it once known.
+
+**Playbooks**
+
+- **Moved: Hunt Playbooks out of admin-only Configuration into its own sidebar entry** (Threat
+  Hunting → Hunt Playbooks, below Data Explorer), gated to threat-researcher and admin — a plain
+  viewer still can't reach it.
+- **New: playbook ownership.** A researcher can create playbooks and read/run any of them, but can
+  only edit or delete their own; admins are exempt from this and can manage any playbook, matching
+  every other role check in the app. A playbook with no recorded owner (created before this change,
+  or while auth was disabled) stays editable by any researcher.
+
+**Threat Hunting configuration**
+
+- **New: "Default Query Languages" config card** (Configuration → Threat Hunting → Threat Hunting
+  Packages) — toggles for SPL, KQL, CQL (CrowdStrike Query Language / LogScale), and Elasticsearch,
+  controlling which languages `query_drafting_agent` drafts by default. Overridable per run in the
+  run-configuration cards (first-run form and Re-run dialog). CQL support is new — the agent
+  previously only ever drafted SPL/KQL/ES DSL, hardcoded with no configuration at all.
+
+**Themes**
+
+- **Dark themes (Classic/Energy/Ocean/RedHunter): brighter body text.** The muted/secondary text
+  stops (`gray-400/500/600`) used throughout the app for de-emphasized text are brightened in every
+  dark theme's color ramp — no component changes, since everything already keys off these shared
+  tokens.
+- **Light theme: fixed low-contrast secondary text.** `text-gray-500/600/700` — the app's most
+  common "muted body/subtitle" classes — read as pale, hard-to-read grey on Light's near-white
+  page/card because the ramp mirrors direction for light mode. Scoped `.text-*` overrides darken
+  just the text usages of these classes, leaving borders/surfaces using the same stops untouched.
+- **RedHunter: lightened from near-black to an actual dark grey** (`gray-950` 8→24, and the rest of
+  the surface ramp raised to match) — the rose/red accent is unchanged.
+- **New: the first-login onboarding wizard shows a real, live-themed demo runs table** (Run ID,
+  Model, Status, Created) instead of abstract color swatches, so the selected theme's actual look is
+  visible before committing to it. The wizard also now states explicitly that it's shown because
+  this is the user's first sign-in.
+
+**Logging**
+
+- **Renamed the verbosity scale to make room for a new tier**: old `verbose` → `detailed`, old
+  `debug` → `verbose` (identical behavior, new names); a value saved under the old names migrates
+  transparently on first read. New tiers, low to high: `info` / `detailed` / `verbose` / `debug`.
+- **New, deeper `debug` tier**: highlights which agent/component produced each Pipeline Log console
+  section; adds a per-step **prompt inspector** — every prompt sent to the model, labeled by type
+  (system/user/agent) — viewable inline per step.
+- **New: token usage tracking**, where the provider's API reports it (OpenAI, Anthropic, Ollama,
+  OpenAI-compatible, and both Azure AI Foundry modes are all supported) — input/output/cached/total
+  counts shown per step, summed per run, and summed again across every run in a Hunt Package. Token
+  counts are captured at every verbosity level (not just `debug`); only the full prompt text is
+  gated to `debug`, since prompts can be large. Capture happens per LLM-client instance (a fresh one
+  per call), so it stays correct even with several playbook-fired runs executing concurrently.
+
 ### Added — Hunt Playbooks, Runs/Playbook Runs/Consolidated Runs sub-tabs, named comparison assessments, recommendation-synthesis runs (issue-local-040)
 
 - **New: Hunt Playbooks.** Configuration → Threat Hunting → **Hunt Playbooks** (the existing

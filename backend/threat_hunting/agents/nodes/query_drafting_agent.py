@@ -1,9 +1,12 @@
 """LangGraph node: query_drafting_agent
 
-Uses the LLM to produce SIEM query drafts (SPL, KQL, and ES DSL) for the
-hunting leads and TTP techniques identified in earlier pipeline nodes.
-Always generates at least one SPL draft; adds KQL and ES DSL versions where
-applicable.
+Uses the LLM to produce SIEM query drafts for the hunting leads and TTP
+techniques identified in earlier pipeline nodes, in whichever query
+languages are enabled (issue-local-041): SPL, KQL, CQL (CrowdStrike Query
+Language / LogScale), and Elasticsearch Query DSL. Which languages draft
+defaults to the configured global default (th_query_languages), overridable
+per-run via run_config.query_languages. Always generates at least one draft
+in the first enabled language.
 """
 
 from __future__ import annotations
@@ -20,6 +23,39 @@ from backend.threat_hunting.agents.llm_bridge import (
 )
 from backend.threat_hunting.agents.logging_utils import get_run_logger
 from backend.threat_hunting.agents.state import HuntPipelineState
+
+# issue-local-041: config key (th_query_languages / run_config.query_languages)
+# -> the 'language' field value the LLM should emit on each draft. Kept
+# distinct because "es_dsl" (the pre-existing convention for drafts) predates
+# and doesn't match the config key "elasticsearch".
+_LANGUAGE_DRAFT_ID: dict[str, str] = {
+    "spl": "spl",
+    "kql": "kql",
+    "cql": "cql",
+    "elasticsearch": "es_dsl",
+}
+_LANGUAGE_DESCRIPTIONS: dict[str, str] = {
+    "spl": "Splunk Search Processing Language (SPL)",
+    "kql": "Kusto Query Language (KQL), for Microsoft Sentinel/Defender",
+    "cql": "CrowdStrike Query Language (CQL), for Falcon LogScale",
+    "elasticsearch": "Elasticsearch Query DSL (serialize the query object to a JSON string)",
+}
+
+
+def _resolve_query_languages(state: HuntPipelineState) -> list[str]:
+    """Which config keys (spl/kql/cql/elasticsearch) are enabled for this
+    run — per-run run_config.query_languages override, else the global
+    default. Always returns at least one key (falls back to ['spl'] if
+    every language somehow ended up disabled)."""
+    from backend.config.loader import load_th_query_languages
+
+    run_config = state.get("run_config") or {}
+    override = run_config.get("query_languages")
+    languages = dict(load_th_query_languages())
+    if isinstance(override, dict) and override:
+        languages.update({k: bool(v) for k, v in override.items() if k in languages})
+    enabled = [lang for lang in ("spl", "kql", "cql", "elasticsearch") if languages.get(lang)]
+    return enabled or ["spl"]
 
 _OUTPUT_FORMAT = """[
   {
@@ -71,6 +107,10 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
         hunting_leads_text = json.dumps(hunting_leads, indent=2)
         ttp_analysis_text = json.dumps(ttp_analysis, indent=2)
 
+        enabled_languages = _resolve_query_languages(state)
+        draft_ids = [_LANGUAGE_DRAFT_ID[lang] for lang in enabled_languages]
+        languages_text = ", ".join(_LANGUAGE_DESCRIPTIONS[lang] for lang in enabled_languages)
+
         # Use a capped sample of IOCs to keep prompt size manageable
         ioc_sample = raw_ioc_list[:ioc_sample_limit]
         ioc_sample_text = json.dumps(
@@ -87,10 +127,10 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
 
         system, user = build_prompt(
             task_description=(
-                "Draft SIEM search queries (SPL, KQL, and ES DSL) for the provided "
+                f"Draft SIEM search queries ({languages_text}) for the provided "
                 "hunting leads and TTP techniques. Each query should be concrete, "
                 "incorporate the available IOCs where relevant, and be directly "
-                "usable in a Splunk, Microsoft Sentinel, or Elastic SIEM environment."
+                "usable in the stated SIEM/search environment."
             ),
             context_sections=[
                 ("Hunting Leads", hunting_leads_text),
@@ -99,8 +139,9 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             ],
             output_format=_OUTPUT_FORMAT,
             additional_instructions=(
-                "Always include at least one SPL query. "
-                "Also produce KQL and ES DSL equivalents for each lead where applicable. "
+                f"Draft ONLY in these languages, using exactly these 'language' field values: "
+                f"{', '.join(draft_ids)}. Always include at least one {draft_ids[0]!r} query. "
+                "Produce equivalents in the other enabled languages for each lead where applicable. "
                 "Assign sequential IDs: Q1, Q2, Q3, etc. "
                 "Set lead_id to the matching hunting lead ID (e.g. 'L1') or null if the "
                 "query is TTP-driven rather than lead-specific. "
@@ -111,12 +152,16 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
             ),
         )
 
+        usage: dict = {}
+        prompts: list = []
         response = await call_llm(
             user,
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
             max_tokens=profile["query_tokens"],
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
 
         parsed = parse_json_response(response, context=step)
@@ -152,7 +197,10 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
                 draft["query"] = json.dumps(q, indent=2, ensure_ascii=False)
 
         # ── Post-draft tool validation (issue-007: gated by enabled toggles) ──
-        if query_drafts:
+        # issue-local-041: validate_spl only makes sense when SPL is one of
+        # this run's enabled languages — skip entirely otherwise rather than
+        # "validating" zero queries.
+        if query_drafts and "spl" in enabled_languages:
             tool_specs = get_enabled_tool_specs(_TOOL_NAMES, load_agent_tools())
             if tool_specs:
                 spl_queries = [
@@ -188,6 +236,7 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
                     debug_lines.append(f"TOOL_LLM_ERROR: {llm_exc}")
 
         elapsed = time.monotonic() - start
+        debug_lines.insert(0, f"LANGUAGES: {', '.join(draft_ids)}")
         logs.append(
             {
                 "step": step,
@@ -198,6 +247,8 @@ async def query_drafting_agent(state: HuntPipelineState) -> dict:
                 "tools_used": tools_used,
                 "decision": decision,
                 "debug_lines": debug_lines,
+                "tokens": usage or None,
+                "prompts": prompts or None,
             }
         )
         completed.append(step)

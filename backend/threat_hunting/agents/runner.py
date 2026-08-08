@@ -579,6 +579,7 @@ async def _run_pipeline(
 async def start_generation(
     pkg_id: str,
     *,
+    run_id: str | None = None,
     provider_name: str | None = None,
     model_name: str | None = None,
     research_effort: str = "medium",
@@ -609,6 +610,14 @@ async def start_generation(
     snapshotted rather than looked up live. *auto_approve* skips the manual
     approval gate once this run first reaches 'awaiting_approval', set by a
     playbook's auto_approve_analysis toggle.
+
+    *run_id* (issue-local-041) lets a caller pre-generate the run's id so it
+    can be used to scope something written BEFORE the run exists — e.g.
+    recommendation_synthesizer.py writes its synthetic evidence item with
+    scope_run_id=<this run's id> before calling start_generation, so
+    intake_classifier only ever ingests it for this one run and not for any
+    later run on the same package. Auto-generates a fresh uuid when omitted
+    (every other call site).
     """
     from backend.threat_hunting.agents.pipeline import build_initial_state
 
@@ -634,7 +643,7 @@ async def start_generation(
         except Exception:  # noqa: BLE001
             pass
 
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     initial_state = build_initial_state(
         pkg_id,
         provider_name=provider_name,

@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict
 
 from backend.llm.errors import (
     LLMEmptyContentError,
@@ -177,6 +177,99 @@ def _recover_json_object_from_reasoning(text: str) -> str | None:
         if isinstance(parsed, dict) and parsed:
             return blob
     return None
+
+
+# issue-local-041: normalized token-usage shape every ``_extract_*_usage``
+# helper below returns (or None when the response carried no usage block at
+# all — some OpenAI-compatible servers omit it). Different providers report
+# different subsets; a field this provider doesn't expose stays None rather
+# than 0, so the UI can distinguish "0 cached tokens" from "this provider
+# doesn't report caching" (see WorkflowVisualizer's token summary, F24).
+class LLMUsage(TypedDict):
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_creation_tokens: int | None
+    total_tokens: int | None
+
+
+def _extract_openai_usage(data: Any) -> LLMUsage | None:
+    """Extract token usage from an OpenAI-shaped response's ``usage`` block.
+
+    Covers OpenAIClient, OpenAICompatibleClient, and AzureAIFoundryClient's
+    unified (OpenAI-shaped) mode — all four send byte-identical ``usage``
+    envelopes. ``prompt_tokens_details.cached_tokens`` is OpenAI's own
+    prompt-caching field; most OpenAI-compatible servers omit it.
+    """
+    if not isinstance(data, dict):
+        return None
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    return LLMUsage(
+        input_tokens=usage.get("prompt_tokens"),
+        output_tokens=usage.get("completion_tokens"),
+        cache_read_tokens=cached,
+        cache_creation_tokens=None,
+        total_tokens=usage.get("total_tokens"),
+    )
+
+
+def _extract_anthropic_usage(data: Any) -> LLMUsage | None:
+    """Extract token usage from an Anthropic Messages API response.
+
+    Anthropic has no ``total_tokens`` field — summed from input+output when
+    both are present. ``cache_creation_input_tokens``/``cache_read_input_tokens``
+    are Anthropic's prompt-caching fields.
+    """
+    if not isinstance(data, dict):
+        return None
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    total = (
+        input_tokens + output_tokens
+        if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+        else None
+    )
+    return LLMUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=usage.get("cache_read_input_tokens"),
+        cache_creation_tokens=usage.get("cache_creation_input_tokens"),
+        total_tokens=total,
+    )
+
+
+def _extract_ollama_usage(data: Any) -> LLMUsage | None:
+    """Extract token usage from an Ollama ``/api/chat`` response.
+
+    Ollama has no caching concept — those fields are always None. Absent
+    entirely (both counts missing) returns None rather than an all-None
+    dict, so the caller can tell "no usage reported" from "reported zero".
+    """
+    if not isinstance(data, dict):
+        return None
+    prompt_tokens = data.get("prompt_eval_count")
+    completion_tokens = data.get("eval_count")
+    if prompt_tokens is None and completion_tokens is None:
+        return None
+    total = (
+        prompt_tokens + completion_tokens
+        if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int)
+        else None
+    )
+    return LLMUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        cache_read_tokens=None,
+        cache_creation_tokens=None,
+        total_tokens=total,
+    )
 
 
 def _extract_openai_content(
@@ -487,6 +580,19 @@ class LLMClient(ABC):
         # Distinct from ``_tap`` (test_runner) so the prompts-035 ``context=``
         # log field is unaffected. ``None`` until the first call.
         self._last_exchange: dict[str, Any] | None = None
+        # issue-local-041: token usage from the most recent complete()/
+        # complete_with_tools() call on THIS instance, set by each concrete
+        # client right after parsing its response. Safe against the
+        # cross-run races that ruled out reusing `_last_exchange` for this —
+        # registry.get_client() constructs a brand-new instance per call
+        # (see llm_bridge.call_llm), so concurrent playbook runs never share
+        # one client instance to race on. ``None`` until the first call, or
+        # if the provider's response carried no usage block at all.
+        self._last_usage: LLMUsage | None = None
+
+    def last_usage(self) -> LLMUsage | None:
+        """Token usage from the most recent call on this client instance."""
+        return self._last_usage
 
     def _send(
         self,
@@ -792,6 +898,7 @@ class OpenAIClient(LLMClient):
                 body=body_str,
             ) from exc
 
+        self._last_usage = _extract_openai_usage(data)
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
 
@@ -876,6 +983,7 @@ class OpenAIClient(LLMClient):
                 status=status,
                 body=body_str,
             ) from exc
+        self._last_usage = _extract_openai_usage(data)
         # prompts-035 (#2.5): extract via the standard envelope; empty content
         # raises a deterministic finish_reason/reasoning diagnostic.
         return _extract_openai_content(
@@ -1069,6 +1177,10 @@ class _AnthropicProtocolMixin:
                 "POST", url, headers=headers, body=retry_body, timeout=timeout, step=step
             )
         data = _parse_json_or_raise(provider_name=self.name, body=resp, status=status, where=step)
+        # issue-local-041: single choke point for both _anthropic_complete
+        # and _anthropic_complete_with_tools — covers AnthropicClient and
+        # AzureAIFoundryClient(api_style='anthropic').
+        self._last_usage = _extract_anthropic_usage(data)
         return data, status
 
     def _anthropic_complete(
@@ -1239,13 +1351,15 @@ class OllamaClient(LLMClient):
             where="complete",
         )
         try:
-            return data.get("message", {}).get("content", "")
+            content = data.get("message", {}).get("content", "")
         except (AttributeError, TypeError) as exc:
             raise LLMProviderError(
                 f"provider {self.name!r} returned non-Ollama response shape ({type(exc).__name__})",
                 status=status,
                 body=resp.decode("utf-8", errors="replace"),
             ) from exc
+        self._last_usage = _extract_ollama_usage(data)
+        return content
 
     def list_models(self) -> list[str] | None:
         status, _, resp = self._send(
@@ -1335,6 +1449,7 @@ class OpenAICompatibleClient(OpenAIClient):
                 status=status,
                 body=body_str,
             ) from exc
+        self._last_usage = _extract_openai_usage(data)
         # prompts-035 (#2.5): standard-envelope extraction with a deterministic
         # finish_reason/reasoning diagnostic when content is empty.
         return _extract_openai_content(
@@ -1577,6 +1692,7 @@ class AzureAIFoundryClient(_AnthropicProtocolMixin, LLMClient):
                 body=body_str,
             ) from exc
 
+        self._last_usage = _extract_openai_usage(data)
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
 
@@ -1645,6 +1761,7 @@ class AzureAIFoundryClient(_AnthropicProtocolMixin, LLMClient):
                 status=status,
                 body=body_str,
             ) from exc
+        self._last_usage = _extract_openai_usage(data)
         return _extract_openai_content(
             data,
             provider_name=self.name,

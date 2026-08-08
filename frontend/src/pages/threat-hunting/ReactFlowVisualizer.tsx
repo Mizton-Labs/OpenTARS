@@ -12,17 +12,67 @@
  *   - Part 1c: active node gets .node-active class for CSS pulse animation
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
   Controls,
+  Handle,
+  Position,
   type Node,
+  type NodeProps,
   type Edge,
   type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type THGenerationRecord } from '../../api/client'
+import { type THGenerationRecord, type THStepLog } from '../../api/client'
+import { PIPELINE_STEPS as STEP_DESCRIPTIONS } from './WorkflowVisualizer'
+
+// issue-local-041: brief per-node hover descriptions — reuses
+// WorkflowVisualizer.tsx's PIPELINE_STEPS (the same list already shown as
+// timeline sub-text there) instead of maintaining a second copy; a couple of
+// ids only exist on THIS component's own graph (the approval gate, SIEM
+// connector steps not covered there) and get a description of their own.
+const STEP_DESCRIPTION_BY_ID = new Map(STEP_DESCRIPTIONS.map((s) => [s.id, s.description]))
+const EXTRA_DESCRIPTIONS: Record<string, string> = {
+  approval_gate: 'Pauses the pipeline for operator review of the analysis before execution proceeds',
+}
+function stepDescription(id: string): string | undefined {
+  return STEP_DESCRIPTION_BY_ID.get(id) ?? EXTRA_DESCRIPTIONS[id]
+}
+
+// issue-local-041: combines the static "what this node does" description
+// with this run's actual step_logs entry (if any) for a brief-but-informed
+// tooltip — status/elapsed time/decision, when known, not just a static
+// label repeated from the node itself.
+function nodeTooltip(id: string, label: string, log: THStepLog | undefined): string {
+  const lines = [label]
+  const description = stepDescription(id)
+  if (description) lines.push(description)
+  if (log) {
+    const bits: string[] = [log.status]
+    if (log.elapsed_s != null) bits.push(`${log.elapsed_s.toFixed(1)}s`)
+    lines.push(bits.join(' · '))
+    if (log.decision) lines.push(log.decision)
+  }
+  return lines.join('\n')
+}
+
+// issue-local-041: minimal custom node — swaps in for the default @xyflow/
+// react node renderer solely to add a native `title` attribute (the
+// simplest, zero-dependency way to get a browser hover tooltip); keeps
+// invisible top/bottom handles so edges still attach exactly as before.
+function TooltipNode({ data }: NodeProps) {
+  const { label, tooltip } = data as { label: string; tooltip?: string }
+  return (
+    <div title={tooltip} className="w-full h-full flex items-center justify-center whitespace-pre-line">
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      {label as string}
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+    </div>
+  )
+}
+const NODE_TYPES = { default: TooltipNode }
 
 const PIPELINE_STEPS = [
   // ── LangGraph pipeline ──────────────────────────────────────────────────────
@@ -112,12 +162,18 @@ export default function ReactFlowVisualizer({
     return intakeLog?.intake_sources ?? []
   }, [genRecord.step_logs])
 
+  // issue-local-041: this run's step_logs entry per step id, for tooltips.
+  const stepLogById = useMemo(
+    () => new Map((genRecord.step_logs ?? []).map((l) => [l.step, l])),
+    [genRecord.step_logs],
+  )
+
   const nodes: Node[] = useMemo(() => {
     // Pipeline nodes
     const pipelineNodes: Node[] = PIPELINE_STEPS.map((s) => ({
       id: s.id,
       position: { x: s.x, y: s.y },
-      data: { label: s.label },
+      data: { label: s.label, tooltip: nodeTooltip(s.id, s.label, stepLogById.get(s.id)) },
       // Part 1c: apply .node-active class for the CSS glow animation
       className: active === s.id ? 'node-active' : undefined,
       style: {
@@ -161,6 +217,16 @@ export default function ReactFlowVisualizer({
           position: { x: startX + i * spacing, y: -120 },
           data: {
             label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
+            tooltip: [
+              src.label || src.item_type || 'Evidence source',
+              `Type: ${src.item_type}`,
+              src.sub_status ? `Status: ${src.sub_status}` : undefined,
+              src.parser_used ? `Parser: ${src.parser_used}` : undefined,
+              src.text_length ? `${src.text_length.toLocaleString()} chars extracted` : undefined,
+              src.ioc_count != null && src.ioc_count > 0 ? `${src.ioc_count} IOC(s) found` : undefined,
+            ]
+              .filter(Boolean)
+              .join('\n'),
           },
           style: {
             background: bg,
@@ -193,7 +259,7 @@ export default function ReactFlowVisualizer({
           result.push({
             id: `sub_${stepLog.step}_${i}`,
             position: { x: parentStep.x + offsetX, y: parentStep.y + 80 },
-            data: { label: toolsUsed[i] },
+            data: { label: toolsUsed[i], tooltip: `Tool call: ${toolsUsed[i]}` },
             style: {
               background: '#2d1b69',
               border: '1px solid #7c3aed',
@@ -209,7 +275,7 @@ export default function ReactFlowVisualizer({
     })()
 
     return [...sourceNodes, ...pipelineNodes, ...subtaskNodes]
-  }, [completed, active, intakeSources, showSubtasks, genRecord.step_logs])
+  }, [completed, active, intakeSources, showSubtasks, genRecord.step_logs, stepLogById])
 
   const edges: Edge[] = useMemo(() => {
     const pipelineEdges: Edge[] = PIPELINE_EDGES_DEF.map((e, i) => ({
@@ -261,10 +327,22 @@ export default function ReactFlowVisualizer({
   // always targets every current node, so it can't express "just these
   // nodes" — `onInit` gives us the instance to call a scoped `fitView` on.
   const instanceRef = useRef<ReactFlowInstance | null>(null)
+  // issue-local-041: the tracking effect below used to depend only on
+  // [trackWorkflow, active] — on every remount (e.g. switching tabs and
+  // back, which unmounts AnalysisTab and its WorkflowVisualizer/
+  // ReactFlowVisualizer subtree) it ran once immediately with
+  // instanceRef.current still null (onInit hasn't fired yet), silently
+  // no-op'd, and then never ran again unless trackWorkflow or active
+  // actually changed value — so a checkbox that was already checked before
+  // the remount looked checked but did nothing until unchecked/rechecked.
+  // isReady flips true exactly once, right when onInit populates the ref,
+  // giving the effect a deps change to react to on every mount.
+  const [isReady, setIsReady] = useState(false)
 
   const handleInit = useCallback(
     (instance: ReactFlowInstance) => {
       instanceRef.current = instance
+      setIsReady(true)
       const focusIds = ['intake_classifier', ...intakeSources.map((_, i) => `src_${i}`)]
       instance.fitView({ nodes: focusIds.map((id) => ({ id })), padding: 0.4, duration: 0 })
     },
@@ -277,17 +355,18 @@ export default function ReactFlowVisualizer({
   // (rather than a fixed zoom level) keeps a consistent, readable margin
   // around the single focused node regardless of its size on screen.
   useEffect(() => {
-    if (!trackWorkflow || !active) return
+    if (!trackWorkflow || !active || !isReady) return
     // issue-local-021: zoomed out slightly (0.6 -> 1.1) so neighboring
     // nodes stay visible for context while still centering on the active one.
     instanceRef.current?.fitView({ nodes: [{ id: active }], padding: 1.1, duration: 400 })
-  }, [trackWorkflow, active])
+  }, [trackWorkflow, active, isReady])
 
   return (
     <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ height: graphHeight }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={NODE_TYPES}
         onInit={handleInit}
         nodesDraggable={false}
         nodesConnectable={false}
