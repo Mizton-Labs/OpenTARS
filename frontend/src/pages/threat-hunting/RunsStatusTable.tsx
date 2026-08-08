@@ -108,7 +108,7 @@ function MiniPhaseTrack({ run }: { run: THuntPackageRun }) {
         <div key={phase.label} className="flex items-center shrink-0">
           <div
             className={clsx(
-              'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap',
+              'flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap',
               phase.state === 'done' && 'bg-green-900/20 text-green-400',
               phase.state === 'error' && 'bg-red-900/20 text-red-400',
               phase.state === 'active' && 'bg-blue-900/20 text-blue-300',
@@ -140,12 +140,12 @@ function formatDuration(seconds: number | null | undefined): string {
 
 function IocCounts({ run }: { run: THuntPackageRun }) {
   if (run.sanitized_ioc_count == null && run.removed_ioc_count == null) {
-    return <span className="text-[10px] text-gray-600">—</span>
+    return <span className="text-[11px] text-gray-600">—</span>
   }
   const sanitized = run.sanitized_ioc_count ?? 0
   const removed = run.removed_ioc_count ?? 0
   return (
-    <span className="text-[10px]">
+    <span className="text-[11px]">
       <span className="text-green-400">{sanitized} sanitized</span>
       <span className="text-gray-600"> · </span>
       <span className="text-red-400">{removed} removed</span>
@@ -186,7 +186,7 @@ function useDefaultModelLabel(): string | null {
 // that same client-side Blob/URL.createObjectURL pattern.
 function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   if (!run.has_report) {
-    return <span className="text-[10px] text-gray-600">—</span>
+    return <span className="text-[11px] text-gray-600">—</span>
   }
 
   async function downloadJson() {
@@ -201,7 +201,7 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   }
 
   const linkClass = 'flex items-center gap-1 text-gray-500 hover:text-brand-400 transition-colors'
-  const badgeClass = 'text-[9px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
+  const badgeClass = 'text-[10px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
   return (
     <span className="flex items-center gap-2">
       <a
@@ -232,7 +232,7 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
 // always lists every run of the package) — the badge is the only indicator.
 function ArchivedBadge() {
   return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 whitespace-nowrap">
+    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 whitespace-nowrap">
       Archived
     </span>
   )
@@ -408,7 +408,7 @@ export default function RunsStatusTable({
   const packageHasTokenData = runs.some((run) => run.token_usage_total?.total_tokens != null)
   return (
     <div className="space-y-1.5">
-      <nav className="flex gap-1 text-[11px]">
+      <nav className="flex gap-1 text-[12px]">
         {SUB_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -440,7 +440,7 @@ export default function RunsStatusTable({
               the cell (items 11-13) rather than wrapping freely. */}
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+              <tr className="bg-gray-800/50 text-[11px] uppercase tracking-wider text-gray-500">
                 <th className="text-left py-1.5 px-2">Run ID</th>
                 <th className="text-left py-1.5 px-2">Model</th>
                 <th className="text-left py-1.5 px-2">Status</th>
@@ -464,7 +464,7 @@ export default function RunsStatusTable({
                 >
                   {/* issue-local-042 (item 10): run ID never wraps to a
                       second row, unlike most other cells in this table. */}
-                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[12px] text-gray-300 font-mono whitespace-nowrap">
                     <span className="flex items-center gap-1.5">
                       {onSelectRun ? (
                         <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
@@ -478,7 +478,7 @@ export default function RunsStatusTable({
                   </td>
                   {/* issue-local-042 (item 13): model name and effort on
                       their own rows within the cell. */}
-                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono break-words">
+                  <td className="py-1.5 px-2 text-[12px] text-gray-200 font-mono break-words">
                     <span className="block">
                       {onSelectRun ? (
                         <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
@@ -489,27 +489,27 @@ export default function RunsStatusTable({
                       )}
                     </span>
                     {run.research_effort && (
-                      <span className="block text-[10px] text-gray-600">{run.research_effort}</span>
+                      <span className="block text-[11px] text-gray-600">{run.research_effort}</span>
                     )}
                     {/* issue-local-040: playbook provenance — a consolidated
                         (recommendation-synthesis) run started from inside a
                         playbook still carries its playbook_id/name. */}
                     {run.playbook_name && (
-                      <span className="block mt-0.5 text-[9px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap w-fit">
+                      <span className="block mt-0.5 text-[10px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap w-fit">
                         {run.run_origin === 'consolidated' ? 'consolidated · ' : 'playbook · '}
                         {run.playbook_name}
                       </span>
                     )}
                   </td>
                   <td className="py-1.5 px-2">
-                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
+                    <span className={clsx('text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
                       {run.generation_status}
                     </span>
                   </td>
                   <td className="py-1.5 px-2 whitespace-nowrap">
                     <MiniPhaseTrack run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-400 break-words">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-400 break-words">
                     {formatDuration(run.total_elapsed_s)}
                     {/* issue-local-041: per-run token total, alongside the
                         other run-level stat (duration) — applies at every
@@ -528,11 +528,11 @@ export default function RunsStatusTable({
                   </td>
                   {/* issue-local-042 (item 12): date on its own row, time on
                       the next, within the cell. */}
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-500 whitespace-nowrap">
                     <span className="block">{run.created_at.slice(0, 10)}</span>
                     <span className="block text-gray-600">{run.created_at.slice(11, 19)}</span>
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-500 break-words">
                     {run.created_by ?? '—'}
                   </td>
                   {showActions && (
@@ -549,7 +549,7 @@ export default function RunsStatusTable({
       {/* issue-local-041: package-wide token total, across every run
           regardless of the selected sub-tab. */}
       {packageHasTokenData && (
-        <p className="text-[10px] text-amber-600 text-right pr-1">
+        <p className="text-[11px] text-amber-600 text-right pr-1">
           Hunt package total: {packageTokenTotal.toLocaleString()} tokens across {runs.length} run
           {runs.length === 1 ? '' : 's'}
         </p>

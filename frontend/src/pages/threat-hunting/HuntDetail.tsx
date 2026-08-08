@@ -379,32 +379,24 @@ export default function HuntDetail({
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header — issue-local-042: title/description on their own row, every
-          action button on a second row below it (previously all inline on
-          one row, which crowded out the title on narrower viewports). */}
+      {/* Header — issue-local-042 (item 14): back button + HuntID/RunID
+          badges on the left, every action button top-right on the same row;
+          the title gets its own row below that (with the Archived badge,
+          since it qualifies the title itself), and the subtitle/description
+          its own row below the title. */}
       <div className="flex items-center gap-3">
         <button className="btn-ghost p-1.5" onClick={onBack}>
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-100 truncate flex items-center gap-2">
-            {pkg?.hunt_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{pkg.hunt_id_display}</span>
-            )}
-            {activeRun?.run_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
-            )}
-            {pkg?.name ?? '…'}
-            {pkg?.status === 'archived' && (
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
-                Archived
-              </span>
-            )}
-          </h1>
-          {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          {pkg?.hunt_id_display && (
+            <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{pkg.hunt_id_display}</span>
+          )}
+          {activeRun?.run_id_display && (
+            <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
+          )}
         </div>
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
         {/* issue-local-042: rename this package */}
         {isResearcher && (
           <button
@@ -476,7 +468,22 @@ export default function HuntDetail({
             Delete
           </button>
         )}
+        </div>
       </div>
+
+      {/* issue-local-042 (item 14): Title, its own row below the HuntID
+          badges — the Archived badge stays with it since it qualifies the
+          title itself. */}
+      <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
+        {pkg?.name ?? '…'}
+        {pkg?.status === 'archived' && (
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+            Archived
+          </span>
+        )}
+      </h1>
+      {/* Subtitle/description, its own row below the title. */}
+      {pkg?.description && <p className="text-sm text-gray-500">{pkg.description}</p>}
 
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
@@ -543,7 +550,16 @@ export default function HuntDetail({
                 a workflow phase). */}
             <button
               className={clsx(
-                'flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors font-medium',
+                // issue-local-042 (item 16): comparison-assessment-btn is a
+                // pure hook for a scoped light-theme contrast override (see
+                // index.css) — light-purple text on a light-tinted purple
+                // background (both fixed Tailwind purple, not theme-aware)
+                // was very hard to read once Light's page background went
+                // near-white. Other unrelated bg-purple-900/text-purple-300
+                // usages (e.g. the playbook-provenance badge) must not be
+                // affected, hence the dedicated class instead of overriding
+                // those Tailwind utilities globally.
+                'comparison-assessment-btn flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors font-medium',
                 activeTab === 'comparison'
                   ? 'bg-purple-900/30 border-purple-600/60 text-purple-200'
                   : 'bg-purple-900/10 border-purple-800/40 text-purple-300 hover:bg-purple-900/20 hover:border-purple-700/60',

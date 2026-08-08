@@ -230,19 +230,32 @@ function ThreatContextSection({ ctx }: { ctx: Record<string, unknown> }) {
   return (
     <div className="space-y-3">
       {summary && <ReportMarkdown>{summary}</ReportMarkdown>}
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        {actor && <div><span className="text-gray-500">Actor: </span><span className="text-gray-200">{actor}</span></div>}
-        {campaign && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-200">{campaign}</span></div>}
-        {confidence && (
-          <div>
-            <span className="text-gray-500">Confidence: </span>
-            <span className={clsx(
-              confidence === 'high' ? 'text-green-400' :
-              confidence === 'medium' ? 'text-amber-400' : 'text-gray-400'
-            )}>{confidence}</span>
-          </div>
-        )}
-      </div>
+      {/* issue-local-042 (item 19): Actor/Campaign/Confidence as their own
+          stat cards, matching AnalysisTab.tsx's mirror of this section. */}
+      {(actor || campaign || confidence) && (
+        <div className="grid grid-cols-3 gap-2">
+          {actor && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Actor</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={actor}>{actor}</p>
+            </div>
+          )}
+          {campaign && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Campaign</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={campaign}>{campaign}</p>
+            </div>
+          )}
+          {confidence && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Confidence</p>
+              <p className={clsx('text-base font-semibold capitalize', confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>
+                {confidence}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       {observations.length > 0 && (
         <ul className="space-y-1">
           {observations.map((obs, i) => (
@@ -285,15 +298,18 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
               </div>
             </div>
           )}
-          {/* issue-008-2C-B: suggested_actions — matches Analysis tab */}
+          {/* issue-008-2C-B: suggested_actions — matches Analysis tab.
+              issue-local-042 (item 5): a real bulleted list. */}
           {h.suggested_actions && h.suggested_actions.length > 0 && (
             <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-1">
               <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Suggested Actions</p>
-              {h.suggested_actions.map((action, i) => (
-                <p key={i} className="text-sm text-gray-400 font-mono leading-relaxed">
-                  {asDisplayText(action, ['action', 'text', 'description'])}
-                </p>
-              ))}
+              <ul className="list-disc list-outside pl-4 space-y-1">
+                {h.suggested_actions.map((action, i) => (
+                  <li key={i} className="text-sm text-gray-400 font-mono leading-relaxed marker:text-gray-600">
+                    {asDisplayText(action, ['action', 'text', 'description'])}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

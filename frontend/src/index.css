@@ -497,3 +497,21 @@
 :root[data-theme='redhunter'] .text-gray-500 { color: rgb(134 134 134); }
 :root[data-theme='redhunter'] .text-gray-600 { color: rgb(104 104 104); }
 :root[data-theme='redhunter'] .text-gray-700 { color: rgb(77 77 77); }
+
+/* issue-local-042 (item 16): the "Comparison Assessment" button uses fixed
+ * (not theme-aware) Tailwind purple, tuned for a dark page — light purple
+ * text on a lightly-tinted purple background reads fine on near-black, but
+ * once Light's page background is near-white the same colors wash out to
+ * "light purple on light purple," very hard to read. Scoped to the
+ * `.comparison-assessment-btn` hook (not the underlying `bg-purple-900/*`/
+ * `text-purple-*` utilities) so other unrelated usages of those same
+ * classes — e.g. RunsStatusTable.tsx's playbook-provenance badge — are
+ * unaffected. */
+:root[data-theme='light'] .comparison-assessment-btn.text-purple-200 { color: rgb(88 28 135); }
+:root[data-theme='light'] .comparison-assessment-btn.text-purple-300 { color: rgb(107 33 168); }
+:root[data-theme='light'] .comparison-assessment-btn.bg-purple-900\/30 { background-color: rgb(233 213 255 / 0.6); }
+:root[data-theme='light'] .comparison-assessment-btn.bg-purple-900\/10 { background-color: rgb(233 213 255 / 0.3); }
+:root[data-theme='light'] .comparison-assessment-btn.border-purple-600\/60 { border-color: rgb(147 51 234 / 0.5); }
+:root[data-theme='light'] .comparison-assessment-btn.border-purple-800\/40 { border-color: rgb(126 34 206 / 0.35); }
+:root[data-theme='light'] .comparison-assessment-btn.hover\:bg-purple-900\/20:hover { background-color: rgb(233 213 255 / 0.45); }
+:root[data-theme='light'] .comparison-assessment-btn.hover\:border-purple-700\/60:hover { border-color: rgb(126 34 206 / 0.5); }

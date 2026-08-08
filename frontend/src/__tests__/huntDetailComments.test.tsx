@@ -174,16 +174,21 @@ describe('HuntDetail Comments tab (issue-local-018)', () => {
 })
 
 describe('HuntDetail header HuntID/RunID (issue-local-018 follow-up)', () => {
-  it('shows both the HuntID and the active RunID in the main title, and nothing duplicated elsewhere', async () => {
+  it('shows both the HuntID and the active RunID in the header, and nothing duplicated elsewhere', async () => {
     vi.mocked(api.threatHunting.getPackage).mockResolvedValue(makePkg({ hunt_id_display: 'TH01' }))
     vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ run_id_display: 'TH01-X01' })])
     renderDetail()
 
-    const heading = await screen.findByRole('heading', { name: /Test Package/ })
-    expect(heading).toHaveTextContent('TH01')
-    expect(heading).toHaveTextContent('TH01-X01')
+    // issue-local-042 (item 14): the HuntID/RunID badges moved out of the
+    // <h1> itself, onto their own row above it (with the action buttons) —
+    // the title heading now holds only the package name (+ Archived badge).
+    await screen.findByRole('heading', { name: 'Test Package' })
+    expect(screen.getByText('TH01')).toBeInTheDocument()
+    // Also appears in the run selector/table below the header — this only
+    // asserts the header itself carries it, not that it's the sole instance.
+    expect(screen.getAllByText('TH01-X01').length).toBeGreaterThan(0)
     // The old standalone "Viewing" indicator card is gone — this info now
-    // lives only in the title, not duplicated elsewhere.
+    // lives only in the header, not duplicated elsewhere.
     expect(screen.queryByText('Viewing')).not.toBeInTheDocument()
   })
 })

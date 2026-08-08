@@ -30,6 +30,13 @@ vi.mock('@xyflow/react', () => {
     },
     Background: () => null,
     Controls: () => null,
+    // issue-local-042 follow-up: FitViewOnReady (rendered as a child of
+    // <ReactFlow>) now owns the initial scoped fitView call, via these two
+    // hooks instead of onInit directly — jsdom never actually measures node
+    // dimensions, so "initialized" is mocked true immediately (no real
+    // measurement to wait for in this test's stubbed rendering anyway).
+    useNodesInitialized: () => true,
+    useReactFlow: () => ({ fitView: fitViewMock }),
   }
 })
 
