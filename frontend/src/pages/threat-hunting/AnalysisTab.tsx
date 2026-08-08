@@ -2,7 +2,7 @@ import { useState, useMemo, lazy, Suspense } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw, Network,
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw, Network, Workflow,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -377,7 +377,7 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
+        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} onShowIocs={onShowIocs} />
       </div>
     )
   }
@@ -389,7 +389,7 @@ export default function AnalysisTab({
         <CheckCircle className="w-4 h-4 text-green-400" />
         <p className="text-sm font-semibold text-green-400">Hunt Package Approved</p>
       </div>
-      <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} readOnly />
+      <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} onShowIocs={onShowIocs} readOnly />
     </div>
   )
 }
@@ -400,11 +400,14 @@ function HuntingPackageDraft({
   record,
   pkgId,
   runId,
+  onShowIocs,
   readOnly = false,
 }: {
   record: THGenerationRecord
   pkgId: string
   runId?: string
+  /** Called when the user clicks "View IOCs" in the pipeline diagram. */
+  onShowIocs?: () => void
   readOnly?: boolean
 }) {
   const qc = useQueryClient()
@@ -450,6 +453,14 @@ function HuntingPackageDraft({
   // up space above the main summary.
   const [showChart, setShowChart] = useState(false)
 
+  // issue-local-041 follow-up: the pipeline diagram (with its per-node hover
+  // tooltips) previously only rendered while a run's status was 'running' —
+  // once a run reached awaiting_approval/completed it disappeared entirely,
+  // so the tooltips were unreachable during review, the state a run is in
+  // almost all the time. Collapsed by default, same as the relationship
+  // chart above, so the review screen doesn't default to two large diagrams.
+  const [showPipeline, setShowPipeline] = useState(false)
+
   const discardMut = useMutation({
     mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
       api.threatHunting.discardHypothesis(pkgId, runId ?? '', hypothesisId, discarded),
@@ -470,6 +481,22 @@ function HuntingPackageDraft({
     <div className="space-y-5">
       {/* Threat Context (main summary) */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
+
+      {/* issue-local-041 follow-up: pipeline diagram — collapsed by default,
+          right below the Threat Context summary. Gives review of a
+          finished/awaiting-approval run access to the same hover-tooltip
+          flowchart shown live while the run was 'running'. */}
+      <div className="space-y-3">
+        <button
+          onClick={() => setShowPipeline((v) => !v)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border-2 border-brand-600/60 bg-brand-900/20 text-brand-300 hover:bg-brand-900/30 hover:border-brand-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          <Workflow className="w-4 h-4" />
+          {showPipeline ? 'Hide Pipeline Diagram' : 'Show Pipeline Diagram'}
+          {showPipeline ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        </button>
+        {showPipeline && <WorkflowVisualizer genRecord={record} onShowIocs={onShowIocs} />}
+      </div>
 
       {/* issue-local-023: relationship overview chart — moved below the main
           summary, collapsed by default behind an emphasized toggle rather
