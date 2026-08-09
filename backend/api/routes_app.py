@@ -35,6 +35,7 @@ from backend.config.loader import (
     load_th_query_languages,
     load_th_report_formats,
     load_th_research_effort,
+    load_th_runs_table_page_size,
     load_watcher_max_events,
     resolve_logo_file,
     save_agent_show_subtasks,
@@ -55,6 +56,7 @@ from backend.config.loader import (
     save_th_query_languages,
     save_th_report_formats,
     save_th_research_effort,
+    save_th_runs_table_page_size,
     save_watcher_max_events,
 )
 from backend.llm.registry import list_provider_names
@@ -474,6 +476,37 @@ async def set_th_research_effort(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"th_research_effort": value}
+
+
+# ── Threat Hunting runs-table page size (issue-local-042 item 27) ───────────
+
+
+@router.get("/th-runs-table-page-size")
+async def get_th_runs_table_page_size() -> dict[str, int]:
+    """Return the configured RunsStatusTable page size (default 10)."""
+    return {"th_runs_table_page_size": load_th_runs_table_page_size()}
+
+
+@router.put("/th-runs-table-page-size")
+async def set_th_runs_table_page_size(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, int]:
+    """Set the RunsStatusTable page size.
+
+    Body: {"th_runs_table_page_size": <int in [5, 200]>}
+    """
+    value = body.get("th_runs_table_page_size")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'th_runs_table_page_size' as an integer",
+        )
+    try:
+        save_th_runs_table_page_size(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"th_runs_table_page_size": value}
 
 
 # ── Threat Hunting HuntID prefix (issue-local-018) ────────────────────────────

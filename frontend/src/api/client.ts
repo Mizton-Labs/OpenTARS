@@ -1058,6 +1058,16 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ th_research_effort: value }),
     }),
+  // issue-local-042 (item 27): RunsStatusTable page size — the per-package
+  // runs table embedded in the Hunt Packages list (Table view) and the one
+  // shown inside an open Hunt Package both paginate to this many rows.
+  getThRunsTablePageSize: () =>
+    request<{ th_runs_table_page_size: number }>('/app/th-runs-table-page-size'),
+  setThRunsTablePageSize: (value: number) =>
+    request<{ th_runs_table_page_size: number }>('/app/th-runs-table-page-size', {
+      method: 'PUT',
+      body: JSON.stringify({ th_runs_table_page_size: value }),
+    }),
   getThReportFormats: () => request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats'),
   setThReportFormats: (value: { pdf: boolean; markdown: boolean }) =>
     request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats', {
@@ -1466,6 +1476,12 @@ export const api = {
     listEvidence: (pkgId: string) =>
       request<THEvidenceItem[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence`,
+      ),
+    // issue-local-042 (item 23): rename an evidence item's label in place.
+    updateEvidence: (pkgId: string, itemId: string, body: { label: string }) =>
+      request<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
       ),
     deleteEvidence: (pkgId: string, itemId: string) =>
       request<void>(

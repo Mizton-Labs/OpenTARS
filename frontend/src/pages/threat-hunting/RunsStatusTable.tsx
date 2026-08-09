@@ -12,7 +12,7 @@
  * per-run extra fetches), unlike PipelineStepper's header usage which
  * reads a live `THGenerationRecord` for the single active run.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CheckCircle,
   XCircle,
@@ -24,6 +24,8 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -145,14 +147,18 @@ function IocCounts({ run }: { run: THuntPackageRun }) {
   const sanitized = run.sanitized_ioc_count ?? 0
   const removed = run.removed_ioc_count ?? 0
   return (
-    <span className="text-[11px]">
+    // issue-local-026: explicit total, always the sum shown alongside it —
+    // never a separately-computed number that could drift from these two.
+    // issue-local-042 (item 26): sanitized/removed/total must always stay
+    // on one line (superseding item 11's separate-row total) — whitespace-
+    // nowrap here, matched by the same class on the parent <td>, keeps the
+    // column growing to fit this text rather than letting it wrap.
+    <span className="text-[11px] whitespace-nowrap">
       <span className="text-green-400">{sanitized} sanitized</span>
       <span className="text-gray-600"> · </span>
       <span className="text-red-400">{removed} removed</span>
-      {/* issue-local-026: explicit total, always the sum shown alongside it —
-          never a separately-computed number that could drift from these two.
-          issue-local-042 (item 11): on its own row within the cell. */}
-      <span className="block text-gray-500">{sanitized + removed} total</span>
+      <span className="text-gray-600"> · </span>
+      <span className="text-gray-500">{sanitized + removed} total</span>
     </span>
   )
 }
@@ -179,6 +185,20 @@ function useDefaultModelLabel(): string | null {
   return provider.model ? `Default (${provider.model})` : `Default (${data.default_provider})`
 }
 
+// issue-local-042 (item 27): configured page size for this table — same
+// setting whether it's embedded per-package in the Hunt Packages list
+// (Table view) or shown for a single open package, so it's read here once
+// rather than threaded through as a prop by every call site. Shared
+// queryKey across instances, same dedupe reasoning as useDefaultModelLabel.
+function useRunsTablePageSize(): number {
+  const { data } = useQuery({
+    queryKey: ['th-runs-table-page-size'],
+    queryFn: () => api.getThRunsTablePageSize(),
+    staleTime: 60_000,
+  })
+  return data?.th_runs_table_page_size ?? 10
+}
+
 // issue-local-017: MD/PDF download directly via <a href> (the backend
 // serves those formats from GET routes); JSON has no server-side download
 // route (ReportPanel.tsx's exportJson builds it client-side from the
@@ -202,8 +222,11 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
 
   const linkClass = 'flex items-center gap-1 text-gray-500 hover:text-brand-400 transition-colors'
   const badgeClass = 'text-[10px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
+  // issue-local-042 (item 25): one download format per row (was all three
+  // packed onto a single line) — narrower and easier to scan, and lets the
+  // Report column itself shrink to fit instead of stretching the table.
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex flex-col items-start gap-1">
       <a
         href={api.threatHunting.downloadRunReportMarkdown(pkgId, run.id)}
         className={linkClass}
@@ -387,8 +410,14 @@ export default function RunsStatusTable({
   onSubTabChange?: (tab: RunSubTab) => void
 }) {
   const defaultModelLabel = useDefaultModelLabel()
+  const runsPageSize = useRunsTablePageSize()
   const [internalSubTab, setInternalSubTab] = useState<RunSubTab>('runs')
   const subTab = subTabProp ?? internalSubTab
+  // issue-local-042 (item 27): page within the current sub-tab's runs.
+  const [runsPage, setRunsPage] = useState(1)
+  useEffect(() => {
+    setRunsPage(1)
+  }, [subTab])
   function handleSubTabChange(tab: RunSubTab) {
     setInternalSubTab(tab)
     onSubTabChange?.(tab)
@@ -399,6 +428,12 @@ export default function RunsStatusTable({
   const counts: Record<RunSubTab, number> = { runs: 0, playbook: 0, consolidated: 0 }
   for (const run of runs) counts[subTabOf(run)] += 1
   const visibleRuns = runs.filter((run) => subTabOf(run) === subTab)
+  const totalRunsPages = Math.max(1, Math.ceil(visibleRuns.length / runsPageSize))
+  const clampedRunsPage = Math.min(runsPage, totalRunsPages)
+  const pagedVisibleRuns = visibleRuns.slice(
+    (clampedRunsPage - 1) * runsPageSize,
+    clampedRunsPage * runsPageSize,
+  )
   // issue-local-041: "a sum for the whole Hunt package" — every run in the
   // package, regardless of which sub-tab is currently selected.
   const packageTokenTotal = runs.reduce(
@@ -447,14 +482,14 @@ export default function RunsStatusTable({
                 <th className="text-left py-1.5 px-2">Workflow</th>
                 <th className="text-left py-1.5 px-2">Duration</th>
                 <th className="text-left py-1.5 px-2">IOCs</th>
-                <th className="text-left py-1.5 px-2">Report</th>
+                <th className="text-left py-1.5 px-2 w-px whitespace-nowrap">Report</th>
                 <th className="text-left py-1.5 px-2">Created</th>
                 <th className="text-left py-1.5 px-2">Created by</th>
                 {showActions && <th className="text-left py-1.5 px-2">Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {visibleRuns.map((run) => (
+              {pagedVisibleRuns.map((run) => (
                 <tr
                   key={run.id}
                   className={clsx(
@@ -520,10 +555,10 @@ export default function RunsStatusTable({
                       </span>
                     )}
                   </td>
-                  <td className="py-1.5 px-2">
+                  <td className="py-1.5 px-2 whitespace-nowrap">
                     <IocCounts run={run} />
                   </td>
-                  <td className="py-1.5 px-2">
+                  <td className="py-1.5 px-2 w-px">
                     <ReportLinks pkgId={pkgId} run={run} />
                   </td>
                   {/* issue-local-042 (item 12): date on its own row, time on
@@ -544,6 +579,34 @@ export default function RunsStatusTable({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* issue-local-042 (item 27): pagination footer for the current
+          sub-tab's runs — only shown once there's more than one page. */}
+      {totalRunsPages > 1 && (
+        <div className="flex items-center justify-center gap-3 text-[11px] text-gray-500">
+          <button
+            type="button"
+            className="btn btn-secondary px-1.5 py-0.5"
+            disabled={clampedRunsPage <= 1}
+            onClick={() => setRunsPage((p) => Math.max(1, p - 1))}
+            aria-label="Previous runs page"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <span>
+            Page {clampedRunsPage} of {totalRunsPages} · {visibleRuns.length} run
+            {visibleRuns.length === 1 ? '' : 's'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary px-1.5 py-0.5"
+            disabled={clampedRunsPage >= totalRunsPages}
+            onClick={() => setRunsPage((p) => Math.min(totalRunsPages, p + 1))}
+            aria-label="Next runs page"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
       {/* issue-local-041: package-wide token total, across every run

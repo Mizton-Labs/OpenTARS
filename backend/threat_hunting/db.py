@@ -2222,6 +2222,7 @@ async def clear_extracted_iocs(hunt_package_id: str, run_id: str | None = None) 
 async def update_evidence_item(
     item_id: str,
     *,
+    label: str | None = None,
     extracted_text: str | None = None,
     parser_used: str | None = None,
     parser_version: str | None = None,
@@ -2238,6 +2239,10 @@ async def update_evidence_item(
     issue-008-2B: used by intake_classifier to write fetched URL content
     back to pending evidence items created at upload time.
 
+    issue-local-042 (item 23): `label` also goes through here — the one
+    field a user can directly rename via the Evidence tab, as opposed to
+    the parser-derived fields above.
+
     Only non-None keyword arguments are written; others are left unchanged.
     """
     import json as _json
@@ -2245,6 +2250,9 @@ async def update_evidence_item(
     set_clauses: list[str] = []
     params: list[Any] = []
 
+    if label is not None:
+        set_clauses.append("label = ?")
+        params.append(label)
     if extracted_text is not None:
         set_clauses.append("extracted_text = ?")
         params.append(extracted_text)

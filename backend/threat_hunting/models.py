@@ -103,6 +103,10 @@ class AddWatcherBody(BaseModel):
     max_events: int = 500
 
 
+class UpdateEvidenceBody(BaseModel):
+    label: str
+
+
 # ── IOCs ──────────────────────────────────────────────────────────────────────
 
 

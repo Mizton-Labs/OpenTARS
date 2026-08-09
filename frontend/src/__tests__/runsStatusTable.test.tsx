@@ -15,6 +15,11 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       ...actual.api,
+      // issue-local-042 (item 27): RunsStatusTable now also fetches the
+      // configured page size — mocked explicitly (resolved, default value)
+      // so every existing test keeps seeing all its rows on one page
+      // unless it opts into a smaller size.
+      getThRunsTablePageSize: vi.fn().mockResolvedValue({ th_runs_table_page_size: 10 }),
       threatHunting: {
         ...actual.api.threatHunting,
         getRunReport: vi.fn(),
@@ -67,6 +72,7 @@ beforeEach(() => {
   vi.mocked(api.threatHunting.getRunReport).mockReset()
   vi.mocked(api.threatHunting.setRunArchived).mockReset().mockResolvedValue({ run_id: 'run-1', archived: true })
   vi.mocked(api.threatHunting.hardDeleteRun).mockReset().mockResolvedValue(undefined)
+  vi.mocked(api.getThRunsTablePageSize).mockReset().mockResolvedValue({ th_runs_table_page_size: 10 })
 })
 
 describe('RunsStatusTable', () => {
@@ -237,6 +243,18 @@ describe('RunsStatusTable', () => {
       render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: 12, removed_ioc_count: 3 })]} />)
       expect(screen.getByText(/15 total/)).toBeInTheDocument()
     })
+
+    it('keeps sanitized/removed/total on a single line (issue-local-042 item 26)', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ sanitized_ioc_count: 12, removed_ioc_count: 3 })]} />)
+      const total = screen.getByText(/15 total/)
+      // The three counts share one non-wrapping <span>, not separate
+      // block-level rows — total's parent is the same element wrapping
+      // "12 sanitized" and "3 removed", and it forbids wrapping.
+      const wrapper = total.parentElement!
+      expect(wrapper).toHaveClass('whitespace-nowrap')
+      expect(wrapper.textContent).toContain('12 sanitized')
+      expect(wrapper.textContent).toContain('3 removed')
+    })
   })
 
   describe('Created by column (issue-local-026)', () => {
@@ -283,6 +301,14 @@ describe('RunsStatusTable', () => {
       expect(md).toHaveAttribute('href', expect.stringContaining('/packages/pkg-1/runs/run-1/report/markdown'))
       expect(pdf).toHaveAttribute('href', expect.stringContaining('/packages/pkg-1/runs/run-1/report/pdf'))
       expect(screen.getByTitle('Download report as JSON')).toBeInTheDocument()
+    })
+
+    it('stacks MD/PDF/JSON one per row instead of packing them onto one line (issue-local-042 item 25)', () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun({ id: 'run-1', has_report: true })]} />)
+      const md = screen.getByTitle('Download report as Markdown')
+      const wrapper = md.parentElement!
+      expect(wrapper).toHaveClass('flex-col')
+      expect(wrapper).not.toHaveClass('items-center')
     })
 
     it('clicking the JSON link fetches the report and triggers a download', async () => {
@@ -471,6 +497,63 @@ describe('RunsStatusTable', () => {
       fireEvent.click(screen.getByRole('button', { name: /Playbook Runs/ }))
       expect(screen.getByText(/no playbook runs yet/i)).toBeInTheDocument()
       expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('pagination (issue-local-042 item 27)', () => {
+    const manyRuns = Array.from({ length: 5 }, (_, i) =>
+      makeRun({ id: `run-${i}`, llm_model: `model-${i}`, created_at: `2026-01-0${i + 1}T00:00:00Z` }),
+    )
+
+    it('shows no pagination footer when everything fits on one page', async () => {
+      render(<RunsStatusTable pkgId="pkg-1" runs={manyRuns} />)
+      await screen.findByText('model-0')
+      expect(screen.queryByLabelText('Next runs page')).not.toBeInTheDocument()
+    })
+
+    it('paginates to the configured page size and Next/Prev walk through the runs', async () => {
+      vi.mocked(api.getThRunsTablePageSize).mockResolvedValue({ th_runs_table_page_size: 2 })
+      render(<RunsStatusTable pkgId="pkg-1" runs={manyRuns} />)
+
+      expect(await screen.findByText('Page 1 of 3 · 5 runs')).toBeInTheDocument()
+      expect(screen.getByText('model-0')).toBeInTheDocument()
+      expect(screen.getByText('model-1')).toBeInTheDocument()
+      expect(screen.queryByText('model-2')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Previous runs page')).toBeDisabled()
+
+      fireEvent.click(screen.getByLabelText('Next runs page'))
+      expect(await screen.findByText('Page 2 of 3 · 5 runs')).toBeInTheDocument()
+      expect(screen.getByText('model-2')).toBeInTheDocument()
+      expect(screen.getByText('model-3')).toBeInTheDocument()
+      expect(screen.queryByText('model-0')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByLabelText('Next runs page'))
+      expect(await screen.findByText('Page 3 of 3 · 5 runs')).toBeInTheDocument()
+      expect(screen.getByText('model-4')).toBeInTheDocument()
+      expect(screen.getByLabelText('Next runs page')).toBeDisabled()
+
+      fireEvent.click(screen.getByLabelText('Previous runs page'))
+      expect(await screen.findByText('Page 2 of 3 · 5 runs')).toBeInTheDocument()
+    })
+
+    it('resets to page 1 when switching sub-tabs', async () => {
+      vi.mocked(api.getThRunsTablePageSize).mockResolvedValue({ th_runs_table_page_size: 1 })
+      const mixed = [
+        makeRun({ id: 'm1', llm_model: 'manual-1', run_origin: 'manual' }),
+        makeRun({ id: 'm2', llm_model: 'manual-2', run_origin: 'manual' }),
+        makeRun({ id: 'p1', llm_model: 'pb-1', run_origin: 'playbook' }),
+      ]
+      render(<RunsStatusTable pkgId="pkg-1" runs={mixed} />)
+
+      await screen.findByText('Page 1 of 2 · 2 runs')
+      fireEvent.click(screen.getByLabelText('Next runs page'))
+      expect(await screen.findByText('Page 2 of 2 · 2 runs')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /Playbook Runs/ }))
+      // A different sub-tab's own single run — page resets to 1 (page 2
+      // of the Runs sub-tab must not leak into Playbook Runs' pagination).
+      expect(screen.queryByText(/Page \d of \d/)).not.toBeInTheDocument()
+      expect(screen.getByText('pb-1')).toBeInTheDocument()
     })
   })
 })

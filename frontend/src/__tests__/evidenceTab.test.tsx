@@ -19,6 +19,7 @@ vi.mock('../api/client', async () => {
         ...actual.api.threatHunting,
         listEvidence: vi.fn(),
         deleteEvidence: vi.fn(),
+        updateEvidence: vi.fn(),
       },
     },
   }
@@ -62,19 +63,28 @@ function renderTab(isResearcher = true, hasRuns = true) {
 beforeEach(() => {
   vi.mocked(api.threatHunting.listEvidence).mockReset()
   vi.mocked(api.threatHunting.deleteEvidence).mockReset()
+  vi.mocked(api.threatHunting.updateEvidence).mockReset()
 })
 
 describe('EvidenceTab — empty state', () => {
-  it('shows an empty state when there are no evidence items', async () => {
+  it('shows an empty state (with an Add Item button) when there are no evidence items', async () => {
     vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
     renderTab()
     expect(await screen.findByText('No evidence items yet.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add item/i })).toBeInTheDocument()
+  })
+
+  it('hides the Add Item button for a non-researcher', async () => {
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+    renderTab(false)
+    await screen.findByText('No evidence items yet.')
+    expect(screen.queryByRole('button', { name: /add item/i })).not.toBeInTheDocument()
   })
 })
 
-describe('EvidenceTab — run not started yet (issue-local-040)', () => {
-  it('shows a notice + button to Analysis when evidence exists but no run has started', async () => {
-    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem()])
+describe('EvidenceTab — run not started yet (issue-local-040, item 23)', () => {
+  it('still shows the evidence list + Add Item, with a "not retrieved yet" content notice', async () => {
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem({ label: 'notes.txt' })])
     const onGoToAnalysis = vi.fn()
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
@@ -83,7 +93,11 @@ describe('EvidenceTab — run not started yet (issue-local-040)', () => {
       </QueryClientProvider>,
     )
 
-    expect(await screen.findByText(/run hasn't started yet/i)).toBeInTheDocument()
+    // The list itself is still visible, not replaced by the notice.
+    expect(await screen.findByText('notes.txt')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add item/i })).toBeInTheDocument()
+
+    expect(screen.getByText(/not retrieved yet/i)).toBeInTheDocument()
     const button = screen.getByRole('button', { name: /go to analysis/i })
     fireEvent.click(button)
     expect(onGoToAnalysis).toHaveBeenCalledTimes(1)
@@ -93,7 +107,38 @@ describe('EvidenceTab — run not started yet (issue-local-040)', () => {
     vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem()])
     renderTab(true, true)
     expect(await screen.findByText('Hello from the file.')).toBeInTheDocument()
-    expect(screen.queryByText(/run hasn't started yet/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/not retrieved yet/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('EvidenceTab — rename flow (issue-local-042 item 23)', () => {
+  it('renames an item via the pencil icon, calling updateEvidence and refreshing the list', async () => {
+    vi.mocked(api.threatHunting.listEvidence)
+      .mockResolvedValueOnce([makeItem({ id: 'a', label: 'first.txt' })])
+      .mockResolvedValueOnce([makeItem({ id: 'a', label: 'renamed.txt' })])
+    vi.mocked(api.threatHunting.updateEvidence).mockResolvedValue(makeItem({ id: 'a', label: 'renamed.txt' }))
+
+    renderTab()
+    await screen.findByText('first.txt')
+
+    fireEvent.click(screen.getByTitle('Rename'))
+    const input = screen.getByDisplayValue('first.txt')
+    fireEvent.change(input, { target: { value: 'renamed.txt' } })
+    fireEvent.click(screen.getByTitle('Save'))
+
+    await waitFor(() =>
+      expect(api.threatHunting.updateEvidence).toHaveBeenCalledWith('pkg-1', 'a', { label: 'renamed.txt' }),
+    )
+    // "renamed.txt" now appears in both the sidebar row and the content
+    // pane header once the list refetches — assert at least one shows it.
+    expect((await screen.findAllByText('renamed.txt')).length).toBeGreaterThan(0)
+  })
+
+  it('hides rename buttons for a non-researcher', async () => {
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([makeItem({ id: 'a', label: 'first.txt' })])
+    renderTab(false)
+    await screen.findByText('first.txt')
+    expect(screen.queryByTitle('Rename')).not.toBeInTheDocument()
   })
 })
 

@@ -788,6 +788,60 @@ def save_th_research_effort(value: str) -> None:
     _write_yaml(APP_CONFIG_PATH, data)
 
 
+# ── Threat Hunting runs-table page size (issue-local-042 item 27) ───────────
+# How many rows RunsStatusTable.tsx shows per page before paginating —
+# both the per-package runs table embedded in the Hunt Packages list
+# (Table view) and the one shown inside an open Hunt Package. Default 10,
+# bounded to keep pathological values from either page.
+
+_TH_RUNS_TABLE_PAGE_SIZE_DEFAULT = 10
+_TH_RUNS_TABLE_PAGE_SIZE_MIN = 5
+_TH_RUNS_TABLE_PAGE_SIZE_MAX = 200
+
+
+def load_th_runs_table_page_size() -> int:
+    """Return the configured RunsStatusTable page size (default 10)."""
+    raw = load_app_config().get("th_runs_table_page_size", _TH_RUNS_TABLE_PAGE_SIZE_DEFAULT)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "th_runs_table_page_size in %s is not an integer (%r); using default %d",
+            APP_CONFIG_PATH,
+            raw,
+            _TH_RUNS_TABLE_PAGE_SIZE_DEFAULT,
+        )
+        return _TH_RUNS_TABLE_PAGE_SIZE_DEFAULT
+    if n < _TH_RUNS_TABLE_PAGE_SIZE_MIN or n > _TH_RUNS_TABLE_PAGE_SIZE_MAX:
+        logger.warning(
+            "th_runs_table_page_size=%d is out of range [%d, %d]; using default %d",
+            n,
+            _TH_RUNS_TABLE_PAGE_SIZE_MIN,
+            _TH_RUNS_TABLE_PAGE_SIZE_MAX,
+            _TH_RUNS_TABLE_PAGE_SIZE_DEFAULT,
+        )
+        return _TH_RUNS_TABLE_PAGE_SIZE_DEFAULT
+    return n
+
+
+def save_th_runs_table_page_size(value: int) -> None:
+    """Persist the RunsStatusTable page size to application.yaml.
+
+    Raises ValueError when the value is not an integer in the supported
+    range. Booleans are rejected explicitly (bool is a subclass of int).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("th_runs_table_page_size must be an integer")
+    if value < _TH_RUNS_TABLE_PAGE_SIZE_MIN or value > _TH_RUNS_TABLE_PAGE_SIZE_MAX:
+        raise ValueError(
+            f"th_runs_table_page_size must be between "
+            f"{_TH_RUNS_TABLE_PAGE_SIZE_MIN} and {_TH_RUNS_TABLE_PAGE_SIZE_MAX}"
+        )
+    data = load_app_config()
+    data["th_runs_table_page_size"] = value
+    _write_yaml(APP_CONFIG_PATH, data)
+
+
 # ── Threat Hunting report formats (issue-local-004) ──────────────────────────
 # Which formats to generate when a hunt report is created.
 # Both default to True.

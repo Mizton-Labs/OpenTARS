@@ -64,6 +64,7 @@ from backend.threat_hunting.models import (
     HuntPackageCreate,
     HuntPackageOut,
     HuntPackageUpdate,
+    UpdateEvidenceBody,
 )
 from backend.threat_hunting.ssrf import SSRFError
 
@@ -427,6 +428,17 @@ async def list_evidence(pkg_id: str) -> list[dict]:
     """List all evidence items for a hunt package."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
     return await th_db.list_evidence_items(pkg_id)
+
+
+@router.patch("/packages/{pkg_id}/evidence/{item_id}", response_model=EvidenceItemOut)
+async def update_evidence(pkg_id: str, item_id: str, body: UpdateEvidenceBody) -> dict:
+    """Rename an evidence item's label (issue-local-042 item 23)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    item = _item_or_404(await th_db.get_evidence_item(item_id))
+    if item["hunt_package_id"] != pkg_id:
+        raise HTTPException(status_code=404, detail="Evidence item not found")
+    await th_db.update_evidence_item(item_id, label=body.label)
+    return await th_db.get_evidence_item(item_id)  # type: ignore[return-value]
 
 
 @router.delete("/packages/{pkg_id}/evidence/{item_id}", status_code=204)

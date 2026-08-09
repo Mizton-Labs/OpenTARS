@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy, Pencil } from 'lucide-react'
+import { ArrowLeft, Trash2, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy, Pencil } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob, type THQueryLanguages } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
-import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
 import EvidenceTab from './EvidenceTab'
 import ExecutionPanel from './ExecutionPanel'
@@ -56,7 +55,6 @@ export default function HuntDetail({
 }) {
   const { isResearcher, isAdmin } = useAuth()
   const qc = useQueryClient()
-  const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>(initialTab ?? 'evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
   // issue-local-041: which of the Runs/Playbook Runs/Consolidated Runs
@@ -428,12 +426,6 @@ export default function HuntDetail({
           >
             <RefreshCw className="w-4 h-4" />
             Re-run
-          </button>
-        )}
-        {isResearcher && (
-          <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
-            <Plus className="w-4 h-4" />
-            Add Item
           </button>
         )}
         {/* issue-local-038: clone this package */}
@@ -884,21 +876,6 @@ export default function HuntDetail({
       )}
       </>
       )}
-
-      {/* Add item modal */}
-      {showAddItem && (
-        <AddEvidenceModal
-          pkgId={pkgId}
-          onClose={() => setShowAddItem(false)}
-          onAdded={() => {
-            qc.invalidateQueries({ queryKey: ['th-evidence', pkgId] })
-            qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
-            qc.invalidateQueries({ queryKey: ['th-packages'] })
-            setShowAddItem(false)
-          }}
-        />
-      )}
-
 
       {/* issue-local-034: permanent-package-delete confirmation */}
       {showDeletePackageConfirm && (

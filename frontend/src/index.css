@@ -233,6 +233,19 @@
   animation: nodeGlow 1.5s ease-in-out infinite;
 }
 
+/* issue-local-042 (item 24): the pan/zoom/fit Controls buttons (React
+   Flow's own 26x26px default) were fiddly to click — node label font size
+   is tuned via inline styles in ReactFlowVisualizer.tsx instead, since
+   inline styles there already win over any class-based rule here. */
+.react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+}
+.react-flow__controls-button svg {
+  max-width: 16px;
+  max-height: 16px;
+}
+
 @layer components {
   .btn {
     @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium
