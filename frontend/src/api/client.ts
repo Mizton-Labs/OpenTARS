@@ -2518,6 +2518,16 @@ export interface THuntPackageRun extends THRunSummary {
   token_usage_total?: Partial<THTokenUsage> | null
 }
 
+/** issue-local-042: same shape as runConfigUtils.ts's IocCleaningOptions —
+ *  duplicated here (not imported) since that module already imports FROM
+ *  this file, and importing back would be circular. */
+export interface THIocCleaningOptions {
+  remove_noisy: boolean
+  remove_legit_domains: boolean
+  remove_cdn_ranges: boolean
+  remove_legit_services: boolean
+}
+
 /** issue-local-040: one model a Hunt Playbook fires a run for. */
 export interface THPlaybookModelEntry {
   provider_name?: string | null
@@ -2527,6 +2537,10 @@ export interface THPlaybookModelEntry {
    *  this playbook fires, same as a manual run/re-run with no explicit
    *  choice. */
   effort?: string | null
+  /** issue-local-042: per-model IOC cleaning override — only read when the
+   *  owning playbook's ioc_cleaning_scope is 'per_model'. */
+  ioc_mode?: 'tagging_only' | 'active_cleaning' | null
+  ioc_cleaning_options?: THIocCleaningOptions | null
 }
 
 /** issue-local-040: a named, reusable Hunt Playbook automation config. */
@@ -2540,6 +2554,13 @@ export interface THPlaybook {
   auto_compare_full: boolean
   auto_create_run_from_recommendations: boolean
   auto_generate_full_report: boolean
+  /** issue-local-042: IOC cleaning config for this playbook's own fired
+   *  runs — disabled (the default) means each run's run_config stays {},
+   *  same as every playbook before this existed. */
+  ioc_cleaning_enabled: boolean
+  ioc_cleaning_scope?: 'general' | 'per_model' | null
+  ioc_mode?: 'tagging_only' | 'active_cleaning' | null
+  ioc_cleaning_options?: THIocCleaningOptions | null
   created_at: string
   created_by: string | null
   updated_at: string
@@ -2555,6 +2576,10 @@ export type THPlaybookInput = Pick<THPlaybook, 'name' | 'models'> &
       | 'auto_compare_full'
       | 'auto_create_run_from_recommendations'
       | 'auto_generate_full_report'
+      | 'ioc_cleaning_enabled'
+      | 'ioc_cleaning_scope'
+      | 'ioc_mode'
+      | 'ioc_cleaning_options'
     >
   >
 

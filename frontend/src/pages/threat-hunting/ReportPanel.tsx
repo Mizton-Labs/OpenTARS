@@ -299,14 +299,17 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
             </div>
           )}
           {/* issue-008-2C-B: suggested_actions — matches Analysis tab.
-              issue-local-042 (item 5): a real bulleted list. */}
+              issue-local-042 (item 5): a real bulleted list; (item 22.3): each
+              action is code/a query, so it gets its own indented card. */}
           {h.suggested_actions && h.suggested_actions.length > 0 && (
             <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-1">
               <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Suggested Actions</p>
-              <ul className="list-disc list-outside pl-4 space-y-1">
+              <ul className="list-disc list-outside pl-4 space-y-2">
                 {h.suggested_actions.map((action, i) => (
-                  <li key={i} className="text-sm text-gray-400 font-mono leading-relaxed marker:text-gray-600">
-                    {asDisplayText(action, ['action', 'text', 'description'])}
+                  <li key={i} className="text-sm text-gray-400 leading-relaxed marker:text-gray-600">
+                    <pre className="mt-1 ml-2 bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                      {asDisplayText(action, ['action', 'text', 'description'])}
+                    </pre>
                   </li>
                 ))}
               </ul>

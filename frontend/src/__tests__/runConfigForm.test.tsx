@@ -118,6 +118,7 @@ describe('RunConfigForm', () => {
         auto_compare_full: false,
         auto_create_run_from_recommendations: false,
         auto_generate_full_report: false,
+        ioc_cleaning_enabled: false,
         created_at: '2026-01-01T00:00:00Z',
         created_by: null,
         updated_at: '2026-01-01T00:00:00Z',
@@ -149,6 +150,50 @@ describe('RunConfigForm', () => {
       const select = screen.getByText('Multi-model triage (2 models)').closest('select')!
       fireEvent.change(select, { target: { value: playbookChoiceValue('pb-1') } })
       expect(onModelChoiceChange).toHaveBeenCalledWith('playbook:pb-1')
+    })
+  })
+
+  // issue-local-042 (item 20 addendum): a playbook fires with its own
+  // model/effort/IOC-cleaning config, none of which this form can actually
+  // override — previously every field stayed fully interactive regardless,
+  // implying control that had zero effect on a playbook-triggered run.
+  describe('issue-local-042: disabled when a playbook is selected', () => {
+    it.each(['dialog', 'compact'] as const)(
+      'hides Effort/IOC Handling/Threat Intel/Query Languages and shows an explanatory note (%s variant)',
+      (variant) => {
+        render(
+          <RunConfigForm
+            {...baseProps({ variant, modelChoice: playbookChoiceValue('pb-1') })}
+          />,
+        )
+        expect(screen.queryByText('Research Effort')).not.toBeInTheDocument()
+        expect(screen.queryByText('Research effort:')).not.toBeInTheDocument()
+        expect(screen.queryByText('IOC Handling')).not.toBeInTheDocument()
+        expect(screen.queryByText('IOC handling:')).not.toBeInTheDocument()
+        expect(screen.queryByText(/Include Threat Intel analysis/)).not.toBeInTheDocument()
+        expect(screen.queryByText('Query Languages')).not.toBeInTheDocument()
+        expect(screen.queryByText('Query languages:')).not.toBeInTheDocument()
+        expect(screen.getByText(/has its own configuration/)).toBeInTheDocument()
+      },
+    )
+
+    it('shows every field again once switched back to a standalone model', () => {
+      const { rerender } = render(
+        <RunConfigForm {...baseProps({ variant: 'dialog', modelChoice: playbookChoiceValue('pb-1') })} />,
+      )
+      expect(screen.queryByText('Research Effort')).not.toBeInTheDocument()
+
+      rerender(<RunConfigForm {...baseProps({ variant: 'dialog', modelChoice: '0' })} />)
+      expect(screen.getByText('Research Effort')).toBeInTheDocument()
+      expect(screen.queryByText(/has its own configuration/)).not.toBeInTheDocument()
+    })
+
+    it('the model selector itself stays visible and interactive when a playbook is selected', () => {
+      render(
+        <RunConfigForm {...baseProps({ variant: 'dialog', modelChoice: playbookChoiceValue('pb-1') })} />,
+      )
+      expect(screen.getByText('Model')).toBeInTheDocument()
+      expect(document.querySelector('select')).not.toBeDisabled()
     })
   })
 })

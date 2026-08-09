@@ -272,7 +272,13 @@ export default function HuntDetail({
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       // A playbook job fires several runs, so there's no single one to jump
       // to — only a standalone-model run hands off its run_id.
-      if (!('run_ids' in data)) {
+      // issue-local-042 (item 21): switch to the matching sub-tab either
+      // way, so a re-run/playbook-fire's own view is what's shown next,
+      // regardless of which sub-tab happened to be selected before.
+      if ('run_ids' in data) {
+        handleRunSubTabChange('playbook')
+      } else {
+        setRunSubTab('runs')
         const newRunId = data.run_id ?? data.id
         if (newRunId) setActiveRunId(newRunId)
       }
@@ -785,8 +791,18 @@ export default function HuntDetail({
           pkgId={pkgId}
           runId={activeRunId}
           onRunCreated={(id) => {
+            // issue-local-042 (item 21): setRunSubTab directly (not
+            // handleRunSubTabChange) — that helper also jumps activeRunId
+            // to the sub-tab's current newest run from the (not-yet-
+            // refetched, so still stale) runs list, which would overwrite
+            // the just-created run's own id set explicitly right after.
+            setRunSubTab('runs')
             setActiveRunId(id)
             qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+            scrollToPhasesRow()
+          }}
+          onPlaybookStarted={() => {
+            handleRunSubTabChange('playbook')
             scrollToPhasesRow()
           }}
           onShowIocs={() => setActiveTab('iocs')}

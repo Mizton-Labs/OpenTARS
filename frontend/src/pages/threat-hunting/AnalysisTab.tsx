@@ -85,12 +85,19 @@ export default function AnalysisTab({
   pkgId,
   runId,
   onRunCreated,
+  onPlaybookStarted,
   onShowIocs,
   iocVerdictsDirty,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
+  /** issue-local-042 (item 21): a Playbook selection fires N runs at once —
+   *  no single run_id to hand to onRunCreated — so HuntDetail.tsx can still
+   *  switch the run-selector's sub-tab to "Playbook Runs" instead of
+   *  leaving it wherever it was, which otherwise looked like nothing had
+   *  started. */
+  onPlaybookStarted?: () => void
   /** Called when the user clicks "View IOCs" in the workflow timeline. */
   onShowIocs?: () => void
   /** issue-local-018 follow-up: true while there are staged-but-unapplied
@@ -191,7 +198,9 @@ export default function AnalysisTab({
       // THPlaybookJob) has no single run_id, since it fires several — just
       // refresh the runs list so they show up. A standalone-model run still
       // hands off its one run_id to the caller so it can jump straight to it.
-      if (!('run_ids' in data)) {
+      if ('run_ids' in data) {
+        onPlaybookStarted?.()
+      } else {
         const newRunId = data.run_id ?? data.id
         if (newRunId && onRunCreated) onRunCreated(newRunId)
       }
@@ -613,14 +622,18 @@ function HuntingPackageDraft({
                       </div>
                     </div>
                   )}
-                  {/* issue-006-E: suggested_actions — issue-local-042 (item 5): a real bulleted list */}
+                  {/* issue-006-E: suggested_actions — issue-local-042 (item 5): a real
+                      bulleted list; (item 22.3): each action is code/a query, so it gets
+                      its own indented card under its bullet, not bare font-mono text. */}
                   {h.suggested_actions && h.suggested_actions.length > 0 && (
                     <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-1">
                       <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Suggested Actions</p>
-                      <ul className="list-disc list-outside pl-4 space-y-1">
+                      <ul className="list-disc list-outside pl-4 space-y-2">
                         {h.suggested_actions.map((action, i) => (
-                          <li key={i} className="text-sm text-gray-400 font-mono leading-relaxed marker:text-gray-600">
-                            {asDisplayText(action, ['action', 'text', 'description'])}
+                          <li key={i} className="text-sm text-gray-400 leading-relaxed marker:text-gray-600">
+                            <pre className="mt-1 ml-2 bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                              {asDisplayText(action, ['action', 'text', 'description'])}
+                            </pre>
                           </li>
                         ))}
                       </ul>

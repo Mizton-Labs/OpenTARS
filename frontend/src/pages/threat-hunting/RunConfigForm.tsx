@@ -17,6 +17,7 @@ import type { THPlaybook, THQueryLanguages } from '../../api/client'
 import {
   EFFORT_OPTIONS,
   playbookChoiceValue,
+  playbookIdFromChoice,
   type IocCleaningOptions,
   type ModelOption,
 } from './runConfigUtils'
@@ -79,26 +80,17 @@ export default function RunConfigForm({
   queryLanguages: THQueryLanguages
   onQueryLanguagesChange: (updater: (prev: THQueryLanguages) => THQueryLanguages) => void
 }) {
+  // issue-local-042 (item 20 addendum): once a Playbook is chosen, every
+  // other field here is moot — the playbook fires with its OWN model list,
+  // effort, and (per item 20) IOC cleaning config, none of which this form
+  // can override. Previously these stayed fully interactive despite having
+  // zero effect on a playbook-triggered run, which read as "you can
+  // configure this" when nothing you touched here actually applied.
+  const isPlaybookSelected = !!playbookIdFromChoice(modelChoice)
+
   if (variant === 'compact') {
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 justify-center text-sm">
-          <span className="text-gray-500">Research effort:</span>
-          {EFFORT_OPTIONS.map((e) => (
-            <button
-              key={e}
-              onClick={() => onEffortChange(e)}
-              className={clsx(
-                'px-2.5 py-1 rounded text-sm border transition-colors capitalize',
-                effort === e
-                  ? 'border-brand-500 bg-brand-900/20 text-brand-300'
-                  : 'border-gray-700 text-gray-500 hover:border-gray-500',
-              )}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
         <div className="flex items-center gap-2 justify-center text-sm">
           <label htmlFor="th-model-select" className="text-gray-500 shrink-0">Model:</label>
           <select
@@ -128,68 +120,94 @@ export default function RunConfigForm({
             )}
           </select>
         </div>
-        <div className="flex flex-col items-center gap-1.5 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">IOC handling:</span>
-            {(['tagging_only', 'active_cleaning'] as const).map((m) => (
-              <button
-                key={m}
-                className={clsx(
-                  'px-2.5 py-1 rounded text-sm border transition-colors',
-                  iocMode === m
-                    ? 'border-brand-500 bg-brand-900/20 text-brand-300'
-                    : 'border-gray-700 text-gray-500 hover:border-gray-500',
-                )}
-                onClick={() => onIocModeChange(m)}
-              >
-                {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
-              </button>
-            ))}
-          </div>
-          {iocMode === 'active_cleaning' && (
-            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pt-1">
-              {CLEANING_TOGGLES.map(([key, shortLabel]) => (
-                <label key={key} className="flex items-center gap-1 text-[12px] text-gray-400">
+        {isPlaybookSelected ? (
+          <p className="text-[12px] text-gray-500 text-center italic">
+            This playbook has its own configuration (models, effort, IOC cleaning) — it can't be
+            overridden here.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 justify-center text-sm">
+              <span className="text-gray-500">Research effort:</span>
+              {EFFORT_OPTIONS.map((e) => (
+                <button
+                  key={e}
+                  onClick={() => onEffortChange(e)}
+                  className={clsx(
+                    'px-2.5 py-1 rounded text-sm border transition-colors capitalize',
+                    effort === e
+                      ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                      : 'border-gray-700 text-gray-500 hover:border-gray-500',
+                  )}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-col items-center gap-1.5 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">IOC handling:</span>
+                {(['tagging_only', 'active_cleaning'] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={clsx(
+                      'px-2.5 py-1 rounded text-sm border transition-colors',
+                      iocMode === m
+                        ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                        : 'border-gray-700 text-gray-500 hover:border-gray-500',
+                    )}
+                    onClick={() => onIocModeChange(m)}
+                  >
+                    {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
+                  </button>
+                ))}
+              </div>
+              {iocMode === 'active_cleaning' && (
+                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 pt-1">
+                  {CLEANING_TOGGLES.map(([key, shortLabel]) => (
+                    <label key={key} className="flex items-center gap-1 text-[12px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={iocCleaningOptions[key]}
+                        onChange={(e) =>
+                          onIocCleaningOptionsChange((prev) => ({ ...prev, [key]: e.target.checked }))
+                        }
+                        className="accent-brand-500"
+                      />
+                      {shortLabel}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <label className="flex items-center gap-2 justify-center text-[12px] text-gray-400">
+              <input
+                type="checkbox"
+                checked={includeThreatIntel}
+                onChange={(e) => onIncludeThreatIntelChange(e.target.checked)}
+                className="accent-brand-500"
+              />
+              Include Threat Intel analysis (preliminary + post-execution)
+            </label>
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[12px]">
+              <span className="text-gray-500">Query languages:</span>
+              {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
+                <label key={key} className="flex items-center gap-1 text-gray-400">
                   <input
                     type="checkbox"
-                    checked={iocCleaningOptions[key]}
-                    onChange={(e) =>
-                      onIocCleaningOptionsChange((prev) => ({ ...prev, [key]: e.target.checked }))
-                    }
+                    checked={queryLanguages[key]}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
+                    }}
                     className="accent-brand-500"
                   />
-                  {shortLabel}
+                  {label}
                 </label>
               ))}
             </div>
-          )}
-        </div>
-        <label className="flex items-center gap-2 justify-center text-[12px] text-gray-400">
-          <input
-            type="checkbox"
-            checked={includeThreatIntel}
-            onChange={(e) => onIncludeThreatIntelChange(e.target.checked)}
-            className="accent-brand-500"
-          />
-          Include Threat Intel analysis (preliminary + post-execution)
-        </label>
-        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[12px]">
-          <span className="text-gray-500">Query languages:</span>
-          {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
-            <label key={key} className="flex items-center gap-1 text-gray-400">
-              <input
-                type="checkbox"
-                checked={queryLanguages[key]}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
-                }}
-                className="accent-brand-500"
-              />
-              {label}
-            </label>
-          ))}
-        </div>
+          </>
+        )}
       </div>
     )
   }
@@ -228,96 +246,105 @@ export default function RunConfigForm({
         </div>
       </div>
 
-      {/* Effort pills */}
-      <div className="space-y-1.5">
-        <label className="block text-sm text-gray-400">Research Effort</label>
-        <div className="flex gap-2">
-          {EFFORT_OPTIONS.map((e) => (
-            <button
-              key={e}
-              className={clsx(
-                'flex-1 py-1.5 text-sm rounded border transition-colors',
-                effort === e
-                  ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
-                  : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
-              )}
-              onClick={() => onEffortChange(e)}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* IOC handling mode */}
-      <div className="space-y-1.5">
-        <label className="block text-sm text-gray-400">IOC Handling</label>
-        <div className="flex gap-2">
-          {(['tagging_only', 'active_cleaning'] as const).map((m) => (
-            <button
-              key={m}
-              className={clsx(
-                'flex-1 py-1.5 text-[12px] rounded border transition-colors',
-                iocMode === m
-                  ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
-                  : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
-              )}
-              onClick={() => onIocModeChange(m)}
-            >
-              {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
-            </button>
-          ))}
-        </div>
-        {iocMode === 'active_cleaning' && (
-          <div className="space-y-1 pt-1">
-            {CLEANING_TOGGLES.map(([key, , longLabel]) => (
-              <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={iocCleaningOptions[key]}
-                  onChange={(e) =>
-                    onIocCleaningOptionsChange((prev) => ({ ...prev, [key]: e.target.checked }))
-                  }
-                  className="accent-brand-500"
-                />
-                {longLabel}
-              </label>
-            ))}
+      {isPlaybookSelected ? (
+        <p className="text-[12px] text-gray-500 italic border-t border-gray-800 pt-3">
+          This playbook has its own configuration (models, effort, IOC cleaning) — it can't be
+          overridden here.
+        </p>
+      ) : (
+        <>
+          {/* Effort pills */}
+          <div className="space-y-1.5">
+            <label className="block text-sm text-gray-400">Research Effort</label>
+            <div className="flex gap-2">
+              {EFFORT_OPTIONS.map((e) => (
+                <button
+                  key={e}
+                  className={clsx(
+                    'flex-1 py-1.5 text-sm rounded border transition-colors',
+                    effort === e
+                      ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
+                      : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
+                  )}
+                  onClick={() => onEffortChange(e)}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Threat Intel inclusion */}
-      <label className="flex items-center gap-2 text-[12px] text-gray-400">
-        <input
-          type="checkbox"
-          checked={includeThreatIntel}
-          onChange={(e) => onIncludeThreatIntelChange(e.target.checked)}
-          className="accent-brand-500"
-        />
-        Include Threat Intel analysis (preliminary + post-execution)
-      </label>
+          {/* IOC handling mode */}
+          <div className="space-y-1.5">
+            <label className="block text-sm text-gray-400">IOC Handling</label>
+            <div className="flex gap-2">
+              {(['tagging_only', 'active_cleaning'] as const).map((m) => (
+                <button
+                  key={m}
+                  className={clsx(
+                    'flex-1 py-1.5 text-[12px] rounded border transition-colors',
+                    iocMode === m
+                      ? 'bg-brand-900/40 text-brand-300 border-brand-700/60'
+                      : 'bg-gray-800/50 text-gray-500 border-gray-700/40 hover:text-gray-300',
+                  )}
+                  onClick={() => onIocModeChange(m)}
+                >
+                  {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
+                </button>
+              ))}
+            </div>
+            {iocMode === 'active_cleaning' && (
+              <div className="space-y-1 pt-1">
+                {CLEANING_TOGGLES.map(([key, , longLabel]) => (
+                  <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={iocCleaningOptions[key]}
+                      onChange={(e) =>
+                        onIocCleaningOptionsChange((prev) => ({ ...prev, [key]: e.target.checked }))
+                      }
+                      className="accent-brand-500"
+                    />
+                    {longLabel}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
 
-      {/* Query languages (issue-local-041) */}
-      <div className="space-y-1.5">
-        <label className="block text-sm text-gray-400">Query Languages</label>
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
-            <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
-              <input
-                type="checkbox"
-                checked={queryLanguages[key]}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
-                }}
-                className="accent-brand-500"
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-      </div>
+          {/* Threat Intel inclusion */}
+          <label className="flex items-center gap-2 text-[12px] text-gray-400">
+            <input
+              type="checkbox"
+              checked={includeThreatIntel}
+              onChange={(e) => onIncludeThreatIntelChange(e.target.checked)}
+              className="accent-brand-500"
+            />
+            Include Threat Intel analysis (preliminary + post-execution)
+          </label>
+
+          {/* Query languages (issue-local-041) */}
+          <div className="space-y-1.5">
+            <label className="block text-sm text-gray-400">Query Languages</label>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
+                <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={queryLanguages[key]}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
+                    }}
+                    className="accent-brand-500"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

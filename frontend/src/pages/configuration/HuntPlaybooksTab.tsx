@@ -16,8 +16,19 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Pencil, Copy, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api, type THPlaybook, type THPlaybookInput, type THPlaybookModelEntry } from '../../api/client'
-import { modelOptionsFromProviders, EFFORT_OPTIONS } from '../threat-hunting/runConfigUtils'
+import {
+  api,
+  type THPlaybook,
+  type THPlaybookInput,
+  type THPlaybookModelEntry,
+  type THIocCleaningOptions,
+} from '../../api/client'
+import {
+  modelOptionsFromProviders,
+  EFFORT_OPTIONS,
+  DEFAULT_IOC_MODE,
+  DEFAULT_IOC_CLEANING_OPTIONS,
+} from '../threat-hunting/runConfigUtils'
 import Toggle from '../../components/Toggle'
 
 const EMPTY_FORM: THPlaybookInput = {
@@ -29,6 +40,75 @@ const EMPTY_FORM: THPlaybookInput = {
   auto_compare_full: false,
   auto_create_run_from_recommendations: false,
   auto_generate_full_report: false,
+  // issue-local-042: disabled by default — a fresh/never-touched playbook
+  // keeps run_config={} on its fired runs, exactly the pre-existing default.
+  ioc_cleaning_enabled: false,
+  ioc_cleaning_scope: null,
+  ioc_mode: null,
+  ioc_cleaning_options: null,
+}
+
+// issue-local-042: IOC mode/cleaning-toggle mini-form, reused for both the
+// playbook-level ("General") config and each model row's own ("Per model")
+// override — same fields RunConfigForm.tsx's IOC Handling section shows for
+// a manual run, just laid out compactly for a form/table row.
+function IocModeEditor({
+  mode,
+  onModeChange,
+  options,
+  onOptionsChange,
+}: {
+  mode: 'tagging_only' | 'active_cleaning'
+  onModeChange: (mode: 'tagging_only' | 'active_cleaning') => void
+  options: THIocCleaningOptions
+  onOptionsChange: (updater: (prev: THIocCleaningOptions) => THIocCleaningOptions) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        {(['tagging_only', 'active_cleaning'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onModeChange(m)}
+            className={clsx(
+              'text-[11px] px-2 py-1 rounded border transition-colors',
+              mode === m
+                ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                : 'border-gray-700 text-gray-500 hover:border-gray-500',
+            )}
+          >
+            {m === 'tagging_only' ? 'Tagging only' : 'Active cleaning'}
+          </button>
+        ))}
+      </div>
+      {mode === 'active_cleaning' && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 pl-1">
+          {(
+            [
+              ['remove_noisy', 'Noisy'],
+              ['remove_legit_domains', 'Legit domains'],
+              ['remove_cdn_ranges', 'CDN ranges'],
+              ['remove_legit_services', 'Legit services'],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-1 text-[11px] text-gray-400">
+              <input
+                type="checkbox"
+                checked={options[key]}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  onOptionsChange((prev) => ({ ...prev, [key]: checked }))
+                }}
+                className="accent-brand-500"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function modelKey(m: THPlaybookModelEntry): string {
@@ -78,6 +158,29 @@ function PlaybookForm({
       models: f.models.map((m) => (modelKey(m) === key ? { ...m, effort } : m)),
     }))
   }
+  // issue-local-042: per-model IOC cleaning override — only meaningful (and
+  // only shown) when ioc_cleaning_scope is 'per_model'.
+  const setModelIoc = (
+    provider: string,
+    model: string,
+    updater: (prev: { ioc_mode: 'tagging_only' | 'active_cleaning'; ioc_cleaning_options: THIocCleaningOptions }) => {
+      ioc_mode: 'tagging_only' | 'active_cleaning'
+      ioc_cleaning_options: THIocCleaningOptions
+    },
+  ) => {
+    const key = modelKey({ provider_name: provider, model_name: model })
+    setForm((f) => ({
+      ...f,
+      models: f.models.map((m) => {
+        if (modelKey(m) !== key) return m
+        const next = updater({
+          ioc_mode: m.ioc_mode ?? DEFAULT_IOC_MODE,
+          ioc_cleaning_options: m.ioc_cleaning_options ?? DEFAULT_IOC_CLEANING_OPTIONS,
+        })
+        return { ...m, ...next }
+      }),
+    }))
+  }
 
   const valid = form.name.trim() !== '' && form.models.length > 0
 
@@ -113,30 +216,52 @@ function PlaybookForm({
               const selected = selectedKeys.has(key)
               const entry = form.models.find((m) => modelKey(m) === key)
               return (
-                <div key={key} className="flex items-center gap-2 py-0.5">
-                  <Toggle checked={selected} onChange={() => toggleModel(opt.provider, opt.model)} />
-                  <span className="font-mono text-xs text-gray-300 flex-1">{opt.provider} · {opt.model}</span>
-                  {/* issue-local-042: per-model effort override — reuses the
-                      same low/medium/high options as a manual run's Research
-                      effort picker. Unset = configured default at run time. */}
-                  {selected && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      {EFFORT_OPTIONS.map((e) => (
-                        <button
-                          key={e}
-                          type="button"
-                          onClick={() => setModelEffort(opt.provider, opt.model, entry?.effort === e ? null : e)}
-                          className={clsx(
-                            'text-[10px] px-1.5 py-0.5 rounded border capitalize transition-colors',
-                            entry?.effort === e
-                              ? 'bg-brand-900/40 border-brand-600 text-brand-200'
-                              : 'bg-transparent border-gray-700 text-gray-500 hover:text-gray-300',
-                          )}
-                          title={entry?.effort === e ? `Click to unset — use the configured default` : `Use ${e} effort for this model`}
-                        >
-                          {e}
-                        </button>
-                      ))}
+                <div key={key} className="py-0.5 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Toggle checked={selected} onChange={() => toggleModel(opt.provider, opt.model)} />
+                    <span className="font-mono text-xs text-gray-300 flex-1">{opt.provider} · {opt.model}</span>
+                    {/* issue-local-042: per-model effort override — reuses the
+                        same low/medium/high options as a manual run's Research
+                        effort picker. Unset = configured default at run time. */}
+                    {selected && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {EFFORT_OPTIONS.map((e) => (
+                          <button
+                            key={e}
+                            type="button"
+                            onClick={() => setModelEffort(opt.provider, opt.model, entry?.effort === e ? null : e)}
+                            className={clsx(
+                              'text-[10px] px-1.5 py-0.5 rounded border capitalize transition-colors',
+                              entry?.effort === e
+                                ? 'bg-brand-900/40 border-brand-600 text-brand-200'
+                                : 'bg-transparent border-gray-700 text-gray-500 hover:text-gray-300',
+                            )}
+                            title={entry?.effort === e ? `Click to unset — use the configured default` : `Use ${e} effort for this model`}
+                          >
+                            {e}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* issue-local-042: per-model IOC cleaning override — only
+                      shown once IOC Cleaning below is enabled with the
+                      Per-model scope. */}
+                  {selected && form.ioc_cleaning_enabled && form.ioc_cleaning_scope === 'per_model' && (
+                    <div className="ml-6 pl-2 border-l border-gray-800">
+                      <IocModeEditor
+                        mode={entry?.ioc_mode ?? DEFAULT_IOC_MODE}
+                        onModeChange={(mode) =>
+                          setModelIoc(opt.provider, opt.model, (prev) => ({ ...prev, ioc_mode: mode }))
+                        }
+                        options={entry?.ioc_cleaning_options ?? DEFAULT_IOC_CLEANING_OPTIONS}
+                        onOptionsChange={(updater) =>
+                          setModelIoc(opt.provider, opt.model, (prev) => ({
+                            ...prev,
+                            ioc_cleaning_options: updater(prev.ioc_cleaning_options),
+                          }))
+                        }
+                      />
                     </div>
                   )}
                 </div>
@@ -223,6 +348,70 @@ function PlaybookForm({
         )}
       </div>
 
+      {/* issue-local-042 (item 20): IOC cleaning config for this playbook's
+          fired runs — previously every playbook run always used
+          run_config={}, silently ignoring the app-wide default with no way
+          for a playbook to say otherwise. Disabled by default, so an
+          untouched playbook keeps that exact prior behavior. */}
+      <div className="space-y-2 border-t border-gray-800 pt-3">
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <Toggle
+            checked={form.ioc_cleaning_enabled ?? false}
+            onChange={(v) =>
+              setForm((f) => ({
+                ...f,
+                ioc_cleaning_enabled: v,
+                ioc_cleaning_scope: v ? (f.ioc_cleaning_scope ?? 'general') : null,
+              }))
+            }
+          />
+          <span>Configure IOC cleaning for this playbook's runs</span>
+        </div>
+        <p className="text-[11px] text-gray-500 pl-6">
+          Off (default): each fired run uses the app-wide configured default, same as before this existed.
+        </p>
+
+        {form.ioc_cleaning_enabled && (
+          <div className="ml-6 space-y-2 border-l border-gray-800 pl-3">
+            <div className="flex items-center gap-1.5">
+              {(['general', 'per_model'] as const).map((scope) => (
+                <button
+                  key={scope}
+                  type="button"
+                  onClick={() => set('ioc_cleaning_scope', scope)}
+                  className={clsx(
+                    'text-[11px] px-2 py-1 rounded border transition-colors',
+                    form.ioc_cleaning_scope === scope
+                      ? 'border-brand-500 bg-brand-900/20 text-brand-300'
+                      : 'border-gray-700 text-gray-500 hover:border-gray-500',
+                  )}
+                >
+                  {scope === 'general' ? 'General (whole playbook)' : 'Per model'}
+                </button>
+              ))}
+            </div>
+            {form.ioc_cleaning_scope === 'general' && (
+              <IocModeEditor
+                mode={form.ioc_mode ?? DEFAULT_IOC_MODE}
+                onModeChange={(mode) => set('ioc_mode', mode)}
+                options={form.ioc_cleaning_options ?? DEFAULT_IOC_CLEANING_OPTIONS}
+                onOptionsChange={(updater) =>
+                  setForm((f) => ({
+                    ...f,
+                    ioc_cleaning_options: updater(f.ioc_cleaning_options ?? DEFAULT_IOC_CLEANING_OPTIONS),
+                  }))
+                }
+              />
+            )}
+            {form.ioc_cleaning_scope === 'per_model' && (
+              <p className="text-[11px] text-gray-500">
+                Set per model above, in the Models to run list.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2 pt-1">
         <button
           className="btn-primary text-xs"
@@ -258,6 +447,9 @@ function PlaybookRow({
   if (playbook.auto_compare_full) autoBits.push('auto full compare')
   if (playbook.auto_create_run_from_recommendations) autoBits.push('auto recommendation run')
   if (playbook.auto_generate_full_report) autoBits.push('auto consolidated report')
+  if (playbook.ioc_cleaning_enabled) {
+    autoBits.push(`IOC cleaning: ${playbook.ioc_cleaning_scope === 'per_model' ? 'per model' : 'general'}`)
+  }
 
   return (
     <div className="border border-gray-700 rounded-lg p-3 space-y-1.5">
@@ -385,6 +577,10 @@ export default function HuntPlaybooksTab() {
                   auto_create_run_from_recommendations:
                     editingPlaybook.auto_create_run_from_recommendations,
                   auto_generate_full_report: editingPlaybook.auto_generate_full_report,
+                  ioc_cleaning_enabled: editingPlaybook.ioc_cleaning_enabled,
+                  ioc_cleaning_scope: editingPlaybook.ioc_cleaning_scope,
+                  ioc_mode: editingPlaybook.ioc_mode,
+                  ioc_cleaning_options: editingPlaybook.ioc_cleaning_options,
                 }}
                 onSave={(body) => updateMut.mutate({ id: playbook.id, body })}
                 onCancel={() => setEditingId(null)}

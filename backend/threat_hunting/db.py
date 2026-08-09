@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 15
+_TH_SCHEMA_VERSION = 16
 
 
 def _utc_now_iso() -> str:
@@ -300,6 +300,10 @@ CREATE TABLE IF NOT EXISTS hunt_playbooks (
     auto_compare_full                     INTEGER NOT NULL DEFAULT 0,
     auto_create_run_from_recommendations  INTEGER NOT NULL DEFAULT 0,
     auto_generate_full_report             INTEGER NOT NULL DEFAULT 0,
+    ioc_cleaning_enabled                  INTEGER NOT NULL DEFAULT 0,
+    ioc_cleaning_scope                    TEXT,
+    ioc_mode                              TEXT,
+    ioc_cleaning_options                  TEXT,
     created_at                            TEXT NOT NULL,
     created_by                            TEXT,
     updated_at                            TEXT NOT NULL
@@ -643,6 +647,30 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         except Exception:
             pass
         logger.info("Migrated threat_hunting.db to schema v15 (added evidence_items.scope_run_id)")
+    if current_version < 16:
+        # v16 (issue-local-042): a Hunt Playbook can now configure IOC
+        # cleaning itself — previously every playbook-fired run always used
+        # run_config={}, silently ignoring the app's configured default and
+        # giving the user no way to control it per playbook. Disabled
+        # (ioc_cleaning_enabled=0) is the default and matches the exact
+        # previous behavior (run_config stays {}) for every existing
+        # playbook. ioc_cleaning_scope ('general'|'per_model') picks between
+        # a single ioc_mode/ioc_cleaning_options for the whole playbook (this
+        # table) or one per model (stored on each entry inside the existing
+        # `models` JSON column — no schema change needed there).
+        for table, col_def in (
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_enabled INTEGER NOT NULL DEFAULT 0"),
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_scope TEXT"),
+            ("hunt_playbooks", "ADD COLUMN ioc_mode TEXT"),
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_options TEXT"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v16 (added hunt_playbooks IOC cleaning config)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -2591,6 +2619,9 @@ def _validate_playbook_models(models: list[dict[str, Any]]) -> None:
             raise ValueError("each model entry needs at least a model_name")
 
 
+_PLAYBOOK_IOC_CLEANING_SCOPES = frozenset({"general", "per_model"})
+
+
 def _decode_playbook_row(d: dict[str, Any]) -> dict[str, Any]:
     import json as _json
 
@@ -2600,7 +2631,25 @@ def _decode_playbook_row(d: dict[str, Any]) -> dict[str, Any]:
         d["models"] = []
     for col in _PLAYBOOK_TOGGLE_COLUMNS:
         d[col] = bool(d.get(col))
+    d["ioc_cleaning_enabled"] = bool(d.get("ioc_cleaning_enabled"))
+    try:
+        d["ioc_cleaning_options"] = (
+            _json.loads(d["ioc_cleaning_options"]) if d.get("ioc_cleaning_options") else None
+        )
+    except Exception:
+        d["ioc_cleaning_options"] = None
     return d
+
+
+def _validate_playbook_ioc_cleaning(
+    ioc_cleaning_enabled: bool,
+    ioc_cleaning_scope: str | None,
+) -> None:
+    if ioc_cleaning_enabled and ioc_cleaning_scope not in _PLAYBOOK_IOC_CLEANING_SCOPES:
+        raise ValueError(
+            f"ioc_cleaning_scope must be one of {sorted(_PLAYBOOK_IOC_CLEANING_SCOPES)} "
+            "when ioc_cleaning_enabled is true"
+        )
 
 
 async def create_playbook(
@@ -2613,6 +2662,13 @@ async def create_playbook(
     auto_compare_full: bool = False,
     auto_create_run_from_recommendations: bool = False,
     auto_generate_full_report: bool = False,
+    # issue-local-042: IOC cleaning config — disabled (the default) means a
+    # fired run's run_config stays {} exactly as before this existed, so
+    # every pre-existing playbook keeps its old behavior untouched.
+    ioc_cleaning_enabled: bool = False,
+    ioc_cleaning_scope: str | None = None,
+    ioc_mode: str | None = None,
+    ioc_cleaning_options: dict[str, bool] | None = None,
     created_by: str | None = None,
 ) -> dict[str, Any]:
     import json as _json
@@ -2620,6 +2676,7 @@ async def create_playbook(
     if not name or not name.strip():
         raise ValueError("name must not be empty")
     _validate_playbook_models(models)
+    _validate_playbook_ioc_cleaning(ioc_cleaning_enabled, ioc_cleaning_scope)
 
     playbook_id = _new_id()
     now = _utc_now_iso()
@@ -2629,8 +2686,9 @@ async def create_playbook(
                (id, name, models, auto_approve_analysis, auto_run_comparison,
                 auto_compare_preliminary, auto_compare_full,
                 auto_create_run_from_recommendations, auto_generate_full_report,
+                ioc_cleaning_enabled, ioc_cleaning_scope, ioc_mode, ioc_cleaning_options,
                 created_at, created_by, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 playbook_id,
                 name.strip(),
@@ -2641,6 +2699,10 @@ async def create_playbook(
                 int(auto_compare_full),
                 int(auto_create_run_from_recommendations),
                 int(auto_generate_full_report),
+                int(ioc_cleaning_enabled),
+                ioc_cleaning_scope if ioc_cleaning_enabled else None,
+                ioc_mode if ioc_cleaning_enabled else None,
+                _json.dumps(ioc_cleaning_options) if ioc_cleaning_enabled and ioc_cleaning_options else None,
                 now,
                 created_by,
                 now,
@@ -2679,6 +2741,15 @@ async def update_playbook(
     auto_compare_full: bool | None = None,
     auto_create_run_from_recommendations: bool | None = None,
     auto_generate_full_report: bool | None = None,
+    # issue-local-042: like the toggles above, None means "leave unchanged" —
+    # the caller (PUT /playbooks/{id}) always sends its full current IOC
+    # cleaning state together when the user edits any part of it, the same
+    # all-or-nothing granularity `models` already uses, so there's no need
+    # to support patching e.g. just ioc_mode while leaving scope untouched.
+    ioc_cleaning_enabled: bool | None = None,
+    ioc_cleaning_scope: str | None = None,
+    ioc_mode: str | None = None,
+    ioc_cleaning_options: dict[str, bool] | None = None,
 ) -> dict[str, Any] | None:
     import json as _json
 
@@ -2705,6 +2776,17 @@ async def update_playbook(
         col: (int(value) if value is not None else int(existing[col]))
         for col, value in toggles.items()
     }
+    new_ioc_cleaning_enabled = (
+        ioc_cleaning_enabled if ioc_cleaning_enabled is not None else existing["ioc_cleaning_enabled"]
+    )
+    new_ioc_cleaning_scope = (
+        ioc_cleaning_scope if ioc_cleaning_scope is not None else existing.get("ioc_cleaning_scope")
+    )
+    _validate_playbook_ioc_cleaning(new_ioc_cleaning_enabled, new_ioc_cleaning_scope)
+    new_ioc_mode = ioc_mode if ioc_mode is not None else existing.get("ioc_mode")
+    new_ioc_cleaning_options = (
+        ioc_cleaning_options if ioc_cleaning_options is not None else existing.get("ioc_cleaning_options")
+    )
     now = _utc_now_iso()
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
@@ -2713,6 +2795,7 @@ async def update_playbook(
                name=?, models=?, auto_approve_analysis=?, auto_run_comparison=?,
                auto_compare_preliminary=?, auto_compare_full=?,
                auto_create_run_from_recommendations=?, auto_generate_full_report=?,
+               ioc_cleaning_enabled=?, ioc_cleaning_scope=?, ioc_mode=?, ioc_cleaning_options=?,
                updated_at=?
                WHERE id=?""",
             (
@@ -2724,6 +2807,12 @@ async def update_playbook(
                 resolved["auto_compare_full"],
                 resolved["auto_create_run_from_recommendations"],
                 resolved["auto_generate_full_report"],
+                int(new_ioc_cleaning_enabled),
+                new_ioc_cleaning_scope if new_ioc_cleaning_enabled else None,
+                new_ioc_mode if new_ioc_cleaning_enabled else None,
+                _json.dumps(new_ioc_cleaning_options)
+                if new_ioc_cleaning_enabled and new_ioc_cleaning_options
+                else None,
                 now,
                 playbook_id,
             ),
@@ -2756,6 +2845,10 @@ async def clone_playbook(
         auto_compare_full=source["auto_compare_full"],
         auto_create_run_from_recommendations=source["auto_create_run_from_recommendations"],
         auto_generate_full_report=source["auto_generate_full_report"],
+        ioc_cleaning_enabled=source["ioc_cleaning_enabled"],
+        ioc_cleaning_scope=source.get("ioc_cleaning_scope"),
+        ioc_mode=source.get("ioc_mode"),
+        ioc_cleaning_options=source.get("ioc_cleaning_options"),
         created_by=created_by,
     )
 

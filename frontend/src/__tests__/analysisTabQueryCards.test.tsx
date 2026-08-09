@@ -92,8 +92,8 @@ describe('AnalysisTab — Hunting Lead task query cards (issue-local-042)', () =
   })
 })
 
-describe('AnalysisTab — hypothesis Suggested Actions bullets (issue-local-042 item 5)', () => {
-  it('renders suggested actions as a real bulleted list', async () => {
+describe('AnalysisTab — hypothesis Suggested Actions bullets (issue-local-042 items 5, 22.3)', () => {
+  it('renders suggested actions as a bulleted list of indented query cards', async () => {
     vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
       hunt_package_id: 'pkg-1',
       run_id: 'run-1',
@@ -114,10 +114,17 @@ describe('AnalysisTab — hypothesis Suggested Actions bullets (issue-local-042 
 
     renderTab()
 
-    const item = await screen.findByText('Isolate the host')
-    expect(item.tagName).toBe('LI')
-    expect(item.closest('ul')).toHaveClass('list-disc')
-    expect(screen.getByText('Rotate credentials').tagName).toBe('LI')
+    const card = await screen.findByText('Isolate the host')
+    expect(card.tagName).toBe('PRE')
+    expect(card).toHaveClass('bg-gray-950')
+    expect(card).toHaveClass('ml-2')
+    const item = card.closest('li')
+    expect(item).not.toBeNull()
+    expect(item!.closest('ul')).toHaveClass('list-disc')
+
+    const secondCard = screen.getByText('Rotate credentials')
+    expect(secondCard.tagName).toBe('PRE')
+    expect(secondCard.closest('li')).not.toBeNull()
   })
 })
 
