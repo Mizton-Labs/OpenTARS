@@ -64,6 +64,7 @@ from backend.threat_hunting.models import (
     HuntPackageCreate,
     HuntPackageOut,
     HuntPackageUpdate,
+    UpdateEvidenceBody,
 )
 from backend.threat_hunting.ssrf import SSRFError
 
@@ -427,6 +428,17 @@ async def list_evidence(pkg_id: str) -> list[dict]:
     """List all evidence items for a hunt package."""
     _pkg_or_404(await th_db.get_hunt_package(pkg_id))
     return await th_db.list_evidence_items(pkg_id)
+
+
+@router.patch("/packages/{pkg_id}/evidence/{item_id}", response_model=EvidenceItemOut)
+async def update_evidence(pkg_id: str, item_id: str, body: UpdateEvidenceBody) -> dict:
+    """Rename an evidence item's label (issue-local-042 item 23)."""
+    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    item = _item_or_404(await th_db.get_evidence_item(item_id))
+    if item["hunt_package_id"] != pkg_id:
+        raise HTTPException(status_code=404, detail="Evidence item not found")
+    await th_db.update_evidence_item(item_id, label=body.label)
+    return await th_db.get_evidence_item(item_id)  # type: ignore[return-value]
 
 
 @router.delete("/packages/{pkg_id}/evidence/{item_id}", status_code=204)
@@ -1051,6 +1063,16 @@ def _require_playbook_owner_or_admin(playbook: dict, request: Request) -> None:
 class PlaybookModelEntry(BaseModel):
     provider_name: str | None = None
     model_name: str
+    # issue-local-042: per-model research-effort override — was already read
+    # by playbook_runner.py and sent by the frontend, but this Pydantic
+    # model never declared it, so FastAPI silently dropped it before it
+    # reached the database on every real request (Pydantic's default is to
+    # ignore undeclared input fields, not reject or preserve them).
+    effort: str | None = None
+    # issue-local-042: per-model IOC cleaning override — only read when the
+    # owning playbook's ioc_cleaning_scope is 'per_model'.
+    ioc_mode: str | None = None
+    ioc_cleaning_options: dict[str, bool] | None = None
 
 
 class PlaybookCreateBody(BaseModel):
@@ -1062,6 +1084,13 @@ class PlaybookCreateBody(BaseModel):
     auto_compare_full: bool = False
     auto_create_run_from_recommendations: bool = False
     auto_generate_full_report: bool = False
+    # issue-local-042: IOC cleaning config for this playbook's runs —
+    # disabled (the default) means run_config stays {} exactly as before
+    # this existed.
+    ioc_cleaning_enabled: bool = False
+    ioc_cleaning_scope: str | None = None
+    ioc_mode: str | None = None
+    ioc_cleaning_options: dict[str, bool] | None = None
 
 
 class PlaybookUpdateBody(BaseModel):
@@ -1073,6 +1102,10 @@ class PlaybookUpdateBody(BaseModel):
     auto_compare_full: bool | None = None
     auto_create_run_from_recommendations: bool | None = None
     auto_generate_full_report: bool | None = None
+    ioc_cleaning_enabled: bool | None = None
+    ioc_cleaning_scope: str | None = None
+    ioc_mode: str | None = None
+    ioc_cleaning_options: dict[str, bool] | None = None
 
 
 class PlaybookCloneBody(BaseModel):
@@ -1101,6 +1134,10 @@ async def create_playbook_route(body: PlaybookCreateBody, request: Request) -> d
             auto_compare_full=body.auto_compare_full,
             auto_create_run_from_recommendations=body.auto_create_run_from_recommendations,
             auto_generate_full_report=body.auto_generate_full_report,
+            ioc_cleaning_enabled=body.ioc_cleaning_enabled,
+            ioc_cleaning_scope=body.ioc_cleaning_scope,
+            ioc_mode=body.ioc_mode,
+            ioc_cleaning_options=body.ioc_cleaning_options,
             created_by=created_by,
         )
     except ValueError as exc:
@@ -1134,6 +1171,10 @@ async def update_playbook_route(playbook_id: str, body: PlaybookUpdateBody, requ
             auto_compare_full=body.auto_compare_full,
             auto_create_run_from_recommendations=body.auto_create_run_from_recommendations,
             auto_generate_full_report=body.auto_generate_full_report,
+            ioc_cleaning_enabled=body.ioc_cleaning_enabled,
+            ioc_cleaning_scope=body.ioc_cleaning_scope,
+            ioc_mode=body.ioc_mode,
+            ioc_cleaning_options=body.ioc_cleaning_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

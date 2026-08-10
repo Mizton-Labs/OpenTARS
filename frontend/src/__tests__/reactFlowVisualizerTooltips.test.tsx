@@ -15,15 +15,20 @@ import type { ComponentType } from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import type { THGenerationRecord } from '../api/client'
 
+let lastReactFlowProps: Record<string, unknown> | undefined
+
 vi.mock('@xyflow/react', () => {
   return {
     ReactFlow: ({
       nodes,
       nodeTypes,
+      ...rest
     }: {
       nodes: { id: string; data: Record<string, unknown> }[]
       nodeTypes: { default: ComponentType<{ data: Record<string, unknown> }> }
+      [key: string]: unknown
     }) => {
+      lastReactFlowProps = { nodes, nodeTypes, ...rest }
       const NodeComponent = nodeTypes.default
       return (
         <div data-testid="react-flow-stub">
@@ -37,6 +42,8 @@ vi.mock('@xyflow/react', () => {
     Controls: () => null,
     Handle: () => null,
     Position: { Top: 'top', Bottom: 'bottom' },
+    useNodesInitialized: () => true,
+    useReactFlow: () => ({ fitView: () => {} }),
   }
 })
 
@@ -91,5 +98,25 @@ describe('ReactFlowVisualizer — node hover tooltips (issue-local-041)', () => 
     render(<ReactFlowVisualizer genRecord={makeGenRecord()} />)
     const node = screen.getByText('⚑ Approval Gate')
     expect(node).toHaveAttribute('title', expect.stringContaining('operator review'))
+  })
+
+  // issue-local-042 follow-up: the real bug behind "hover doesn't work" —
+  // React Flow computes `hasPointerEvents = isSelectable || isDraggable ||
+  // onClick || onMouseEnter || onMouseMove || onMouseLeave` per node and, if
+  // that's false, sets `pointer-events: none` INLINE (beats any CSS rule,
+  // including its own base stylesheet's unconditional
+  // `.react-flow__node { pointer-events: all }` — which is why a static CSS
+  // read alone looked fine and missed this). `elementsSelectable={false}` +
+  // `nodesDraggable={false}` (both correct for a read-only diagram) with no
+  // mouse handler meant every node had pointer-events:none, so a hover could
+  // never reach the title-bearing element at all, independent of the
+  // separately-fixed fitView-positioning and inset-coverage bugs. This is a
+  // library-internal computation the mocked <ReactFlow> above can't
+  // exercise directly, so this test instead pins the one thing our own code
+  // controls: that a mouse-event handler prop is actually passed, which is
+  // what flips `hasPointerEvents` true in the real component.
+  it('passes a mouse-event handler to <ReactFlow> so nodes are not left pointer-events:none', () => {
+    render(<ReactFlowVisualizer genRecord={makeGenRecord()} />)
+    expect(typeof lastReactFlowProps?.onNodeMouseEnter).toBe('function')
   })
 })

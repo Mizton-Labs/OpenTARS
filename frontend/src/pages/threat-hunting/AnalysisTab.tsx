@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../../auth/useAuth'
 import WorkflowVisualizer from './WorkflowVisualizer'
 import { asDisplayText } from './llmTextUtils'
+import ReportMarkdown from '../../components/ReportMarkdown'
 import RunConfigForm from './RunConfigForm'
 import {
   buildRunConfig,
@@ -84,12 +85,19 @@ export default function AnalysisTab({
   pkgId,
   runId,
   onRunCreated,
+  onPlaybookStarted,
   onShowIocs,
   iocVerdictsDirty,
 }: {
   pkgId: string
   runId?: string
   onRunCreated?: (runId: string) => void
+  /** issue-local-042 (item 21): a Playbook selection fires N runs at once —
+   *  no single run_id to hand to onRunCreated — so HuntDetail.tsx can still
+   *  switch the run-selector's sub-tab to "Playbook Runs" instead of
+   *  leaving it wherever it was, which otherwise looked like nothing had
+   *  started. */
+  onPlaybookStarted?: () => void
   /** Called when the user clicks "View IOCs" in the workflow timeline. */
   onShowIocs?: () => void
   /** issue-local-018 follow-up: true while there are staged-but-unapplied
@@ -190,7 +198,9 @@ export default function AnalysisTab({
       // THPlaybookJob) has no single run_id, since it fires several — just
       // refresh the runs list so they show up. A standalone-model run still
       // hands off its one run_id to the caller so it can jump straight to it.
-      if (!('run_ids' in data)) {
+      if ('run_ids' in data) {
+        onPlaybookStarted?.()
+      } else {
         const newRunId = data.run_id ?? data.id
         if (newRunId && onRunCreated) onRunCreated(newRunId)
       }
@@ -572,7 +582,7 @@ function HuntingPackageDraft({
                   <p className={clsx('text-base font-semibold', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                     {h.title}
                   </p>
-                  <p className="text-sm text-gray-400">{h.description}</p>
+                  {h.description && <ReportMarkdown>{h.description}</ReportMarkdown>}
                   {h.justification && <p className="text-sm text-gray-500 italic">{h.justification}</p>}
                   {/* issue-006-E: ioc_basis — issue-local-041: labeled "Related IOCs" subcard */}
                   {h.ioc_basis && h.ioc_basis.length > 0 && (
@@ -612,15 +622,21 @@ function HuntingPackageDraft({
                       </div>
                     </div>
                   )}
-                  {/* issue-006-E: suggested_actions */}
+                  {/* issue-006-E: suggested_actions — issue-local-042 (item 5): a real
+                      bulleted list; (item 22.3): each action is code/a query, so it gets
+                      its own indented card under its bullet, not bare font-mono text. */}
                   {h.suggested_actions && h.suggested_actions.length > 0 && (
                     <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-1">
                       <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Suggested Actions</p>
-                      {h.suggested_actions.map((action, i) => (
-                        <p key={i} className="text-sm text-gray-400 font-mono leading-relaxed">
-                          {asDisplayText(action, ['action', 'text', 'description'])}
-                        </p>
-                      ))}
+                      <ul className="list-disc list-outside pl-4 space-y-2">
+                        {h.suggested_actions.map((action, i) => (
+                          <li key={i} className="text-sm text-gray-400 leading-relaxed marker:text-gray-600">
+                            <pre className="mt-1 ml-2 bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                              {asDisplayText(action, ['action', 'text', 'description'])}
+                            </pre>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                   {!readOnly && runId && (
@@ -681,12 +697,20 @@ function HuntingPackageDraft({
                 </p>
                 <p className="text-sm text-gray-400">{lead.description}</p>
                 {lead.tasks && lead.tasks.length > 0 && (
-                  <div className="pl-3 border-l border-gray-700 space-y-1.5 mt-2">
+                  <div className="pl-3 border-l border-gray-700 space-y-2 mt-2">
                     {lead.tasks.map((task: THHuntTask) => (
                       <div key={task.id}>
                         <p className="text-sm text-gray-300 font-medium">{task.id}: {task.title}</p>
                         <p className="text-sm text-gray-500">{task.description}</p>
-                        {task.query_hint && <p className="text-sm text-gray-600 font-mono">Hint: {task.query_hint}</p>}
+                        {/* issue-local-042 (items 2, 5): a code card, not
+                            plain mono text, so it's clear this is a query
+                            artifact — indented one step further than the
+                            task itself. */}
+                        {task.query_hint && (
+                          <pre className="ml-3 mt-1 bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                            {task.query_hint}
+                          </pre>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -789,12 +813,34 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
   return (
     <div className="card space-y-3">
       <p className="text-base font-semibold text-gray-200">Threat Context</p>
-      {summary      && <p className="text-sm text-gray-300">{summary}</p>}
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        {threatActor  && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{threatActor}</span></div>}
-        {campaignName && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-300">{campaignName}</span></div>}
-        {confidence   && <div><span className="text-gray-500">Confidence: </span><span className={clsx(confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>{confidence}</span></div>}
-      </div>
+      {summary      && <ReportMarkdown>{summary}</ReportMarkdown>}
+      {/* issue-local-042 (item 19): Actor/Campaign/Confidence as their own
+          stat cards — matches the bg-gray-800/50 card idiom already used
+          for Evidence & Coverage's stats, instead of plain inline text. */}
+      {(threatActor || campaignName || confidence) && (
+        <div className="grid grid-cols-3 gap-2">
+          {threatActor && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Actor</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={threatActor}>{threatActor}</p>
+            </div>
+          )}
+          {campaignName && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Campaign</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={campaignName}>{campaignName}</p>
+            </div>
+          )}
+          {confidence && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Confidence</p>
+              <p className={clsx('text-base font-semibold capitalize', confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>
+                {confidence}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       {Array.isArray(ctx.key_observations) && ctx.key_observations.length > 0 && (
         <div>
           <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Key observations:</p>

@@ -1058,6 +1058,16 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ th_research_effort: value }),
     }),
+  // issue-local-042 (item 27): RunsStatusTable page size — the per-package
+  // runs table embedded in the Hunt Packages list (Table view) and the one
+  // shown inside an open Hunt Package both paginate to this many rows.
+  getThRunsTablePageSize: () =>
+    request<{ th_runs_table_page_size: number }>('/app/th-runs-table-page-size'),
+  setThRunsTablePageSize: (value: number) =>
+    request<{ th_runs_table_page_size: number }>('/app/th-runs-table-page-size', {
+      method: 'PUT',
+      body: JSON.stringify({ th_runs_table_page_size: value }),
+    }),
   getThReportFormats: () => request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats'),
   setThReportFormats: (value: { pdf: boolean; markdown: boolean }) =>
     request<{ th_report_formats: { pdf: boolean; markdown: boolean } }>('/app/th-report-formats', {
@@ -1466,6 +1476,12 @@ export const api = {
     listEvidence: (pkgId: string) =>
       request<THEvidenceItem[]>(
         `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence`,
+      ),
+    // issue-local-042 (item 23): rename an evidence item's label in place.
+    updateEvidence: (pkgId: string, itemId: string, body: { label: string }) =>
+      request<THEvidenceItem>(
+        `/threat-hunting/packages/${encodeURIComponent(pkgId)}/evidence/${encodeURIComponent(itemId)}`,
+        { method: 'PATCH', body: JSON.stringify(body) },
       ),
     deleteEvidence: (pkgId: string, itemId: string) =>
       request<void>(
@@ -2333,6 +2349,9 @@ export interface THuntPackage {
   /** issue-local-018: human-readable HuntID (e.g. "TH01"), computed
    *  dynamically from the configured prefix. Empty string if not yet backfilled. */
   hunt_id_display?: string
+  /** issue-local-042 (item 9): one-sentence subtitle derived from the newest
+   *  run's threat_context.summary — null until analysis has produced one. */
+  brief_summary?: string | null
 }
 
 export interface THEvidenceItem {
@@ -2515,10 +2534,29 @@ export interface THuntPackageRun extends THRunSummary {
   token_usage_total?: Partial<THTokenUsage> | null
 }
 
+/** issue-local-042: same shape as runConfigUtils.ts's IocCleaningOptions —
+ *  duplicated here (not imported) since that module already imports FROM
+ *  this file, and importing back would be circular. */
+export interface THIocCleaningOptions {
+  remove_noisy: boolean
+  remove_legit_domains: boolean
+  remove_cdn_ranges: boolean
+  remove_legit_services: boolean
+}
+
 /** issue-local-040: one model a Hunt Playbook fires a run for. */
 export interface THPlaybookModelEntry {
   provider_name?: string | null
   model_name: string
+  /** issue-local-042: per-model research effort override — 'low'|'medium'|
+   *  'high'. Unset/null falls back to the configured default effort when
+   *  this playbook fires, same as a manual run/re-run with no explicit
+   *  choice. */
+  effort?: string | null
+  /** issue-local-042: per-model IOC cleaning override — only read when the
+   *  owning playbook's ioc_cleaning_scope is 'per_model'. */
+  ioc_mode?: 'tagging_only' | 'active_cleaning' | null
+  ioc_cleaning_options?: THIocCleaningOptions | null
 }
 
 /** issue-local-040: a named, reusable Hunt Playbook automation config. */
@@ -2532,6 +2570,13 @@ export interface THPlaybook {
   auto_compare_full: boolean
   auto_create_run_from_recommendations: boolean
   auto_generate_full_report: boolean
+  /** issue-local-042: IOC cleaning config for this playbook's own fired
+   *  runs — disabled (the default) means each run's run_config stays {},
+   *  same as every playbook before this existed. */
+  ioc_cleaning_enabled: boolean
+  ioc_cleaning_scope?: 'general' | 'per_model' | null
+  ioc_mode?: 'tagging_only' | 'active_cleaning' | null
+  ioc_cleaning_options?: THIocCleaningOptions | null
   created_at: string
   created_by: string | null
   updated_at: string
@@ -2547,6 +2592,10 @@ export type THPlaybookInput = Pick<THPlaybook, 'name' | 'models'> &
       | 'auto_compare_full'
       | 'auto_create_run_from_recommendations'
       | 'auto_generate_full_report'
+      | 'ioc_cleaning_enabled'
+      | 'ioc_cleaning_scope'
+      | 'ioc_mode'
+      | 'ioc_cleaning_options'
     >
   >
 
@@ -2788,6 +2837,8 @@ export interface THReportRetrohuntSummary {
   high_noise_iocs: number
   spl_macro_name: string
   search_hint: string
+  /** issue-local-042 (item 4): the macro's actual SPL text. */
+  spl_draft?: string
 }
 
 export interface THReportExecutionResult {
@@ -2817,6 +2868,9 @@ export interface THFullReport {
   hunting_leads: THHuntingLead[]
   deep_retrohunt_summary: THReportRetrohuntSummary | null
   ttp_analysis: THBehavioralTTPAnalysis | null
+  /** issue-local-042 (item 4): the actual drafted queries — previously only
+   *  query_drafts_count (a number) was frozen into the report. */
+  query_drafts?: THQueryDraft[]
   query_drafts_count: number
   execution_results: THReportExecutionResult[]
   recommendations: string[]

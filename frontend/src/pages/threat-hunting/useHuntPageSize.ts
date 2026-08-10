@@ -9,7 +9,11 @@ export const HUNT_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const
 export type HuntPageSize = (typeof HUNT_PAGE_SIZE_OPTIONS)[number]
 
 const STORAGE_KEY = 'sfi.th.pageSize'
-const DEFAULT_PAGE_SIZE: HuntPageSize = 20
+// issue-local-042 (item 27): default lowered 20 -> 10 so the Hunt Packages
+// list — Table view in particular, where each row also embeds its own
+// runs table — starts out compact; still user-adjustable via the existing
+// page-size selector.
+const DEFAULT_PAGE_SIZE: HuntPageSize = 10
 
 function isHuntPageSize(value: unknown): value is HuntPageSize {
   return typeof value === 'number' && (HUNT_PAGE_SIZE_OPTIONS as readonly number[]).includes(value)

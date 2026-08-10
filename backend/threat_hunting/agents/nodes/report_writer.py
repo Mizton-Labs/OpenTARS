@@ -128,6 +128,10 @@ def _retrohunt_summary(deep_retrohunt: dict[str, Any] | None) -> dict[str, Any] 
         "high_noise_iocs": deep_retrohunt.get("high_noise_ioc_count", 0),
         "spl_macro_name": deep_retrohunt.get("spl_macro_name", ""),
         "search_hint": deep_retrohunt.get("search_hint", ""),
+        # issue-local-042 (item 4): the actual macro SPL text — previously
+        # only its name was included, so the query itself never appeared
+        # anywhere in the report.
+        "spl_draft": deep_retrohunt.get("spl_draft", ""),
     }
 
 
@@ -214,6 +218,10 @@ def assemble_report(
         "hunting_leads": hunting_leads,
         "deep_retrohunt_summary": _retrohunt_summary(deep_retrohunt),
         "ttp_analysis": ttp_analysis,
+        # issue-local-042 (item 4): the actual drafted queries, not just a
+        # count — AnalysisTab.tsx already shows these in a code card during
+        # review; the frozen report previously dropped them entirely.
+        "query_drafts": query_drafts,
         "query_drafts_count": len(query_drafts),
         "execution_results": _execution_summary(task_results),
         "recommendations": recommendations,
@@ -791,25 +799,24 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
     lines.append(f"- IOCs extracted: {ev.get('ioc_count', 0)}")
     lines.append(f"- Item types: {', '.join(ev.get('item_types', []) or [])}\n")
 
+    # issue-local-042 (item 5): a brief reference list here — label, type,
+    # source only, no content — the full extracted text used to appear at
+    # this early position, which made it the first thing after the executive
+    # summary and difficult to read through. It now lives in "Appendix:
+    # Evidence" at the very end of the document (after Findings and
+    # Conclusion), which this line points to.
     evidence_items = full_report.get("evidence_items") or []
     if evidence_items:
-        _h(2, f"Evidence Items ({len(evidence_items)})")
+        _h(2, f"Evidence References ({len(evidence_items)})")
+        _p("Full extracted content is in the Appendix at the end of this document.")
         for item in evidence_items:
-            _h(3, str(item.get("label", "Evidence item")))
-            meta_bits = [
-                f"Type: {item['item_type']}" if item.get("item_type") else "",
-                f"Parser: {item['parser_used']}" if item.get("parser_used") else "",
-                f"Status: {item['parse_status']}" if item.get("parse_status") else "",
-            ]
-            meta_line = "  |  ".join(b for b in meta_bits if b)
-            if meta_line:
-                lines.append(f"*{meta_line}*\n")
+            bits = [str(item.get("label", "Evidence item"))]
+            if item.get("item_type"):
+                bits.append(f"({item['item_type']})")
             if item.get("source_ref"):
-                lines.append(f"Source: `{item['source_ref']}`\n")
-            if item.get("extracted_text"):
-                _code(item["extracted_text"])
-            else:
-                _p("(no extracted text)")
+                bits.append(f"— `{item['source_ref']}`")
+            _li(" ".join(bits))
+        lines.append("")
 
     tc = full_report.get("threat_context") or {}
     if tc and not tc.get("parse_error"):
@@ -872,6 +879,27 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
         if retro.get("search_hint"):
             lines.append(f"- Search hint: {retro['search_hint']}")
         lines.append("")
+        # issue-local-042 (item 4): the macro's actual SPL, as a code block —
+        # previously only its name was shown, never the query itself.
+        if retro.get("spl_draft"):
+            _code(retro["spl_draft"], "spl")
+
+    # issue-local-042 (item 4): drafted queries as code blocks, matching the
+    # code-card treatment AnalysisTab.tsx already gives them during review.
+    query_drafts = full_report.get("query_drafts") or []
+    if query_drafts:
+        _h(2, f"Query Drafts ({len(query_drafts)})")
+        for q in query_drafts:
+            _h(3, str(q.get("title") or q.get("id") or "Query"))
+            if q.get("description"):
+                _p(str(q["description"]))
+            query_text = q.get("query")
+            if query_text and not isinstance(query_text, str):
+                import json as _json
+
+                query_text = _json.dumps(query_text, indent=2)
+            if query_text:
+                _code(str(query_text), str(q.get("language") or ""))
 
     # issue-local-019: full IOC table — the same All/Sanitized/Removed data
     # RetrohuntPanel.tsx's review table shows, not just the aggregate counts
@@ -936,6 +964,29 @@ def render_report_markdown(full_report: dict[str, Any]) -> str:
         _h(2, "Findings and Conclusion")
         _p(findings)
         lines.append("")
+
+    # issue-local-042 (item 5): full evidence content, moved to a true
+    # end-of-document appendix — the "Evidence References" list earlier
+    # points here. Kept after Findings and Conclusion so that section still
+    # reads as this document's actual final word.
+    if evidence_items:
+        _h(1, "Appendix: Evidence")
+        for item in evidence_items:
+            _h(3, str(item.get("label", "Evidence item")))
+            meta_bits = [
+                f"Type: {item['item_type']}" if item.get("item_type") else "",
+                f"Parser: {item['parser_used']}" if item.get("parser_used") else "",
+                f"Status: {item['parse_status']}" if item.get("parse_status") else "",
+            ]
+            meta_line = "  |  ".join(b for b in meta_bits if b)
+            if meta_line:
+                lines.append(f"*{meta_line}*\n")
+            if item.get("source_ref"):
+                lines.append(f"Source: `{item['source_ref']}`\n")
+            if item.get("extracted_text"):
+                _code(item["extracted_text"])
+            else:
+                _p("(no extracted text)")
 
     return "\n".join(lines)
 
@@ -1233,46 +1284,24 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
     except Exception:  # noqa: BLE001
         _p(f"Items: {ev.get('total_items', 0)}  |  IOCs: {ev.get('ioc_count', 0)}")
 
-    # ── Evidence Items — full extracted/parsed content ───────────────────────
+    # ── Evidence References — brief, no content ──────────────────────────────
+    # issue-local-042 (item 5): the full extracted/parsed content used to
+    # render here, right after Executive Summary — the first thing after it,
+    # and difficult to read through. It now lives in "Appendix: Evidence" at
+    # the very end of the document (rendered by _render_evidence_appendix
+    # below, after Findings and Conclusion); this is just a pointer to it.
     evidence_items = full_report.get("evidence_items") or []
     if evidence_items:
-        _h2(f"Evidence Items ({len(evidence_items)})")
+        _h2(f"Evidence References ({len(evidence_items)})")
+        _p("Full extracted content is in the Appendix at the end of this document.", meta_style)
         for item in evidence_items:
-            _h3(str(item.get("label", "Evidence item")))
-            meta_bits = [
-                f"<b>Type:</b> {_esc(str(item['item_type']))}" if item.get("item_type") else "",
-                f"<b>Parser:</b> {_esc(str(item['parser_used']))}"
-                if item.get("parser_used")
-                else "",
-                f"<b>Status:</b> {_esc(str(item['parse_status']))}"
-                if item.get("parse_status")
-                else "",
-            ]
-            meta_line = "  &nbsp;|&nbsp;  ".join(b for b in meta_bits if b)
-            if meta_line:
-                _p_raw(meta_line, meta_style)
+            bits = [str(item.get("label", "Evidence item"))]
+            if item.get("item_type"):
+                bits.append(f"({_esc(str(item['item_type']))})")
             if item.get("source_ref"):
-                story.append(Paragraph(f"Source: {_esc(str(item['source_ref']))}", code_style))
-            extracted = item.get("extracted_text") or ""
-            if extracted:
-                # issue-local-026 follow-up: this used to wrap the extracted
-                # text in a single-row, single-column Table for the bordered
-                # box look. A 1-row Table has no row boundary to split at, so
-                # reportlab has no way to paginate it — any evidence item
-                # whose extracted text ran past one page's usable height
-                # (~702pt; long articles routinely did, at 2000+pt) raised a
-                # fatal LayoutError from doc.build() at the very end, aborting
-                # the ENTIRE PDF for that report. A live check of the last 25
-                # generated reports on the test server found 12 failing this
-                # way (48%) — this was "PDF generation randomly fails",
-                # deterministic per-report on evidence length, not random.
-                # The border/background now live on the Paragraph's own style
-                # (see evidence_text_style above) so it paginates like any
-                # other Paragraph — normal reportlab flowable behavior.
-                _p(extracted, evidence_text_style)
-            else:
-                _p("(no extracted text)", meta_style)
-            _sp(6)
+                bits.append(f"— {_esc(str(item['source_ref']))}")
+            _p_raw("• " + " ".join(bits), meta_style)
+        _sp(6)
 
     # ── Threat Context ────────────────────────────────────────────────────────
     tc = full_report.get("threat_context") or {}
@@ -1341,6 +1370,30 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             story.append(Paragraph(_esc(str(retro["spl_macro_name"])), code_style))
         if retro.get("search_hint"):
             _p(str(retro["search_hint"]))
+        # issue-local-042 (item 4): the macro's actual SPL, in the same
+        # bordered/shaded code-card style already used for evidence text —
+        # previously only its name appeared, never the query itself.
+        if retro.get("spl_draft"):
+            _p(str(retro["spl_draft"]), evidence_text_style)
+
+    # ── Query Drafts — code-card treatment, matching AnalysisTab.tsx ────────
+    query_drafts = full_report.get("query_drafts") or []
+    if query_drafts:
+        _h2(f"Query Drafts ({len(query_drafts)})")
+        for q in query_drafts:
+            _h3(str(q.get("title") or q.get("id") or "Query"))
+            if q.get("language"):
+                _p_raw(f"<b>Language:</b> {_esc(str(q['language']))}", meta_style)
+            if q.get("description"):
+                _p(str(q["description"]))
+            query_text = q.get("query")
+            if query_text and not isinstance(query_text, str):
+                import json as _json
+
+                query_text = _json.dumps(query_text, indent=2)
+            if query_text:
+                _p(str(query_text), evidence_text_style)
+            _sp(6)
 
     # ── IOC Table — full All/Sanitized/Removed data ──────────────────────────
     # issue-local-019: mirrors RetrohuntPanel.tsx's review table (one combined
@@ -1469,6 +1522,49 @@ def render_report_pdf(full_report: dict[str, Any]) -> bytes:
             if para:
                 _p(para)
         _sp(8)
+
+    # ── Appendix: Evidence — full extracted/parsed content ───────────────────
+    # issue-local-042 (item 5): moved here, the true end of the document
+    # (after Findings and Conclusion), from right after Executive Summary —
+    # the "Evidence References" list up there now points here instead.
+    if evidence_items:
+        _h1("Appendix: Evidence")
+        for item in evidence_items:
+            _h3(str(item.get("label", "Evidence item")))
+            meta_bits = [
+                f"<b>Type:</b> {_esc(str(item['item_type']))}" if item.get("item_type") else "",
+                f"<b>Parser:</b> {_esc(str(item['parser_used']))}"
+                if item.get("parser_used")
+                else "",
+                f"<b>Status:</b> {_esc(str(item['parse_status']))}"
+                if item.get("parse_status")
+                else "",
+            ]
+            meta_line = "  &nbsp;|&nbsp;  ".join(b for b in meta_bits if b)
+            if meta_line:
+                _p_raw(meta_line, meta_style)
+            if item.get("source_ref"):
+                story.append(Paragraph(f"Source: {_esc(str(item['source_ref']))}", code_style))
+            extracted = item.get("extracted_text") or ""
+            if extracted:
+                # issue-local-026 follow-up: this used to wrap the extracted
+                # text in a single-row, single-column Table for the bordered
+                # box look. A 1-row Table has no row boundary to split at, so
+                # reportlab has no way to paginate it — any evidence item
+                # whose extracted text ran past one page's usable height
+                # (~702pt; long articles routinely did, at 2000+pt) raised a
+                # fatal LayoutError from doc.build() at the very end, aborting
+                # the ENTIRE PDF for that report. A live check of the last 25
+                # generated reports on the test server found 12 failing this
+                # way (48%) — this was "PDF generation randomly fails",
+                # deterministic per-report on evidence length, not random.
+                # The border/background now live on the Paragraph's own style
+                # (see evidence_text_style above) so it paginates like any
+                # other Paragraph — normal reportlab flowable behavior.
+                _p(extracted, evidence_text_style)
+            else:
+                _p("(no extracted text)", meta_style)
+            _sp(6)
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()

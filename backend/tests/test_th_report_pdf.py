@@ -108,9 +108,11 @@ class TestAssembleReportIncludesEvidenceItems:
 
 class TestMarkdownIncludesEvidenceItems:
     def test_renders_evidence_items_section_with_extracted_text(self) -> None:
+        """issue-local-042 (item 5): the full content now lives in the
+        end-of-document appendix, not right after the executive summary."""
         report = _base_report()
         md = render_report_markdown(report)
-        assert "Evidence Items (2)" in md
+        assert "Appendix: Evidence" in md
         assert "phish.eml" in md
         assert "Click here: http://evil.example" in md
 
@@ -118,6 +120,25 @@ class TestMarkdownIncludesEvidenceItems:
         report = _base_report()
         md = render_report_markdown(report)
         assert "(no extracted text)" in md
+
+    def test_early_reference_list_names_items_but_omits_their_content(self) -> None:
+        report = _base_report()
+        md = render_report_markdown(report)
+        assert "Evidence References (2)" in md
+        references_section = md.split("Evidence References")[1].split("## ")[0]
+        assert "phish.eml" in references_section
+        assert "Click here: http://evil.example" not in references_section
+
+    def test_appendix_is_the_last_section_after_findings(self) -> None:
+        report = _base_report(findings="Final conclusion text.")
+        md = render_report_markdown(report)
+        assert md.index("Findings and Conclusion") < md.index("Appendix: Evidence")
+
+    def test_omits_both_evidence_sections_when_there_are_no_items(self) -> None:
+        report = _base_report(evidence_items=[])
+        md = render_report_markdown(report)
+        assert "Evidence References" not in md
+        assert "Appendix: Evidence" not in md
 
 
 class TestPdfGeneration:
@@ -173,6 +194,100 @@ class TestPdfGeneration:
         # deflates content streams, so just assert generation succeeds with
         # the evidence_items populated vs. empty producing different sizes).
         empty_report = _base_report(evidence_items=[])
+        empty_pdf = render_report_pdf(empty_report)
+        assert len(pdf_bytes) > len(empty_pdf)
+
+
+QUERY_DRAFTS = [
+    {
+        "id": "q1",
+        "title": "Suspicious DNS lookups",
+        "language": "spl",
+        "description": "Finds beacon-like DNS activity.",
+        "query": "index=dns dest_ip=1.2.3.4 | stats count by src_ip",
+    },
+]
+
+
+class TestReportIncludesQueryDrafts:
+    """issue-local-042 (item 4): assemble_report used to only carry
+    query_drafts_count (a number) and a bare SPL macro *name* — the actual
+    queries never appeared anywhere in the frozen report, unlike
+    AnalysisTab.tsx's live review, which already shows them in a code card.
+    """
+
+    def test_assemble_report_includes_the_full_query_drafts_list(self) -> None:
+        report = assemble_report(
+            hunt_package={"name": "Test Hunt", "id": "pkg-1", "status": "completed"},
+            generation_record={"query_drafts": QUERY_DRAFTS},
+            evidence_items=[],
+            task_results=[],
+        )
+        assert report["query_drafts"] == QUERY_DRAFTS
+        assert report["query_drafts_count"] == 1
+
+    def test_retrohunt_summary_includes_the_actual_spl_draft(self) -> None:
+        report = assemble_report(
+            hunt_package={"name": "Test Hunt", "id": "pkg-1", "status": "completed"},
+            generation_record={
+                "deep_retrohunt": {
+                    "sanitized_iocs": [],
+                    "spl_macro_name": "hunt_macro_1",
+                    "spl_draft": "`hunt_macro_1` | table _time src_ip dest_ip",
+                }
+            },
+            evidence_items=[],
+            task_results=[],
+        )
+        assert report["deep_retrohunt_summary"]["spl_draft"] == (
+            "`hunt_macro_1` | table _time src_ip dest_ip"
+        )
+
+    def test_markdown_renders_query_drafts_as_a_code_block(self) -> None:
+        report = _base_report(query_drafts=QUERY_DRAFTS, query_drafts_count=1)
+        md = render_report_markdown(report)
+        assert "Query Drafts (1)" in md
+        assert "Suspicious DNS lookups" in md
+        assert "```spl" in md
+        assert "index=dns dest_ip=1.2.3.4 | stats count by src_ip" in md
+
+    def test_markdown_renders_the_retrohunt_spl_draft_as_a_code_block(self) -> None:
+        report = _base_report(
+            deep_retrohunt_summary={
+                "total_iocs": 1,
+                "noisy_iocs": 0,
+                "high_noise_iocs": 0,
+                "spl_macro_name": "hunt_macro_1",
+                "search_hint": "",
+                "spl_draft": "`hunt_macro_1` | table _time src_ip dest_ip",
+            }
+        )
+        md = render_report_markdown(report)
+        assert "```spl" in md
+        assert "`hunt_macro_1` | table _time src_ip dest_ip" in md
+
+    def test_markdown_omits_query_drafts_section_when_there_are_none(self) -> None:
+        report = _base_report()
+        md = render_report_markdown(report)
+        assert "Query Drafts" not in md
+
+    def test_pdf_generation_succeeds_with_query_drafts_and_spl_draft(self) -> None:
+        report = _base_report(
+            query_drafts=QUERY_DRAFTS,
+            query_drafts_count=1,
+            deep_retrohunt_summary={
+                "total_iocs": 1,
+                "noisy_iocs": 0,
+                "high_noise_iocs": 0,
+                "spl_macro_name": "hunt_macro_1",
+                "search_hint": "",
+                "spl_draft": "`hunt_macro_1` | table _time src_ip dest_ip",
+            },
+        )
+        pdf_bytes = render_report_pdf(report)
+        assert pdf_bytes[:4] == b"%PDF"
+
+        empty_report = _base_report(query_drafts=[], query_drafts_count=0)
         empty_pdf = render_report_pdf(empty_report)
         assert len(pdf_bytes) > len(empty_pdf)
 

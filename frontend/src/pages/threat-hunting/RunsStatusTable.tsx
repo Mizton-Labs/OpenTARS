@@ -12,7 +12,7 @@
  * per-run extra fetches), unlike PipelineStepper's header usage which
  * reads a live `THGenerationRecord` for the single active run.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CheckCircle,
   XCircle,
@@ -24,6 +24,8 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -108,7 +110,7 @@ function MiniPhaseTrack({ run }: { run: THuntPackageRun }) {
         <div key={phase.label} className="flex items-center shrink-0">
           <div
             className={clsx(
-              'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap',
+              'flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap',
               phase.state === 'done' && 'bg-green-900/20 text-green-400',
               phase.state === 'error' && 'bg-red-900/20 text-red-400',
               phase.state === 'active' && 'bg-blue-900/20 text-blue-300',
@@ -140,18 +142,23 @@ function formatDuration(seconds: number | null | undefined): string {
 
 function IocCounts({ run }: { run: THuntPackageRun }) {
   if (run.sanitized_ioc_count == null && run.removed_ioc_count == null) {
-    return <span className="text-[10px] text-gray-600">—</span>
+    return <span className="text-[11px] text-gray-600">—</span>
   }
   const sanitized = run.sanitized_ioc_count ?? 0
   const removed = run.removed_ioc_count ?? 0
   return (
-    <span className="text-[10px]">
+    // issue-local-026: explicit total, always the sum shown alongside it —
+    // never a separately-computed number that could drift from these two.
+    // issue-local-042 (item 26): sanitized/removed/total must always stay
+    // on one line (superseding item 11's separate-row total) — whitespace-
+    // nowrap here, matched by the same class on the parent <td>, keeps the
+    // column growing to fit this text rather than letting it wrap.
+    <span className="text-[11px] whitespace-nowrap">
       <span className="text-green-400">{sanitized} sanitized</span>
       <span className="text-gray-600"> · </span>
       <span className="text-red-400">{removed} removed</span>
-      {/* issue-local-026: explicit total, always the sum shown alongside it —
-          never a separately-computed number that could drift from these two. */}
-      <span className="text-gray-500"> · {sanitized + removed} total</span>
+      <span className="text-gray-600"> · </span>
+      <span className="text-gray-500">{sanitized + removed} total</span>
     </span>
   )
 }
@@ -178,6 +185,20 @@ function useDefaultModelLabel(): string | null {
   return provider.model ? `Default (${provider.model})` : `Default (${data.default_provider})`
 }
 
+// issue-local-042 (item 27): configured page size for this table — same
+// setting whether it's embedded per-package in the Hunt Packages list
+// (Table view) or shown for a single open package, so it's read here once
+// rather than threaded through as a prop by every call site. Shared
+// queryKey across instances, same dedupe reasoning as useDefaultModelLabel.
+function useRunsTablePageSize(): number {
+  const { data } = useQuery({
+    queryKey: ['th-runs-table-page-size'],
+    queryFn: () => api.getThRunsTablePageSize(),
+    staleTime: 60_000,
+  })
+  return data?.th_runs_table_page_size ?? 10
+}
+
 // issue-local-017: MD/PDF download directly via <a href> (the backend
 // serves those formats from GET routes); JSON has no server-side download
 // route (ReportPanel.tsx's exportJson builds it client-side from the
@@ -185,7 +206,7 @@ function useDefaultModelLabel(): string | null {
 // that same client-side Blob/URL.createObjectURL pattern.
 function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   if (!run.has_report) {
-    return <span className="text-[10px] text-gray-600">—</span>
+    return <span className="text-[11px] text-gray-600">—</span>
   }
 
   async function downloadJson() {
@@ -200,9 +221,12 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
   }
 
   const linkClass = 'flex items-center gap-1 text-gray-500 hover:text-brand-400 transition-colors'
-  const badgeClass = 'text-[9px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
+  const badgeClass = 'text-[10px] font-bold px-1 py-0.5 rounded leading-none tracking-wide'
+  // issue-local-042 (item 25): one download format per row (was all three
+  // packed onto a single line) — narrower and easier to scan, and lets the
+  // Report column itself shrink to fit instead of stretching the table.
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex flex-col items-start gap-1">
       <a
         href={api.threatHunting.downloadRunReportMarkdown(pkgId, run.id)}
         className={linkClass}
@@ -231,7 +255,7 @@ function ReportLinks({ pkgId, run }: { pkgId: string; run: THuntPackageRun }) {
 // always lists every run of the package) — the badge is the only indicator.
 function ArchivedBadge() {
   return (
-    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 whitespace-nowrap">
+    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 whitespace-nowrap">
       Archived
     </span>
   )
@@ -253,6 +277,7 @@ function RunActions({
 }) {
   const qc = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   const archiveMut = useMutation({
     mutationFn: () => api.threatHunting.setRunArchived(pkgId, run.id, !run.archived),
@@ -266,11 +291,34 @@ function RunActions({
       setConfirmDelete(false)
     },
   })
+  // issue-local-042 (item 8): cancel used to be a single header button tied
+  // to whichever run the run-selector happened to have active — moved here
+  // so it's scoped to the specific row's run, and reachable for any running
+  // run without first switching the selector to it.
+  const cancelMut = useMutation({
+    mutationFn: () => api.threatHunting.cancelRun(pkgId, run.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, run.id] })
+      setConfirmCancel(false)
+    },
+  })
 
   if (!isResearcher && !isAdmin) return null
 
   return (
     <span className="flex items-center gap-2">
+      {isResearcher && run.generation_status === 'running' && (
+        <button
+          type="button"
+          onClick={() => setConfirmCancel(true)}
+          disabled={cancelMut.isPending}
+          className="text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
+          title="Cancel this run"
+        >
+          <XCircle className="w-3.5 h-3.5" />
+        </button>
+      )}
       {isResearcher && (
         <button
           type="button"
@@ -291,6 +339,15 @@ function RunActions({
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+      )}
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Cancel this run?"
+          message={`This stops ${run.run_id_display || 'this run'} in place — progress made so far is kept, but the run will not continue.`}
+          confirmLabel="Cancel run"
+          onConfirm={() => cancelMut.mutate()}
+          onCancel={() => setConfirmCancel(false)}
+        />
       )}
       {confirmDelete && (
         <ConfirmDialog
@@ -353,8 +410,14 @@ export default function RunsStatusTable({
   onSubTabChange?: (tab: RunSubTab) => void
 }) {
   const defaultModelLabel = useDefaultModelLabel()
+  const runsPageSize = useRunsTablePageSize()
   const [internalSubTab, setInternalSubTab] = useState<RunSubTab>('runs')
   const subTab = subTabProp ?? internalSubTab
+  // issue-local-042 (item 27): page within the current sub-tab's runs.
+  const [runsPage, setRunsPage] = useState(1)
+  useEffect(() => {
+    setRunsPage(1)
+  }, [subTab])
   function handleSubTabChange(tab: RunSubTab) {
     setInternalSubTab(tab)
     onSubTabChange?.(tab)
@@ -365,6 +428,12 @@ export default function RunsStatusTable({
   const counts: Record<RunSubTab, number> = { runs: 0, playbook: 0, consolidated: 0 }
   for (const run of runs) counts[subTabOf(run)] += 1
   const visibleRuns = runs.filter((run) => subTabOf(run) === subTab)
+  const totalRunsPages = Math.max(1, Math.ceil(visibleRuns.length / runsPageSize))
+  const clampedRunsPage = Math.min(runsPage, totalRunsPages)
+  const pagedVisibleRuns = visibleRuns.slice(
+    (clampedRunsPage - 1) * runsPageSize,
+    clampedRunsPage * runsPageSize,
+  )
   // issue-local-041: "a sum for the whole Hunt package" — every run in the
   // package, regardless of which sub-tab is currently selected.
   const packageTokenTotal = runs.reduce(
@@ -374,7 +443,7 @@ export default function RunsStatusTable({
   const packageHasTokenData = runs.some((run) => run.token_usage_total?.total_tokens != null)
   return (
     <div className="space-y-1.5">
-      <nav className="flex gap-1 text-[11px]">
+      <nav className="flex gap-1 text-[12px]">
         {SUB_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -397,27 +466,30 @@ export default function RunsStatusTable({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-800">
-          {/* issue-local-041: no forced min-width — every column below now
-              wraps its text content (only the Workflow/phases column stays
-              single-line), so rows grow taller instead of forcing a fixed
-              table width + horizontal scroll for normal viewing. */}
+          {/* issue-local-041: no forced min-width — most columns below wrap
+              their text content so rows grow taller instead of forcing a
+              fixed table width + horizontal scroll for normal viewing.
+              issue-local-042 (item 10): Run ID joins Workflow/phases as a
+              column that stays single-line instead — Model/IOCs/Created
+              deliberately split their content across two fixed rows within
+              the cell (items 11-13) rather than wrapping freely. */}
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+              <tr className="bg-gray-800/50 text-[11px] uppercase tracking-wider text-gray-500">
                 <th className="text-left py-1.5 px-2">Run ID</th>
                 <th className="text-left py-1.5 px-2">Model</th>
                 <th className="text-left py-1.5 px-2">Status</th>
                 <th className="text-left py-1.5 px-2">Workflow</th>
                 <th className="text-left py-1.5 px-2">Duration</th>
                 <th className="text-left py-1.5 px-2">IOCs</th>
-                <th className="text-left py-1.5 px-2">Report</th>
+                <th className="text-left py-1.5 px-2 w-px whitespace-nowrap">Report</th>
                 <th className="text-left py-1.5 px-2">Created</th>
                 <th className="text-left py-1.5 px-2">Created by</th>
                 {showActions && <th className="text-left py-1.5 px-2">Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {visibleRuns.map((run) => (
+              {pagedVisibleRuns.map((run) => (
                 <tr
                   key={run.id}
                   className={clsx(
@@ -425,8 +497,10 @@ export default function RunsStatusTable({
                     run.id === activeRunId && 'bg-brand-900/20 border-l-2 border-l-brand-500',
                   )}
                 >
-                  <td className="py-1.5 px-2 text-[11px] text-gray-300 font-mono break-words">
-                    <span className="flex items-center gap-1.5 flex-wrap">
+                  {/* issue-local-042 (item 10): run ID never wraps to a
+                      second row, unlike most other cells in this table. */}
+                  <td className="py-1.5 px-2 text-[12px] text-gray-300 font-mono whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
                       {onSelectRun ? (
                         <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
                           {run.run_id_display || '—'}
@@ -437,36 +511,40 @@ export default function RunsStatusTable({
                       {run.archived && <ArchivedBadge />}
                     </span>
                   </td>
-                  <td className="py-1.5 px-2 text-[11px] text-gray-200 font-mono break-words">
-                    {onSelectRun ? (
-                      <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
-                        {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
-                      </button>
-                    ) : (
-                      run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
+                  {/* issue-local-042 (item 13): model name and effort on
+                      their own rows within the cell. */}
+                  <td className="py-1.5 px-2 text-[12px] text-gray-200 font-mono break-words">
+                    <span className="block">
+                      {onSelectRun ? (
+                        <button type="button" onClick={() => onSelectRun(run.id)} className={cellLinkClass}>
+                          {run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'}
+                        </button>
+                      ) : (
+                        run.llm_model ?? run.llm_provider ?? defaultModelLabel ?? '—'
+                      )}
+                    </span>
+                    {run.research_effort && (
+                      <span className="block text-[11px] text-gray-600">{run.research_effort}</span>
                     )}
-                    {run.research_effort && <span className="text-gray-600"> · {run.research_effort}</span>}
-                    {/* issue-local-040: playbook provenance, shown next to
-                        the model for both 'playbook' and 'consolidated'
-                        runs — a consolidated (recommendation-synthesis) run
-                        started from inside a playbook still carries its
-                        playbook_id/name. */}
+                    {/* issue-local-040: playbook provenance — a consolidated
+                        (recommendation-synthesis) run started from inside a
+                        playbook still carries its playbook_id/name. */}
                     {run.playbook_name && (
-                      <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap">
+                      <span className="block mt-0.5 text-[10px] px-1 py-0.5 rounded bg-purple-900/30 text-purple-300 whitespace-nowrap w-fit">
                         {run.run_origin === 'consolidated' ? 'consolidated · ' : 'playbook · '}
                         {run.playbook_name}
                       </span>
                     )}
                   </td>
                   <td className="py-1.5 px-2">
-                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
+                    <span className={clsx('text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap', runStatusClass(run.generation_status))}>
                       {run.generation_status}
                     </span>
                   </td>
                   <td className="py-1.5 px-2 whitespace-nowrap">
                     <MiniPhaseTrack run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-400 break-words">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-400 break-words">
                     {formatDuration(run.total_elapsed_s)}
                     {/* issue-local-041: per-run token total, alongside the
                         other run-level stat (duration) — applies at every
@@ -477,16 +555,19 @@ export default function RunsStatusTable({
                       </span>
                     )}
                   </td>
-                  <td className="py-1.5 px-2">
+                  <td className="py-1.5 px-2 whitespace-nowrap">
                     <IocCounts run={run} />
                   </td>
-                  <td className="py-1.5 px-2">
+                  <td className="py-1.5 px-2 w-px">
                     <ReportLinks pkgId={pkgId} run={run} />
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
-                    {run.created_at.slice(0, 19).replace('T', ' ')}
+                  {/* issue-local-042 (item 12): date on its own row, time on
+                      the next, within the cell. */}
+                  <td className="py-1.5 px-2 text-[11px] text-gray-500 whitespace-nowrap">
+                    <span className="block">{run.created_at.slice(0, 10)}</span>
+                    <span className="block text-gray-600">{run.created_at.slice(11, 19)}</span>
                   </td>
-                  <td className="py-1.5 px-2 text-[10px] text-gray-500 break-words">
+                  <td className="py-1.5 px-2 text-[11px] text-gray-500 break-words">
                     {run.created_by ?? '—'}
                   </td>
                   {showActions && (
@@ -500,10 +581,38 @@ export default function RunsStatusTable({
           </table>
         </div>
       )}
+      {/* issue-local-042 (item 27): pagination footer for the current
+          sub-tab's runs — only shown once there's more than one page. */}
+      {totalRunsPages > 1 && (
+        <div className="flex items-center justify-center gap-3 text-[11px] text-gray-500">
+          <button
+            type="button"
+            className="btn btn-secondary px-1.5 py-0.5"
+            disabled={clampedRunsPage <= 1}
+            onClick={() => setRunsPage((p) => Math.max(1, p - 1))}
+            aria-label="Previous runs page"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <span>
+            Page {clampedRunsPage} of {totalRunsPages} · {visibleRuns.length} run
+            {visibleRuns.length === 1 ? '' : 's'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary px-1.5 py-0.5"
+            disabled={clampedRunsPage >= totalRunsPages}
+            onClick={() => setRunsPage((p) => Math.min(totalRunsPages, p + 1))}
+            aria-label="Next runs page"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       {/* issue-local-041: package-wide token total, across every run
           regardless of the selected sub-tab. */}
       {packageHasTokenData && (
-        <p className="text-[10px] text-amber-600 text-right pr-1">
+        <p className="text-[11px] text-amber-600 text-right pr-1">
           Hunt package total: {packageTokenTotal.toLocaleString()} tokens across {runs.length} run
           {runs.length === 1 ? '' : 's'}
         </p>

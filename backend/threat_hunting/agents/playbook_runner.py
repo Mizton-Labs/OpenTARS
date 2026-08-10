@@ -109,6 +109,42 @@ async def _wait_for_terminal(run_ids: list[str]) -> list[str]:
     return completed
 
 
+def _resolve_playbook_run_config(playbook: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Build the `run_config` (ioc_mode/ioc_cleaning_options) for one fired
+    model's run (issue-local-042).
+
+    Previously every playbook-fired run always used `run_config={}`,
+    silently ignoring whatever IOC-cleaning mode/options were configured —
+    a playbook run could never apply anything but the app-wide default,
+    with no way for the playbook to say otherwise.
+
+    `ioc_cleaning_enabled=False` (the default, and every pre-existing
+    playbook) reproduces that exact prior behavior unchanged. When enabled,
+    'general' uses the one ioc_mode/ioc_cleaning_options stored on the
+    playbook itself for every model; 'per_model' uses the entry's own
+    ioc_mode/ioc_cleaning_options — an entry with neither set falls through
+    to {} (the configured app-wide default), same as an unconfigured
+    'general' playbook.
+    """
+    if not playbook.get("ioc_cleaning_enabled"):
+        return {}
+    scope = playbook.get("ioc_cleaning_scope")
+    if scope == "general":
+        ioc_mode = playbook.get("ioc_mode")
+        ioc_cleaning_options = playbook.get("ioc_cleaning_options")
+    elif scope == "per_model":
+        ioc_mode = entry.get("ioc_mode")
+        ioc_cleaning_options = entry.get("ioc_cleaning_options")
+    else:
+        return {}
+    if not ioc_mode:
+        return {}
+    run_config: dict[str, Any] = {"ioc_mode": ioc_mode}
+    if ioc_mode == "active_cleaning" and ioc_cleaning_options:
+        run_config["ioc_cleaning_options"] = ioc_cleaning_options
+    return run_config
+
+
 async def _run_playbook_job(
     job_id: str,
     hunt_package_id: str,
@@ -125,14 +161,21 @@ async def _run_playbook_job(
     playbook_id = playbook["id"]
     playbook_name = playbook["name"]
 
+    from backend.config.loader import load_th_research_effort
+
     try:
         run_ids: list[str] = []
         for entry in playbook["models"]:
+            # issue-local-042: per-model effort override — falls back to the
+            # configured default effort, same resolution a manual run/re-run
+            # with no explicit choice uses.
+            effort = entry.get("effort") or load_th_research_effort()
             record = await start_generation(
                 hunt_package_id,
                 provider_name=entry.get("provider_name"),
                 model_name=entry.get("model_name"),
-                run_config={},
+                research_effort=effort,
+                run_config=_resolve_playbook_run_config(playbook, entry),
                 created_by=created_by,
                 playbook_id=playbook_id,
                 playbook_name=playbook_name,

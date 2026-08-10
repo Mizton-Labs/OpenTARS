@@ -18,6 +18,10 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       ...actual.api,
+      // issue-local-042 (item 27): RunsStatusTable (embedded per package in
+      // Table density, the default here) now also fetches the configured
+      // page size — mocked so real fetches never fire in these tests.
+      getThRunsTablePageSize: vi.fn().mockResolvedValue({ th_runs_table_page_size: 10 }),
       threatHunting: {
         ...actual.api.threatHunting,
         listPackages: vi.fn(),
@@ -109,14 +113,14 @@ describe('ThreatHunting list — pagination (issue-local-018 follow-up)', () => 
     )
   }
 
-  it('shows only the first page (default size 20) and a page footer when there are more packages', async () => {
+  it('shows only the first page (default size 10, issue-local-042 item 27) and a page footer when there are more packages', async () => {
     vi.mocked(api.threatHunting.listPackages).mockResolvedValue(makeManyPkgs(45))
     renderList()
 
     await screen.findByText('Package 0')
-    expect(screen.getByText('Package 19')).toBeInTheDocument()
-    expect(screen.queryByText('Package 20')).not.toBeInTheDocument()
-    expect(screen.getByText('Page 1 of 3 · 45 total')).toBeInTheDocument()
+    expect(screen.getByText('Package 9')).toBeInTheDocument()
+    expect(screen.queryByText('Package 10')).not.toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 5 · 45 total')).toBeInTheDocument()
   })
 
   it('does not show pagination controls when everything fits on one page', async () => {
@@ -133,13 +137,13 @@ describe('ThreatHunting list — pagination (issue-local-018 follow-up)', () => 
     await screen.findByText('Package 0')
 
     fireEvent.click(screen.getByLabelText('Next page'))
-    await screen.findByText('Package 20')
+    await screen.findByText('Package 10')
     expect(screen.queryByText('Package 0')).not.toBeInTheDocument()
-    expect(screen.getByText('Page 2 of 3 · 45 total')).toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 5 · 45 total')).toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText('Previous page'))
     await screen.findByText('Package 0')
-    expect(screen.queryByText('Package 20')).not.toBeInTheDocument()
+    expect(screen.queryByText('Package 10')).not.toBeInTheDocument()
   })
 
   it('changing the page-size dropdown re-pages the list and persists to localStorage', async () => {
@@ -306,6 +310,53 @@ describe('ThreatHunting list — Simple density mode (issue-local-038)', () => {
     await screen.findByText('Test Package')
 
     expect(screen.queryByText('Intake')).not.toBeInTheDocument()
+  })
+})
+
+// issue-local-042 (item 9): a one-sentence, auto-derived subtitle once
+// analysis has produced one — only shown when the package has no
+// user-written description, in every density mode.
+describe('ThreatHunting list — brief_summary subtitle (issue-local-042)', () => {
+  it('shows brief_summary as the subtitle when there is no description (card view)', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: '', brief_summary: 'APT42 targets defense contractors.' }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    expect(screen.getByText('APT42 targets defense contractors.')).toBeInTheDocument()
+  })
+
+  it('prefers the user-written description over brief_summary (card view)', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: 'My own notes', brief_summary: 'APT42 targets defense contractors.' }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    expect(screen.getByText('My own notes')).toBeInTheDocument()
+    expect(screen.queryByText('APT42 targets defense contractors.')).not.toBeInTheDocument()
+  })
+
+  it('shows neither line when both description and brief_summary are empty', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({ description: '', brief_summary: null }),
+    ])
+    renderList()
+    expect(await screen.findByText('Test Package')).toBeInTheDocument()
+  })
+
+  it('shows brief_summary as the subtitle in Table density mode too', async () => {
+    vi.mocked(api.threatHunting.listPackages).mockResolvedValue([
+      makePkg({
+        description: '',
+        brief_summary: 'APT42 targets defense contractors.',
+        runs: [{ id: 'r1', hunt_package_id: 'pkg-1', generation_status: 'completed', created_at: '2026-01-01T00:00:00Z' }],
+        run_count: 1,
+      }),
+    ])
+    renderList()
+    await screen.findByText('Test Package')
+    fireEvent.click(screen.getByRole('button', { name: /^table$/i }))
+    expect(await screen.findByText('APT42 targets defense contractors.')).toBeInTheDocument()
   })
 })
 

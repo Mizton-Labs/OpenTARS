@@ -21,6 +21,8 @@ vi.mock('../api/client', async (importOriginal) => {
       setHuntIdPrefix: vi.fn(),
       getThQueryLanguages: vi.fn(),
       setThQueryLanguages: vi.fn(),
+      getThRunsTablePageSize: vi.fn().mockResolvedValue({ th_runs_table_page_size: 10 }),
+      setThRunsTablePageSize: vi.fn(),
     },
   }
 })
@@ -83,5 +85,19 @@ describe('ThreatHuntingSettingsTab Default Query Languages (issue-local-041)', (
     expect(
       screen.getByText(/At least one query language should be enabled/),
     ).toBeInTheDocument()
+  })
+})
+
+describe('ThreatHuntingSettingsTab Runs Table Page Size (issue-local-042 item 27)', () => {
+  it('renders the configured value and saves an edited one', async () => {
+    vi.mocked(api.getThRunsTablePageSize).mockResolvedValue({ th_runs_table_page_size: 25 })
+    renderTab()
+    await screen.findByText('Runs Table Page Size')
+
+    const input = screen.getByDisplayValue('25')
+    fireEvent.change(input, { target: { value: '40' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+
+    await waitFor(() => expect(api.setThRunsTablePageSize).toHaveBeenCalledWith(40))
   })
 })

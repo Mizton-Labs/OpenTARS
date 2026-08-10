@@ -68,11 +68,17 @@ export default function ThreatHuntingSettingsTab() {
     queryKey: ['th-query-languages'],
     queryFn: () => api.getThQueryLanguages(),
   })
+  // issue-local-042 (item 27): RunsStatusTable page size.
+  const { data: runsTablePageSizeData, isLoading: runsTablePageSizeLoading } = useQuery({
+    queryKey: ['th-runs-table-page-size'],
+    queryFn: () => api.getThRunsTablePageSize(),
+  })
 
   const [effort, setEffort] = useState<ResearchEffort>('high')
   const [pdfEnabled, setPdfEnabled] = useState(true)
   const [markdownEnabled, setMarkdownEnabled] = useState(true)
   const [huntIdPrefix, setHuntIdPrefix] = useState('TH')
+  const [runsTablePageSize, setRunsTablePageSize] = useState(10)
   const [queryLanguages, setQueryLanguages] = useState<THQueryLanguages>({
     spl: true,
     kql: true,
@@ -106,18 +112,26 @@ export default function ThreatHuntingSettingsTab() {
     }
   }, [queryLanguagesData])
 
+  useEffect(() => {
+    if (runsTablePageSizeData?.th_runs_table_page_size != null) {
+      setRunsTablePageSize(runsTablePageSizeData.th_runs_table_page_size)
+    }
+  }, [runsTablePageSizeData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setThResearchEffort(effort)
       await api.setThReportFormats({ pdf: pdfEnabled, markdown: markdownEnabled })
       await api.setHuntIdPrefix(huntIdPrefix)
       await api.setThQueryLanguages(queryLanguages)
+      await api.setThRunsTablePageSize(runsTablePageSize)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['th-research-effort'] })
       qc.invalidateQueries({ queryKey: ['th-report-formats'] })
       qc.invalidateQueries({ queryKey: ['hunt-id-prefix'] })
       qc.invalidateQueries({ queryKey: ['th-query-languages'] })
+      qc.invalidateQueries({ queryKey: ['th-runs-table-page-size'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
@@ -130,14 +144,16 @@ export default function ThreatHuntingSettingsTab() {
     elasticsearch: true,
   }
 
-  const isLoading = effortLoading || formatsLoading || prefixLoading || queryLanguagesLoading
+  const isLoading =
+    effortLoading || formatsLoading || prefixLoading || queryLanguagesLoading || runsTablePageSizeLoading
   const isDirty =
     effort !== (effortData?.th_research_effort ?? 'high') ||
     pdfEnabled !== (formatsData?.th_report_formats?.pdf ?? true) ||
     markdownEnabled !== (formatsData?.th_report_formats?.markdown ?? true) ||
     huntIdPrefix !== (prefixData?.hunt_id_prefix ?? 'TH') ||
     JSON.stringify(queryLanguages) !==
-      JSON.stringify(queryLanguagesData?.th_query_languages ?? DEFAULT_QUERY_LANGUAGES_FALLBACK)
+      JSON.stringify(queryLanguagesData?.th_query_languages ?? DEFAULT_QUERY_LANGUAGES_FALLBACK) ||
+    runsTablePageSize !== (runsTablePageSizeData?.th_runs_table_page_size ?? 10)
 
   if (isLoading) {
     return (
@@ -390,6 +406,26 @@ export default function ThreatHuntingSettingsTab() {
             At least one query language should be enabled for query drafting to work.
           </p>
         )}
+      </div>
+
+      {/* Runs Table Page Size (issue-local-042 item 27) */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+          Runs Table Page Size
+        </p>
+        <p className="text-xs text-gray-500">
+          How many runs are shown per page in a hunt package's runs table — both the table
+          embedded per package in the Hunt Packages list (Table view) and the one shown inside
+          an open hunt package.
+        </p>
+        <input
+          type="number"
+          min={5}
+          max={200}
+          className="input w-24"
+          value={runsTablePageSize}
+          onChange={(e) => setRunsTablePageSize(Math.max(5, Math.min(200, Number(e.target.value) || 10)))}
+        />
       </div>
 
       {/* Save */}

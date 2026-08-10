@@ -36,6 +36,15 @@ vi.mock('../api/client', async () => {
 import { api } from '../api/client'
 import HuntPlaybooksTab from '../pages/configuration/HuntPlaybooksTab'
 
+// issue-local-042: checkboxes became Toggle (role="switch") buttons with no
+// associated <label>, so tests locate the switch via its row's descriptive
+// text instead of getByLabelText — same "find text, scope to its row"
+// pattern apiAccessTab.test.tsx/userManagementOrg.test.tsx already use for
+// their own multi-checkbox lists (there via closest('label')).
+function switchNear(text: string | RegExp): HTMLElement {
+  return screen.getByText(text).closest('div')!.querySelector('[role="switch"]') as HTMLElement
+}
+
 function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -67,6 +76,7 @@ function makePlaybook(overrides: Partial<THPlaybook> = {}): THPlaybook {
     auto_compare_full: false,
     auto_create_run_from_recommendations: false,
     auto_generate_full_report: false,
+    ioc_cleaning_enabled: false,
     created_at: '2026-01-01T00:00:00Z',
     created_by: null,
     updated_at: '2026-01-01T00:00:00Z',
@@ -112,7 +122,7 @@ describe('HuntPlaybooksTab — create', () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
 
-    await screen.findByLabelText(/openai-prod · gpt-4o-mini/)
+    await screen.findByText(/openai-prod · gpt-4o-mini/)
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 
     fireEvent.change(screen.getByPlaceholderText(/multi-model triage/i), {
@@ -120,7 +130,7 @@ describe('HuntPlaybooksTab — create', () => {
     })
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 
-    fireEvent.click(screen.getByLabelText(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 
@@ -132,8 +142,8 @@ describe('HuntPlaybooksTab — create', () => {
     fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
       target: { value: 'PB1' },
     })
-    fireEvent.click(screen.getByLabelText(/openai-prod · gpt-4o-mini/))
-    fireEvent.click(screen.getByText(/automatically approve the analysis phase/i))
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/automatically approve the analysis phase/i))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() =>
@@ -147,33 +157,51 @@ describe('HuntPlaybooksTab — create', () => {
     )
   })
 
+  it('lets a per-model effort be picked, and submits it on the model entry', async () => {
+    vi.mocked(api.threatHunting.playbooks.create).mockResolvedValue(makePlaybook())
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
+      target: { value: 'PB1' },
+    })
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(screen.getByRole('button', { name: 'high' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.playbooks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          models: [{ provider_name: 'openai-prod', model_name: 'gpt-4o-mini', effort: 'high' }],
+        }),
+      ),
+    )
+  })
+
   it('reveals the preliminary/full sub-toggles only once auto_run_comparison is on, and hides them again when turned off', async () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
 
     expect(screen.queryByText('Preliminary Analysis')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
     expect(screen.getByText('Preliminary Analysis')).toBeInTheDocument()
     expect(screen.getByText('Full Assessment')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
     expect(screen.queryByText('Preliminary Analysis')).not.toBeInTheDocument()
   })
 
   it('the recommendation-run toggle is disabled until Preliminary Analysis is checked', async () => {
     renderTab()
     fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
-    fireEvent.click(screen.getByText(/automatically run comparison assessment/i))
+    fireEvent.click(switchNear(/automatically run comparison assessment/i))
 
-    const recToggle = screen
-      .getByText(/automatically create a new run from the preliminary analysis recommendations/i)
-      .closest('label')!
-      .querySelector('input')!
-    expect(recToggle).toBeDisabled()
+    const recToggle = switchNear(/automatically create a new run from the preliminary analysis recommendations/i)
+    expect(recToggle).toHaveAttribute('disabled')
 
-    fireEvent.click(screen.getByText('Preliminary Analysis'))
-    expect(recToggle).toBeEnabled()
+    fireEvent.click(switchNear('Preliminary Analysis'))
+    expect(recToggle).not.toHaveAttribute('disabled')
   })
 
   it('cancel discards the form without calling create()', async () => {
@@ -246,5 +274,111 @@ describe('HuntPlaybooksTab — edit/clone/delete', () => {
     fireEvent.click(await screen.findByTitle('Delete'))
     expect(api.threatHunting.playbooks.delete).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+})
+
+describe('HuntPlaybooksTab — IOC cleaning config (issue-local-042 item 20)', () => {
+  it('is off by default, and shows the General/Per-model choice once enabled', async () => {
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    expect(screen.queryByText('General (whole playbook)')).not.toBeInTheDocument()
+
+    fireEvent.click(switchNear(/Configure IOC cleaning for this playbook's runs/i))
+    expect(await screen.findByText('General (whole playbook)')).toBeInTheDocument()
+    // Defaults to General once enabled.
+    expect(screen.getByRole('button', { name: 'Tagging only' })).toBeInTheDocument()
+  })
+
+  it('submits general-scope IOC cleaning config on create()', async () => {
+    vi.mocked(api.threatHunting.playbooks.create).mockResolvedValue(makePlaybook())
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
+      target: { value: 'PB1' },
+    })
+    await screen.findByText(/openai-prod · gpt-4o-mini/)
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/Configure IOC cleaning for this playbook's runs/i))
+    fireEvent.click(screen.getByRole('button', { name: 'Active cleaning' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.playbooks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ioc_cleaning_enabled: true,
+          ioc_cleaning_scope: 'general',
+          ioc_mode: 'active_cleaning',
+        }),
+      ),
+    )
+  })
+
+  it('per-model scope surfaces an IOC editor on the model row instead of a general one', async () => {
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    await screen.findByText(/openai-prod · gpt-4o-mini/)
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/Configure IOC cleaning for this playbook's runs/i))
+    fireEvent.click(screen.getByRole('button', { name: 'Per model' }))
+
+    expect(screen.getByText('Set per model above, in the Models to run list.')).toBeInTheDocument()
+    // The IOC mode editor now appears once, attached to the model row, not
+    // as a second "general" editor.
+    expect(screen.getAllByRole('button', { name: 'Tagging only' })).toHaveLength(1)
+  })
+
+  it('submits per-model IOC cleaning config on create()', async () => {
+    vi.mocked(api.threatHunting.playbooks.create).mockResolvedValue(makePlaybook())
+    renderTab()
+    fireEvent.click(await screen.findByRole('button', { name: /new playbook/i }))
+
+    fireEvent.change(await screen.findByPlaceholderText(/multi-model triage/i), {
+      target: { value: 'PB1' },
+    })
+    await screen.findByText(/openai-prod · gpt-4o-mini/)
+    fireEvent.click(switchNear(/openai-prod · gpt-4o-mini/))
+    fireEvent.click(switchNear(/Configure IOC cleaning for this playbook's runs/i))
+    fireEvent.click(screen.getByRole('button', { name: 'Per model' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Active cleaning' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(api.threatHunting.playbooks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ioc_cleaning_enabled: true,
+          ioc_cleaning_scope: 'per_model',
+          models: [
+            expect.objectContaining({
+              model_name: 'gpt-4o-mini',
+              ioc_mode: 'active_cleaning',
+            }),
+          ],
+        }),
+      ),
+    )
+  })
+
+  it('edit pre-fills the existing IOC cleaning config', async () => {
+    vi.mocked(api.threatHunting.playbooks.list).mockResolvedValue([
+      makePlaybook({
+        ioc_cleaning_enabled: true,
+        ioc_cleaning_scope: 'general',
+        ioc_mode: 'active_cleaning',
+        ioc_cleaning_options: {
+          remove_noisy: true,
+          remove_legit_domains: true,
+          remove_cdn_ranges: true,
+          remove_legit_services: true,
+        },
+      }),
+    ])
+    renderTab()
+
+    fireEvent.click(await screen.findByTitle('Edit'))
+    expect(await screen.findByText('General (whole playbook)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Active cleaning' })).toHaveClass('bg-brand-900/20')
   })
 })

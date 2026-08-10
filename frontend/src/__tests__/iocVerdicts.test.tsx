@@ -419,6 +419,29 @@ describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
     expect(screen.getByRole('button', { name: /Show Pipeline Diagram/i })).toBeInTheDocument()
   })
 
+  // issue-local-042 (item 4b): Threat Context's summary now renders through
+  // ReportMarkdown, so an inline fenced code block the model wrote into its
+  // prose gets the code-card treatment instead of literal backticks.
+  it('renders a code fence in the Threat Context summary as a code card', async () => {
+    vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+      hunt_package_id: 'pkg-1',
+      run_id: 'run-1',
+      generation_status: 'awaiting_approval',
+      threat_context: {
+        summary: 'Confirm with:\n\n```spl\nindex=dns dest_ip=1.2.3.4\n```',
+      },
+      hypotheses: [],
+    })
+    vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+
+    renderTab()
+
+    const code = await screen.findByText('index=dns dest_ip=1.2.3.4')
+    expect(code.tagName).toBe('CODE')
+    expect(screen.queryByText(/```/)).not.toBeInTheDocument()
+  })
+
   describe('Approve gating on unapplied IOC verdict changes (issue-local-018 follow-up)', () => {
     beforeEach(() => {
       vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({

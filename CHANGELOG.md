@@ -9,6 +9,88 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the flowchart's hover tooltips never actually worked, for three separate reasons (issue-local-042 follow-up)
+
+Following up on the "make the diagram reachable" fix above: even once visible, hovering a node
+still didn't show anything. Root-caused with a real Playwright session against a live server
+(bounding boxes, `elementFromPoint`, and an actual `.hover()` call) rather than guessing:
+
+- **The initial view-fit ran before node dimensions were measured.** `fitView` fired inside
+  `onInit`, which React Flow's own docs note doesn't guarantee — on a live run this produced a
+  transform that placed the focus node ~320px above the visible viewport. Fixed with the
+  `useNodesInitialized()` hook instead, in a small child component rendered inside `<ReactFlow>`.
+- **The tooltip-bearing element only covered ~45% of the visibly colored node** — `h-full` doesn't
+  resolve against an ancestor whose height comes only from padding, so the hoverable area collapsed
+  to roughly the text's own line-height. Fixed with `absolute inset-0`, which fills the positioned
+  ancestor's box regardless of how its height was resolved.
+- **The actual reason hover never worked, independent of the other two**: React Flow sets
+  `pointer-events: none` *inline* on a node unless it's selectable, draggable, or has a mouse
+  handler — beating any CSS rule, including its own base stylesheet's `pointer-events: all`. This
+  diagram intentionally disables selection/dragging (correct — it's read-only) but never attached a
+  handler, so every node was unhoverable from the start. Fixed with a no-op `onNodeMouseEnter`.
+
+### Added/Fixed — Hunt Package header v2, query/artifact cards everywhere, light-theme button contrast, larger table text, bulleted actions, Threat Context stat cards (issue-local-042 follow-up)
+
+- **Header, take 2**: action buttons back to the top right (same row as the HuntID/RunID badges);
+  the title and subtitle each get their own row below that, instead of inline with the badges.
+- **Query/artifact cards extended** to hunting-lead task query hints (previously plain "Hint: ..."
+  mono text), indented under their parent task.
+- **Fixed: the "Comparison Assessment" button was very hard to read in Light theme** — light purple
+  text on a lightly-tinted purple background, both fixed (non-theme-aware) Tailwind colors that
+  washed out once the page background went near-white. Scoped to that one button, not the
+  underlying Tailwind classes, so other unrelated purple usage elsewhere is untouched.
+- **Table text size increased** a step across the all-runs status table.
+- **Hypothesis Suggested Actions** are now a real bulleted list, not stacked plain text.
+- **Threat Context's Actor/Campaign/Confidence** are now their own stat cards (matching the
+  Evidence & Coverage card style) instead of plain inline text in a 2-column grid.
+
+### Added/Fixed — Hunt Package header + rename, per-run cancel, code/artifact cards, PDF evidence appendix, post-wizard evidence list, Playbook toggles + per-model effort, run-table cell layout, auto-generated hunt subtitle, second theme-contrast pass (issue-local-042)
+
+- **New: Rename button** for a hunt package, in the header's action row (now its own row below the
+  title/description, decluttering what used to be a single crowded line).
+- **Fixed: Cancel was a single header button** tied to whichever run the run-selector happened to
+  have active. It's now a per-row action in the all-runs table, scoped to that specific run, and
+  reachable for any running run without switching the selector to it first.
+- **New: code/artifact cards, consistently.** Query drafts and the deep-retrohunt SPL macro now get
+  the same bordered, monospace code-card treatment in the Report view that Analysis already had (the
+  Report previously only stored a query *count*, never the actual queries). LLM-authored narrative
+  text (executive summaries, findings, threat context, hypothesis descriptions) now renders through
+  markdown instead of plain text, so an inline code snippet the model writes into its prose also gets
+  the code-card look instead of showing literal backticks — same no-links/no-images/no-raw-HTML
+  policy as the existing SmartSearch markdown renderer, since this text derives from evidence a hunt
+  is investigating.
+- **Fixed: generated PDF/Markdown reports front-loaded every evidence item's full extracted text**
+  right after the executive summary, making the top of the document hard to read through. A brief
+  "Evidence References" list (label/type/source, no content) now sits there instead, pointing to a
+  new "Appendix: Evidence" section with the full content at the true end of the document, after
+  Findings and Conclusion.
+- **Fixed: after the new-hunt wizard, the app jumped straight to Analysis**, skipping the Evidence
+  tab entirely — so newly-added evidence was never actually shown before generation started. It now
+  lands on Evidence (already listing every item, with a "Go to Analysis" button) as intended.
+- **Playbooks: checkboxes replaced with the app's Toggle switch component**, and a **per-model
+  research-effort override** (low/medium/high) can now be set per selected model — unset falls back
+  to the configured default, same as a manual run.
+- **Run table**: Run ID now stays single-line like the phase track (never wraps); the Model, IOC
+  total, and Created columns each deliberately split their content across two rows within the cell
+  (name/effort, sanitized+removed/total, date/time) instead of running long on one line.
+- **New: an auto-derived one-sentence subtitle** on the Hunt Packages list, once analysis has
+  produced a threat-context summary — the first sentence of it, computed at read time (no dedicated
+  LLM call, no stored/stale copy), shown only when the package has no user-written description.
+- **Second dark-theme contrast pass**: issue-local-041 brightened the shared `gray-400/500/600`
+  variable once, but that variable also drives `border-gray-*`/`bg-gray-*`, capping how far it could
+  go without washing out borders. A scoped `.text-gray-500/600/700` override (mirroring the fix
+  already applied to Light) pushes muted body/subtitle text brighter on all four dark themes
+  (Classic/Energy/Ocean/RedHunter) without touching any border or background.
+
+### Fixed — the issue-local-041 flowchart hover tooltips were unreachable once a run finished (issue-local-041 follow-up)
+
+`WorkflowVisualizer`/`ReactFlowVisualizer` (and its new hover tooltips) only ever rendered while a
+run's status was `'running'` — a transient state lasting seconds. Once a run reached
+`awaiting_approval` or `completed`, the review screen switched to a different component that never
+rendered the diagram at all, so the tooltips were unreachable during the review that happens almost
+all the time. A collapsed-by-default "Show Pipeline Diagram" toggle, mirroring the existing
+"Show Hunting Artifacts Relationship" toggle, now surfaces it there too.
+
 ### Added/Fixed — Hunt Package UI fixes, Playbooks ownership + sidebar move, SIEM query-language defaults, theme contrast pass, 4-tier logging + token/prompt inspection (issue-local-041)
 
 **Hunt Package UI fixes**

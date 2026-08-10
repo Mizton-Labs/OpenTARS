@@ -1,7 +1,10 @@
 /**
- * Tests for issue-local-019's Cancel-run button in HuntDetail.tsx — only
- * shown while the active run is actually 'running', asks for confirmation,
- * and calls the cancel API on confirm.
+ * Tests for the Cancel-run action — originally issue-local-019's single
+ * header button in HuntDetail.tsx, moved by issue-local-042 (item 8) to a
+ * per-run action in RunsStatusTable.tsx's RunActions, so it's scoped to a
+ * specific row instead of always the run-selector's currently active run.
+ * Only shown while that row's run is actually 'running'; asks for
+ * confirmation before calling the cancel API.
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -98,37 +101,46 @@ beforeEach(() => {
   vi.mocked(api.threatHunting.cancelRun).mockResolvedValue({ generation_status: 'cancelled' })
 })
 
-describe('HuntDetail Cancel run (issue-local-019)', () => {
-  it('shows a Cancel button when the active run is running', async () => {
+describe('Per-run Cancel action (issue-local-042, moved from issue-local-019)', () => {
+  it('shows a Cancel action on a run row while that run is running', async () => {
     vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ generation_status: 'running' })])
     renderDetail()
-    expect(await screen.findByRole('button', { name: /Cancel/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Cancel this run' })).toBeInTheDocument()
   })
 
-  it('does not show a Cancel button once the run has completed', async () => {
+  it('does not show a Cancel action once the run has completed', async () => {
     vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ generation_status: 'completed' })])
     renderDetail()
     await screen.findByText('Test Package')
-    expect(screen.queryByRole('button', { name: /^Cancel$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel this run' })).not.toBeInTheDocument()
   })
 
   it('asks for confirmation before cancelling', async () => {
     vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ generation_status: 'running' })])
     renderDetail()
-    fireEvent.click(await screen.findByRole('button', { name: /^Cancel$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel this run' }))
 
     expect(await screen.findByText(/Cancel this run\?/)).toBeInTheDocument()
     expect(api.threatHunting.cancelRun).not.toHaveBeenCalled()
   })
 
-  it('calls cancelRun with the active run id on confirm', async () => {
+  it('calls cancelRun with that row\'s run id on confirm', async () => {
     vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ id: 'run-42', generation_status: 'running' })])
     renderDetail()
-    fireEvent.click(await screen.findByRole('button', { name: /^Cancel$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel this run' }))
     await screen.findByText(/Cancel this run\?/)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel run' }))
 
     await waitFor(() => expect(api.threatHunting.cancelRun).toHaveBeenCalledWith('pkg-1', 'run-42'))
+  })
+
+  it('does not show a Cancel button in the HuntDetail header (moved to the per-run row)', async () => {
+    vi.mocked(api.threatHunting.listRuns).mockResolvedValue([makeRun({ generation_status: 'running' })])
+    renderDetail()
+    await screen.findByRole('button', { name: 'Cancel this run' })
+    // The old header button had visible text "Cancel"; the per-row action is
+    // icon-only (title attribute), so an exact "Cancel" name must not exist.
+    expect(screen.queryByRole('button', { name: /^Cancel$/ })).not.toBeInTheDocument()
   })
 })

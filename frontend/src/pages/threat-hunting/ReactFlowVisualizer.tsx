@@ -19,6 +19,8 @@ import {
   Controls,
   Handle,
   Position,
+  useNodesInitialized,
+  useReactFlow,
   type Node,
   type NodeProps,
   type Edge,
@@ -62,10 +64,23 @@ function nodeTooltip(id: string, label: string, log: THStepLog | undefined): str
 // react node renderer solely to add a native `title` attribute (the
 // simplest, zero-dependency way to get a browser hover tooltip); keeps
 // invisible top/bottom handles so edges still attach exactly as before.
+//
+// issue-local-042 follow-up: `w-full h-full` only resolves against an
+// ancestor with an explicitly-set (not intrinsic/content) height — the
+// outer `.react-flow__node` wrapper doesn't have one (only padding/
+// min-width come from `node.style`), so the height rule silently fell back
+// to `auto` and this div only ever covered the text's own line-height —
+// live measurement on a real run found it covering ~45% of the visibly
+// colored node, so hovering its padding/edges (most of what a user aims
+// for) never reached the `title`-bearing element at all. `absolute inset-0`
+// fills the nearest *positioned* ancestor's box directly (`.react-flow__node`
+// is already `position: absolute` per React Flow's own base CSS), which
+// works regardless of how that ancestor's height was resolved — so this
+// always covers the node's full rendered/visible area.
 function TooltipNode({ data }: NodeProps) {
   const { label, tooltip } = data as { label: string; tooltip?: string }
   return (
-    <div title={tooltip} className="w-full h-full flex items-center justify-center whitespace-pre-line">
+    <div title={tooltip} className="absolute inset-0 flex items-center justify-center whitespace-pre-line">
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       {label as string}
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
@@ -73,6 +88,36 @@ function TooltipNode({ data }: NodeProps) {
   )
 }
 const NODE_TYPES = { default: TooltipNode }
+
+// issue-local-042 follow-up: the scoped initial `fitView` used to run
+// synchronously inside `onInit`, which React Flow's own docs note does NOT
+// guarantee node dimensions have been measured yet — usually harmless (there
+// was enough incidental delay before onInit fired for it to work out), but
+// once the diagram could mount on-demand from a freshly-toggled collapsible
+// section (HuntingPackageDraft's "Show Pipeline Diagram"), onInit routinely
+// fired before measurement, and fitView's bounding-box math over
+// still-zero-size nodes produced a wildly wrong transform — live
+// measurement found the focus node's own fitted position at y≈-320px,
+// entirely above the visible viewport, so nothing was hoverable at all.
+// `useNodesInitialized()` is React Flow's documented mechanism for exactly
+// this: it flips true only once every node has actually been measured.
+// Rendered as a child of `<ReactFlow>` (not in ReactFlowVisualizer's own
+// body) because these hooks require the provider context `<ReactFlow>`
+// establishes for its children — same reason `<Background>`/`<Controls>`
+// are children here rather than called directly.
+function FitViewOnReady({ focusIds }: { focusIds: string[] }) {
+  const nodesInitialized = useNodesInitialized()
+  const { fitView } = useReactFlow()
+  const firedRef = useRef(false)
+
+  useEffect(() => {
+    if (!nodesInitialized || firedRef.current) return
+    firedRef.current = true
+    fitView({ nodes: focusIds.map((id) => ({ id })), padding: 0.4, duration: 0 })
+  }, [nodesInitialized, focusIds, fitView])
+
+  return null
+}
 
 const PIPELINE_STEPS = [
   // ── LangGraph pipeline ──────────────────────────────────────────────────────
@@ -182,7 +227,7 @@ export default function ReactFlowVisualizer({
         color: completed.has(s.id) ? '#d1fae5' : active === s.id ? '#bfdbfe' : '#6b7280',
         borderRadius: '8px',
         padding: '6px 12px',
-        fontSize: '11px',
+        fontSize: '10px',
         fontWeight: 500,
         minWidth: '160px',
         textAlign: 'center' as const,
@@ -235,7 +280,7 @@ export default function ReactFlowVisualizer({
             borderRadius: '20px',
             color,
             padding: '4px 10px',
-            fontSize: '10px',
+            fontSize: '9px',
             fontWeight: 500,
             minWidth: '120px',
             textAlign: 'center' as const,
@@ -265,7 +310,7 @@ export default function ReactFlowVisualizer({
               border: '1px solid #7c3aed',
               borderRadius: '4px',
               color: '#c4b5fd',
-              fontSize: '10px',
+              fontSize: '9px',
               padding: '4px 8px',
             },
           })
@@ -323,9 +368,14 @@ export default function ReactFlowVisualizer({
   // starts and this chart mounts), focus the view tightly on Evidence +
   // the initial/root agent node (intake_classifier) instead of fitting the
   // whole ~1800px-tall pipeline, which zooms out so far the starting point
-  // is barely visible. `fitView`'s boolean prop only runs once at mount and
-  // always targets every current node, so it can't express "just these
-  // nodes" — `onInit` gives us the instance to call a scoped `fitView` on.
+  // is barely visible. issue-local-042 follow-up: the actual scoped fitView
+  // call moved into <FitViewOnReady> (rendered below, as a child of
+  // <ReactFlow>) — see its comment for why onInit itself was the wrong place
+  // to call it.
+  const focusIds = useMemo(
+    () => ['intake_classifier', ...intakeSources.map((_, i) => `src_${i}`)],
+    [intakeSources],
+  )
   const instanceRef = useRef<ReactFlowInstance | null>(null)
   // issue-local-041: the tracking effect below used to depend only on
   // [trackWorkflow, active] — on every remount (e.g. switching tabs and
@@ -339,15 +389,10 @@ export default function ReactFlowVisualizer({
   // giving the effect a deps change to react to on every mount.
   const [isReady, setIsReady] = useState(false)
 
-  const handleInit = useCallback(
-    (instance: ReactFlowInstance) => {
-      instanceRef.current = instance
-      setIsReady(true)
-      const focusIds = ['intake_classifier', ...intakeSources.map((_, i) => `src_${i}`)]
-      instance.fitView({ nodes: focusIds.map((id) => ({ id })), padding: 0.4, duration: 0 })
-    },
-    [intakeSources],
-  )
+  const handleInit = useCallback((instance: ReactFlowInstance) => {
+    instanceRef.current = instance
+    setIsReady(true)
+  }, [])
 
   // issue-local-018 follow-up: "Track workflow" — while enabled, re-center
   // on whichever node is currently active every time it changes, so the
@@ -371,11 +416,27 @@ export default function ReactFlowVisualizer({
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
+        // issue-local-042 follow-up: THE actual reason hover never worked,
+        // at any point — React Flow computes
+        // `hasPointerEvents = isSelectable || isDraggable || onClick ||
+        // onMouseEnter || onMouseMove || onMouseLeave` per node and sets
+        // `pointer-events: none` INLINE (higher specificity than any CSS
+        // rule, including its own base stylesheet's
+        // `.react-flow__node { pointer-events: all }`) whenever that's
+        // false. `elementsSelectable={false}` + `nodesDraggable={false}`
+        // above (both correct — this is a read-only diagram) with no mouse
+        // handler meant every node had pointer-events:none the whole time,
+        // so a hover could never reach the `title`-bearing element to begin
+        // with, independent of the fitView-positioning and inset-coverage
+        // fixes elsewhere in this file. A no-op handler is enough to flip
+        // `hasPointerEvents` true without adding any real interactivity.
+        onNodeMouseEnter={() => {}}
         proOptions={{ hideAttribution: true }}
         colorMode="dark"
       >
         <Background color="#374151" gap={16} size={1} />
         <Controls showInteractive={false} />
+        <FitViewOnReady focusIds={focusIds} />
       </ReactFlow>
     </div>
   )

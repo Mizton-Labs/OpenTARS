@@ -37,17 +37,31 @@ import {
   Crosshair,
   Search,
   Lightbulb,
+  Code2,
 } from 'lucide-react'
 import {
   api,
   type THHuntReport,
   type THFullReport,
   type THHypothesis,
+  type THQueryDraft,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import { asDisplayText } from './llmTextUtils'
+import ReportMarkdown from '../../components/ReportMarkdown'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// issue-local-042: mirrors AnalysisTab.tsx's asQueryText — a query draft's
+// `query` field is usually a string, but tolerate a structured value too.
+function asQueryText(query: unknown): string {
+  if (typeof query === 'string') return query
+  try {
+    return JSON.stringify(query, null, 2)
+  } catch {
+    return String(query)
+  }
+}
 
 function Section({
   title,
@@ -215,20 +229,33 @@ function ThreatContextSection({ ctx }: { ctx: Record<string, unknown> }) {
 
   return (
     <div className="space-y-3">
-      {summary && <p className="text-sm text-gray-300 leading-relaxed">{summary}</p>}
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        {actor && <div><span className="text-gray-500">Actor: </span><span className="text-gray-200">{actor}</span></div>}
-        {campaign && <div><span className="text-gray-500">Campaign: </span><span className="text-gray-200">{campaign}</span></div>}
-        {confidence && (
-          <div>
-            <span className="text-gray-500">Confidence: </span>
-            <span className={clsx(
-              confidence === 'high' ? 'text-green-400' :
-              confidence === 'medium' ? 'text-amber-400' : 'text-gray-400'
-            )}>{confidence}</span>
-          </div>
-        )}
-      </div>
+      {summary && <ReportMarkdown>{summary}</ReportMarkdown>}
+      {/* issue-local-042 (item 19): Actor/Campaign/Confidence as their own
+          stat cards, matching AnalysisTab.tsx's mirror of this section. */}
+      {(actor || campaign || confidence) && (
+        <div className="grid grid-cols-3 gap-2">
+          {actor && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Actor</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={actor}>{actor}</p>
+            </div>
+          )}
+          {campaign && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Campaign</p>
+              <p className="text-base font-semibold text-gray-100 truncate" title={campaign}>{campaign}</p>
+            </div>
+          )}
+          {confidence && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-sm text-gray-500">Confidence</p>
+              <p className={clsx('text-base font-semibold capitalize', confidence === 'high' ? 'text-green-400' : confidence === 'medium' ? 'text-amber-400' : 'text-gray-400')}>
+                {confidence}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       {observations.length > 0 && (
         <ul className="space-y-1">
           {observations.map((obs, i) => (
@@ -256,7 +283,7 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
             )}>{h.relevance}</span>
           </div>
           <p className="text-base font-semibold text-gray-200">{h.title}</p>
-          <p className="text-sm text-gray-400">{h.description}</p>
+          {h.description && <ReportMarkdown>{h.description}</ReportMarkdown>}
           {h.justification && <p className="text-sm text-gray-600 italic">{h.justification}</p>}
           {/* issue-008-2C-B / issue-local-041: ioc_basis — labeled "Related IOCs" subcard, matches Analysis tab */}
           {h.ioc_basis && h.ioc_basis.length > 0 && (
@@ -271,15 +298,21 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
               </div>
             </div>
           )}
-          {/* issue-008-2C-B: suggested_actions — matches Analysis tab */}
+          {/* issue-008-2C-B: suggested_actions — matches Analysis tab.
+              issue-local-042 (item 5): a real bulleted list; (item 22.3): each
+              action is code/a query, so it gets its own indented card. */}
           {h.suggested_actions && h.suggested_actions.length > 0 && (
             <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-1">
               <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Suggested Actions</p>
-              {h.suggested_actions.map((action, i) => (
-                <p key={i} className="text-sm text-gray-400 font-mono leading-relaxed">
-                  {asDisplayText(action, ['action', 'text', 'description'])}
-                </p>
-              ))}
+              <ul className="list-disc list-outside pl-4 space-y-2">
+                {h.suggested_actions.map((action, i) => (
+                  <li key={i} className="text-sm text-gray-400 leading-relaxed marker:text-gray-600">
+                    <pre className="mt-1 ml-2 bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+                      {asDisplayText(action, ['action', 'text', 'description'])}
+                    </pre>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -312,6 +345,38 @@ function RetrohuntSummarySection({ r }: { r: THFullReport }) {
       )}
       <p className="text-sm text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
       {dr.search_hint && <p className="text-sm text-gray-400">{dr.search_hint}</p>}
+      {/* issue-local-042 (item 4): the macro's actual SPL, in the same
+          code-card treatment AnalysisTab.tsx already gives query drafts —
+          previously only the macro's name showed here. */}
+      {dr.spl_draft && (
+        <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+          {dr.spl_draft}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+// issue-local-042 (item 4): mirrors AnalysisTab.tsx's Query Drafts card —
+// the frozen report previously only carried query_drafts_count (a number),
+// never the actual queries.
+function QueryDraftsSection({ queryDrafts }: { queryDrafts: THQueryDraft[] }) {
+  return (
+    <div className="space-y-3">
+      {queryDrafts.map((q) => (
+        <div key={q.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-mono uppercase">
+              {q.language}
+            </span>
+            <p className="text-base font-semibold text-gray-200">{q.title}</p>
+          </div>
+          {q.description && <p className="text-sm text-gray-500">{q.description}</p>}
+          <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">
+            {asQueryText(q.query)}
+          </pre>
+        </div>
+      ))}
     </div>
   )
 }
@@ -544,9 +609,11 @@ export default function ReportPanel({
               <Shield className="w-4 h-4 text-brand-400" />
               <h4 className="text-base font-semibold text-gray-200">Executive Summary</h4>
             </div>
-            <p className="text-sm text-gray-300 leading-relaxed">
-              {report.full_report.executive_summary || <span className="italic text-gray-500">Not available.</span>}
-            </p>
+            {report.full_report.executive_summary ? (
+              <ReportMarkdown>{report.full_report.executive_summary}</ReportMarkdown>
+            ) : (
+              <p className="text-sm italic text-gray-500">Not available.</p>
+            )}
           </div>
 
           {/* Stats */}
@@ -573,6 +640,19 @@ export default function ReportPanel({
             <RetrohuntSummarySection r={report.full_report} />
           </Section>
 
+          {/* issue-local-042 (item 4): Query Drafts — same code-card
+              treatment AnalysisTab.tsx already gives them during review;
+              previously dropped entirely from the frozen report. */}
+          {report.full_report.query_drafts && report.full_report.query_drafts.length > 0 && (
+            <Section
+              title={`Query Drafts (${report.full_report.query_drafts.length})`}
+              icon={Code2}
+              defaultOpen={false}
+            >
+              <QueryDraftsSection queryDrafts={report.full_report.query_drafts} />
+            </Section>
+          )}
+
           {/* TTP Analysis */}
           <Section title="Behavioral TTP Analysis" icon={Crosshair} defaultOpen={false}>
             <TTPSection r={report.full_report} />
@@ -593,16 +673,7 @@ export default function ReportPanel({
           {/* issue-008-2C-C: Findings and Conclusion — placed LAST */}
           {report.full_report.findings && (
             <Section title="Findings and Conclusion" icon={CheckCircle} defaultOpen>
-              <div className="space-y-3">
-                {report.full_report.findings
-                  .split('\n\n')
-                  .filter((p: string) => p.trim())
-                  .map((para: string, i: number) => (
-                    <p key={i} className="text-sm text-gray-300 leading-relaxed">
-                      {para.trim()}
-                    </p>
-                  ))}
-              </div>
+              <ReportMarkdown>{report.full_report.findings}</ReportMarkdown>
             </Section>
           )}
         </div>

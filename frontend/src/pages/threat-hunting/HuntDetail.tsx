@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, XCircle, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy } from 'lucide-react'
+import { ArrowLeft, Trash2, RefreshCw, ChevronDown, X, MessageSquare, Send, GitCompare, Archive, ArchiveRestore, Copy, Pencil } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api, type THExtractedIOC, type THRunSummary, type THRunComment, type LLMProviderSummary, type THGenerationRecord, type THPlaybookJob, type THQueryLanguages } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
-import AddEvidenceModal from './AddEvidenceModal'
 import AnalysisTab from './AnalysisTab'
 import EvidenceTab from './EvidenceTab'
 import ExecutionPanel from './ExecutionPanel'
@@ -56,7 +55,6 @@ export default function HuntDetail({
 }) {
   const { isResearcher, isAdmin } = useAuth()
   const qc = useQueryClient()
-  const [showAddItem, setShowAddItem] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>(initialTab ?? 'evidence')
   const [activeRunId, setActiveRunId] = useState<string | undefined>(undefined)
   // issue-local-041: which of the Runs/Playbook Runs/Consolidated Runs
@@ -79,9 +77,6 @@ export default function HuntDetail({
   }
   const [newComment, setNewComment] = useState('')
 
-  // issue-local-019: cancel-run confirmation
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
-
   // issue-local-034: permanent-package-delete confirmation (admin-only)
   const [showDeletePackageConfirm, setShowDeletePackageConfirm] = useState(false)
 
@@ -91,6 +86,8 @@ export default function HuntDetail({
   // issue-local-038: clone dialog state — mirrors the list page's own
   // CloneTarget dialog (ThreatHunting.tsx), just scoped to this one package.
   const [cloneName, setCloneName] = useState<string | null>(null)
+  // issue-local-042: rename dialog state — mirrors cloneName above.
+  const [renameName, setRenameName] = useState<string | null>(null)
   const [rerunModelChoice, setRerunModelChoice] = useState<string>('')
   // issue-local-041: '' (not a hardcoded level) so the effective effort
   // below falls through to the configured default until the user actually
@@ -273,7 +270,13 @@ export default function HuntDetail({
       qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
       // A playbook job fires several runs, so there's no single one to jump
       // to — only a standalone-model run hands off its run_id.
-      if (!('run_ids' in data)) {
+      // issue-local-042 (item 21): switch to the matching sub-tab either
+      // way, so a re-run/playbook-fire's own view is what's shown next,
+      // regardless of which sub-tab happened to be selected before.
+      if ('run_ids' in data) {
+        handleRunSubTabChange('playbook')
+      } else {
+        setRunSubTab('runs')
         const newRunId = data.run_id ?? data.id
         if (newRunId) setActiveRunId(newRunId)
       }
@@ -283,15 +286,9 @@ export default function HuntDetail({
     },
   })
 
-  // issue-local-019: cancel a currently-running run
-  const cancelMut = useMutation({
-    mutationFn: () => api.threatHunting.cancelRun(pkgId, activeRunId!),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
-      qc.invalidateQueries({ queryKey: ['th-generation', pkgId, activeRunId] })
-      setShowCancelConfirm(false)
-    },
-  })
+  // issue-local-042 (item 8): cancel moved to a per-run action in
+  // RunsStatusTable.tsx — no longer a single header button tied to whichever
+  // run the run-selector happened to have active.
 
   // issue-local-034: Archive/Unarchive the whole package (reversible,
   // researcher+ — same as every other TH mutation) — reuses the existing
@@ -330,6 +327,18 @@ export default function HuntDetail({
       qc.invalidateQueries({ queryKey: ['th-packages'] })
       setCloneName(null)
       onBack()
+    },
+  })
+
+  // issue-local-042: rename this package — reuses the existing PUT
+  // /packages/{id} route (already supports a name-only partial update), no
+  // new backend endpoint needed.
+  const renameMut = useMutation({
+    mutationFn: (name: string) => api.threatHunting.updatePackage(pkgId, { name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setRenameName(null)
     },
   })
 
@@ -374,103 +383,105 @@ export default function HuntDetail({
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
+      {/* Header — issue-local-042 (item 14): back button + HuntID/RunID
+          badges on the left, every action button top-right on the same row;
+          the title gets its own row below that (with the Archived badge,
+          since it qualifies the title itself), and the subtitle/description
+          its own row below the title. */}
       <div className="flex items-center gap-3">
         <button className="btn-ghost p-1.5" onClick={onBack}>
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-100 truncate flex items-center gap-2">
-            {pkg?.hunt_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{pkg.hunt_id_display}</span>
-            )}
-            {activeRun?.run_id_display && (
-              <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
-            )}
-            {pkg?.name ?? '…'}
-            {pkg?.status === 'archived' && (
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
-                Archived
-              </span>
-            )}
-          </h1>
-          {pkg?.description && <p className="text-sm text-gray-500 truncate">{pkg.description}</p>}
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          {pkg?.hunt_id_display && (
+            <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{pkg.hunt_id_display}</span>
+          )}
+          {activeRun?.run_id_display && (
+            <span className={clsx(HUNT_ID_BADGE, 'text-sm')}>{activeRun.run_id_display}</span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          {/* issue-local-019: cancel the active run — only while it's actually running */}
-          {isResearcher && activeRun?.generation_status === 'running' && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
-              disabled={cancelMut.isPending}
-              onClick={() => setShowCancelConfirm(true)}
-              title="Cancel this run"
-            >
-              <XCircle className="w-4 h-4" />
-              Cancel
-            </button>
-          )}
-          {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
-          {canRerun && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={rerunMut.isPending || threatIntelRunning}
-              onClick={() => setShowRerunDialog(true)}
-              title={
-                threatIntelRunning
-                  ? 'Threat Intel analysis is still running for this run'
-                  : 'Re-run this hunt package — choose model and effort level'
-              }
-            >
-              <RefreshCw className="w-4 h-4" />
-              Re-run
-            </button>
-          )}
-          {isResearcher && (
-            <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => setShowAddItem(true)}>
-              <Plus className="w-4 h-4" />
-              Add Item
-            </button>
-          )}
-          {/* issue-local-038: clone this package */}
-          {isResearcher && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              onClick={() => setCloneName(`Copy of ${pkg?.name ?? ''}`)}
-              title="Clone this hunt package"
-            >
-              <Copy className="w-4 h-4" />
-              Clone
-            </button>
-          )}
-          {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
-          {isResearcher && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm"
-              disabled={archivePackageMut.isPending}
-              onClick={() => archivePackageMut.mutate()}
-              title={pkg?.status === 'archived' ? 'Unarchive this hunt package' : 'Archive this hunt package'}
-            >
-              {pkg?.status === 'archived' ? (
-                <ArchiveRestore className="w-4 h-4" />
-              ) : (
-                <Archive className="w-4 h-4" />
-              )}
-              {pkg?.status === 'archived' ? 'Unarchive' : 'Archive'}
-            </button>
-          )}
-          {/* issue-local-034: permanent, cascading delete — admin-only */}
-          {isAdmin && (
-            <button
-              className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
-              onClick={() => setShowDeletePackageConfirm(true)}
-              title="Permanently delete this hunt package and everything in it"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </button>
-          )}
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
+        {/* issue-local-042: rename this package */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            onClick={() => setRenameName(pkg?.name ?? '')}
+            title="Rename this hunt package"
+          >
+            <Pencil className="w-4 h-4" />
+            Rename
+          </button>
+        )}
+        {/* Re-run button — always available once evidence exists, even mid-run (issue-local-014) */}
+        {canRerun && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            disabled={rerunMut.isPending || threatIntelRunning}
+            onClick={() => setShowRerunDialog(true)}
+            title={
+              threatIntelRunning
+                ? 'Threat Intel analysis is still running for this run'
+                : 'Re-run this hunt package — choose model and effort level'
+            }
+          >
+            <RefreshCw className="w-4 h-4" />
+            Re-run
+          </button>
+        )}
+        {/* issue-local-038: clone this package */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            onClick={() => setCloneName(`Copy of ${pkg?.name ?? ''}`)}
+            title="Clone this hunt package"
+          >
+            <Copy className="w-4 h-4" />
+            Clone
+          </button>
+        )}
+        {/* issue-local-034: Archive/Unarchive the whole package — reversible, researcher+ */}
+        {isResearcher && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm"
+            disabled={archivePackageMut.isPending}
+            onClick={() => archivePackageMut.mutate()}
+            title={pkg?.status === 'archived' ? 'Unarchive this hunt package' : 'Archive this hunt package'}
+          >
+            {pkg?.status === 'archived' ? (
+              <ArchiveRestore className="w-4 h-4" />
+            ) : (
+              <Archive className="w-4 h-4" />
+            )}
+            {pkg?.status === 'archived' ? 'Unarchive' : 'Archive'}
+          </button>
+        )}
+        {/* issue-local-034: permanent, cascading delete — admin-only */}
+        {isAdmin && (
+          <button
+            className="btn-secondary flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
+            onClick={() => setShowDeletePackageConfirm(true)}
+            title="Permanently delete this hunt package and everything in it"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
+        )}
         </div>
       </div>
+
+      {/* issue-local-042 (item 14): Title, its own row below the HuntID
+          badges — the Archived badge stays with it since it qualifies the
+          title itself. */}
+      <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
+        {pkg?.name ?? '…'}
+        {pkg?.status === 'archived' && (
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">
+            Archived
+          </span>
+        )}
+      </h1>
+      {/* Subtitle/description, its own row below the title. */}
+      {pkg?.description && <p className="text-sm text-gray-500">{pkg.description}</p>}
 
       {/* Run selector — shown when there are multiple runs */}
       {runs.length > 0 && (
@@ -537,7 +548,16 @@ export default function HuntDetail({
                 a workflow phase). */}
             <button
               className={clsx(
-                'flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors font-medium',
+                // issue-local-042 (item 16): comparison-assessment-btn is a
+                // pure hook for a scoped light-theme contrast override (see
+                // index.css) — light-purple text on a light-tinted purple
+                // background (both fixed Tailwind purple, not theme-aware)
+                // was very hard to read once Light's page background went
+                // near-white. Other unrelated bg-purple-900/text-purple-300
+                // usages (e.g. the playbook-provenance badge) must not be
+                // affected, hence the dedicated class instead of overriding
+                // those Tailwind utilities globally.
+                'comparison-assessment-btn flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border transition-colors font-medium',
                 activeTab === 'comparison'
                   ? 'bg-purple-900/30 border-purple-600/60 text-purple-200'
                   : 'bg-purple-900/10 border-purple-800/40 text-purple-300 hover:bg-purple-900/20 hover:border-purple-700/60',
@@ -763,8 +783,18 @@ export default function HuntDetail({
           pkgId={pkgId}
           runId={activeRunId}
           onRunCreated={(id) => {
+            // issue-local-042 (item 21): setRunSubTab directly (not
+            // handleRunSubTabChange) — that helper also jumps activeRunId
+            // to the sub-tab's current newest run from the (not-yet-
+            // refetched, so still stale) runs list, which would overwrite
+            // the just-created run's own id set explicitly right after.
+            setRunSubTab('runs')
             setActiveRunId(id)
             qc.invalidateQueries({ queryKey: ['th-runs', pkgId] })
+            scrollToPhasesRow()
+          }}
+          onPlaybookStarted={() => {
+            handleRunSubTabChange('playbook')
             scrollToPhasesRow()
           }}
           onShowIocs={() => setActiveTab('iocs')}
@@ -847,32 +877,6 @@ export default function HuntDetail({
       </>
       )}
 
-      {/* Add item modal */}
-      {showAddItem && (
-        <AddEvidenceModal
-          pkgId={pkgId}
-          onClose={() => setShowAddItem(false)}
-          onAdded={() => {
-            qc.invalidateQueries({ queryKey: ['th-evidence', pkgId] })
-            qc.invalidateQueries({ queryKey: ['th-package', pkgId] })
-            qc.invalidateQueries({ queryKey: ['th-packages'] })
-            setShowAddItem(false)
-          }}
-        />
-      )}
-
-
-      {/* issue-local-019: cancel-run confirmation dialog */}
-      {showCancelConfirm && (
-        <ConfirmDialog
-          title="Cancel this run?"
-          message="This stops the run immediately, including any in-progress LLM or tool calls. It will be marked as cancelled and cannot be resumed — you can start a new run afterward."
-          confirmLabel="Cancel run"
-          onConfirm={() => cancelMut.mutate()}
-          onCancel={() => setShowCancelConfirm(false)}
-        />
-      )}
-
       {/* issue-local-034: permanent-package-delete confirmation */}
       {showDeletePackageConfirm && (
         <ConfirmDialog
@@ -882,6 +886,43 @@ export default function HuntDetail({
           onConfirm={() => deletePackageMut.mutate()}
           onCancel={() => setShowDeletePackageConfirm(false)}
         />
+      )}
+
+      {/* issue-local-042: rename dialog */}
+      {renameName !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+            <h2 className="text-base font-semibold text-gray-100">Rename Hunt Package</h2>
+            <input
+              className="input w-full"
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              placeholder="Hunt package name"
+              autoFocus
+            />
+            {renameMut.isError && (
+              <p className="text-sm text-red-400">
+                Rename failed: {renameMut.error instanceof Error ? renameMut.error.message : String(renameMut.error)}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn-ghost text-sm"
+                onClick={() => { setRenameName(null); renameMut.reset() }}
+                disabled={renameMut.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-sm flex items-center gap-2"
+                disabled={!renameName.trim() || renameName.trim() === pkg?.name || renameMut.isPending}
+                onClick={() => renameMut.mutate(renameName.trim())}
+              >
+                {renameMut.isPending ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Renaming…</> : 'Rename'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* issue-local-038: clone dialog */}

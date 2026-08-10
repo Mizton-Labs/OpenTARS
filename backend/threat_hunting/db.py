@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TH_DB_PATH = _PROJECT_ROOT / "data" / "threat_hunting.db"
 
-_TH_SCHEMA_VERSION = 15
+_TH_SCHEMA_VERSION = 16
 
 
 def _utc_now_iso() -> str:
@@ -299,6 +300,10 @@ CREATE TABLE IF NOT EXISTS hunt_playbooks (
     auto_compare_full                     INTEGER NOT NULL DEFAULT 0,
     auto_create_run_from_recommendations  INTEGER NOT NULL DEFAULT 0,
     auto_generate_full_report             INTEGER NOT NULL DEFAULT 0,
+    ioc_cleaning_enabled                  INTEGER NOT NULL DEFAULT 0,
+    ioc_cleaning_scope                    TEXT,
+    ioc_mode                              TEXT,
+    ioc_cleaning_options                  TEXT,
     created_at                            TEXT NOT NULL,
     created_by                            TEXT,
     updated_at                            TEXT NOT NULL
@@ -642,6 +647,30 @@ async def _migrate_db(db: aiosqlite.Connection, current_version: int) -> None:
         except Exception:
             pass
         logger.info("Migrated threat_hunting.db to schema v15 (added evidence_items.scope_run_id)")
+    if current_version < 16:
+        # v16 (issue-local-042): a Hunt Playbook can now configure IOC
+        # cleaning itself — previously every playbook-fired run always used
+        # run_config={}, silently ignoring the app's configured default and
+        # giving the user no way to control it per playbook. Disabled
+        # (ioc_cleaning_enabled=0) is the default and matches the exact
+        # previous behavior (run_config stays {}) for every existing
+        # playbook. ioc_cleaning_scope ('general'|'per_model') picks between
+        # a single ioc_mode/ioc_cleaning_options for the whole playbook (this
+        # table) or one per model (stored on each entry inside the existing
+        # `models` JSON column — no schema change needed there).
+        for table, col_def in (
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_enabled INTEGER NOT NULL DEFAULT 0"),
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_scope TEXT"),
+            ("hunt_playbooks", "ADD COLUMN ioc_mode TEXT"),
+            ("hunt_playbooks", "ADD COLUMN ioc_cleaning_options TEXT"),
+        ):
+            try:
+                await db.execute(f"ALTER TABLE {table} {col_def}")  # noqa: S608
+            except Exception:
+                pass
+        logger.info(
+            "Migrated threat_hunting.db to schema v16 (added hunt_playbooks IOC cleaning config)"
+        )
 
 
 async def init_threat_hunting_db() -> None:
@@ -946,6 +975,34 @@ def _parse_deep_retrohunt_counts(
     return len(sanitized_iocs) - removed, removed
 
 
+_BRIEF_SUMMARY_MAX_LEN = 180
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _brief_summary_from_threat_context(threat_context_json: str | None) -> str | None:
+    """First sentence of a run's ``threat_context.summary`` (issue-local-042
+    item 9) — a free, always-fresh one-line subtitle for the package list,
+    derived from a field the Threat Context Builder step already writes
+    during analysis, not a dedicated LLM call. Truncated (word boundary) if
+    that first sentence alone is unusually long, so one run's summary can
+    never blow out every row's height in the list view.
+    """
+    import json as _json
+
+    try:
+        ctx: dict[str, Any] = _json.loads(threat_context_json or "")
+    except Exception:  # noqa: BLE001
+        return None
+    summary = str(ctx.get("summary") or "").strip()
+    if not summary:
+        return None
+    first_sentence = _SENTENCE_END_RE.split(summary, maxsplit=1)[0].strip()
+    if len(first_sentence) <= _BRIEF_SUMMARY_MAX_LEN:
+        return first_sentence
+    truncated = first_sentence[:_BRIEF_SUMMARY_MAX_LEN].rsplit(" ", 1)[0]
+    return f"{truncated}…"
+
+
 def _escape_like(term: str) -> str:
     """Escape LIKE wildcards (%, _) and the escape char itself in *term*,
     so search input containing them is matched literally, not as a pattern.
@@ -1049,7 +1106,7 @@ async def list_hunt_packages(
             cur3 = await db.execute(
                 "SELECT id, hunt_package_id, generation_status, llm_provider, llm_model, "
                 "       research_effort, created_at, step_logs, deep_retrohunt, run_seq, "
-                "       created_by "
+                "       created_by, threat_context "
                 f"FROM hunting_packages WHERE hunt_package_id IN ({placeholders}) "
                 "ORDER BY hunt_package_id, created_at DESC",
                 pkg_ids,
@@ -1116,11 +1173,26 @@ async def list_hunt_packages(
         row["id"]: format_hunt_id(prefix, row["hunt_seq"], row["created_at"]) for row in rows
     }
 
+    # issue-local-042 (item 9): a one-sentence subtitle for the package list,
+    # so the user can see the hunt's context at a glance without opening it.
+    # Derived from the newest run's already-generated threat_context.summary
+    # (first sentence only) rather than a dedicated LLM call — that summary
+    # already exists by the time analysis finishes (Threat Context Builder
+    # runs well before Report generation), so this is free at read time and
+    # naturally follows whichever run is newest, no stored/stale copy to
+    # invalidate. `all_run_rows` is ordered newest-first per package, so the
+    # first row seen for a given pkg_id is the one to use.
+    brief_summary_by_pkg: dict[str, str] = {}
+
     # Build lookup: hunt_package_id → [run summary dicts, newest first]
     runs_by_pkg: dict[str, list[dict[str, Any]]] = {}
     for r in all_run_rows:
         phases, total_elapsed_s, token_usage_total = _parse_step_logs(r["step_logs"])
         sanitized_count, removed_count = _parse_deep_retrohunt_counts(r["deep_retrohunt"])
+        if r["hunt_package_id"] not in brief_summary_by_pkg:
+            brief = _brief_summary_from_threat_context(r["threat_context"])
+            if brief:
+                brief_summary_by_pkg[r["hunt_package_id"]] = brief
         runs_by_pkg.setdefault(r["hunt_package_id"], []).append(
             {
                 "id": r["id"],
@@ -1167,6 +1239,7 @@ async def list_hunt_packages(
         pkg["runs"] = runs_by_pkg.get(pkg["id"], [])
         pkg["run_count"] = len(pkg["runs"])
         pkg["hunt_id_display"] = hunt_id_by_pkg.get(pkg["id"], "")
+        pkg["brief_summary"] = brief_summary_by_pkg.get(pkg["id"])
         if search:
             pkg["search_snippet"] = _deep_match_snippet(
                 search, deep_fields_by_pkg.get(pkg["id"], []), matched_ioc_by_pkg.get(pkg["id"])
@@ -2149,6 +2222,7 @@ async def clear_extracted_iocs(hunt_package_id: str, run_id: str | None = None) 
 async def update_evidence_item(
     item_id: str,
     *,
+    label: str | None = None,
     extracted_text: str | None = None,
     parser_used: str | None = None,
     parser_version: str | None = None,
@@ -2165,6 +2239,10 @@ async def update_evidence_item(
     issue-008-2B: used by intake_classifier to write fetched URL content
     back to pending evidence items created at upload time.
 
+    issue-local-042 (item 23): `label` also goes through here — the one
+    field a user can directly rename via the Evidence tab, as opposed to
+    the parser-derived fields above.
+
     Only non-None keyword arguments are written; others are left unchanged.
     """
     import json as _json
@@ -2172,6 +2250,9 @@ async def update_evidence_item(
     set_clauses: list[str] = []
     params: list[Any] = []
 
+    if label is not None:
+        set_clauses.append("label = ?")
+        params.append(label)
     if extracted_text is not None:
         set_clauses.append("extracted_text = ?")
         params.append(extracted_text)
@@ -2546,6 +2627,9 @@ def _validate_playbook_models(models: list[dict[str, Any]]) -> None:
             raise ValueError("each model entry needs at least a model_name")
 
 
+_PLAYBOOK_IOC_CLEANING_SCOPES = frozenset({"general", "per_model"})
+
+
 def _decode_playbook_row(d: dict[str, Any]) -> dict[str, Any]:
     import json as _json
 
@@ -2555,7 +2639,25 @@ def _decode_playbook_row(d: dict[str, Any]) -> dict[str, Any]:
         d["models"] = []
     for col in _PLAYBOOK_TOGGLE_COLUMNS:
         d[col] = bool(d.get(col))
+    d["ioc_cleaning_enabled"] = bool(d.get("ioc_cleaning_enabled"))
+    try:
+        d["ioc_cleaning_options"] = (
+            _json.loads(d["ioc_cleaning_options"]) if d.get("ioc_cleaning_options") else None
+        )
+    except Exception:
+        d["ioc_cleaning_options"] = None
     return d
+
+
+def _validate_playbook_ioc_cleaning(
+    ioc_cleaning_enabled: bool,
+    ioc_cleaning_scope: str | None,
+) -> None:
+    if ioc_cleaning_enabled and ioc_cleaning_scope not in _PLAYBOOK_IOC_CLEANING_SCOPES:
+        raise ValueError(
+            f"ioc_cleaning_scope must be one of {sorted(_PLAYBOOK_IOC_CLEANING_SCOPES)} "
+            "when ioc_cleaning_enabled is true"
+        )
 
 
 async def create_playbook(
@@ -2568,6 +2670,13 @@ async def create_playbook(
     auto_compare_full: bool = False,
     auto_create_run_from_recommendations: bool = False,
     auto_generate_full_report: bool = False,
+    # issue-local-042: IOC cleaning config — disabled (the default) means a
+    # fired run's run_config stays {} exactly as before this existed, so
+    # every pre-existing playbook keeps its old behavior untouched.
+    ioc_cleaning_enabled: bool = False,
+    ioc_cleaning_scope: str | None = None,
+    ioc_mode: str | None = None,
+    ioc_cleaning_options: dict[str, bool] | None = None,
     created_by: str | None = None,
 ) -> dict[str, Any]:
     import json as _json
@@ -2575,6 +2684,7 @@ async def create_playbook(
     if not name or not name.strip():
         raise ValueError("name must not be empty")
     _validate_playbook_models(models)
+    _validate_playbook_ioc_cleaning(ioc_cleaning_enabled, ioc_cleaning_scope)
 
     playbook_id = _new_id()
     now = _utc_now_iso()
@@ -2584,8 +2694,9 @@ async def create_playbook(
                (id, name, models, auto_approve_analysis, auto_run_comparison,
                 auto_compare_preliminary, auto_compare_full,
                 auto_create_run_from_recommendations, auto_generate_full_report,
+                ioc_cleaning_enabled, ioc_cleaning_scope, ioc_mode, ioc_cleaning_options,
                 created_at, created_by, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 playbook_id,
                 name.strip(),
@@ -2596,6 +2707,10 @@ async def create_playbook(
                 int(auto_compare_full),
                 int(auto_create_run_from_recommendations),
                 int(auto_generate_full_report),
+                int(ioc_cleaning_enabled),
+                ioc_cleaning_scope if ioc_cleaning_enabled else None,
+                ioc_mode if ioc_cleaning_enabled else None,
+                _json.dumps(ioc_cleaning_options) if ioc_cleaning_enabled and ioc_cleaning_options else None,
                 now,
                 created_by,
                 now,
@@ -2634,6 +2749,15 @@ async def update_playbook(
     auto_compare_full: bool | None = None,
     auto_create_run_from_recommendations: bool | None = None,
     auto_generate_full_report: bool | None = None,
+    # issue-local-042: like the toggles above, None means "leave unchanged" —
+    # the caller (PUT /playbooks/{id}) always sends its full current IOC
+    # cleaning state together when the user edits any part of it, the same
+    # all-or-nothing granularity `models` already uses, so there's no need
+    # to support patching e.g. just ioc_mode while leaving scope untouched.
+    ioc_cleaning_enabled: bool | None = None,
+    ioc_cleaning_scope: str | None = None,
+    ioc_mode: str | None = None,
+    ioc_cleaning_options: dict[str, bool] | None = None,
 ) -> dict[str, Any] | None:
     import json as _json
 
@@ -2660,6 +2784,17 @@ async def update_playbook(
         col: (int(value) if value is not None else int(existing[col]))
         for col, value in toggles.items()
     }
+    new_ioc_cleaning_enabled = (
+        ioc_cleaning_enabled if ioc_cleaning_enabled is not None else existing["ioc_cleaning_enabled"]
+    )
+    new_ioc_cleaning_scope = (
+        ioc_cleaning_scope if ioc_cleaning_scope is not None else existing.get("ioc_cleaning_scope")
+    )
+    _validate_playbook_ioc_cleaning(new_ioc_cleaning_enabled, new_ioc_cleaning_scope)
+    new_ioc_mode = ioc_mode if ioc_mode is not None else existing.get("ioc_mode")
+    new_ioc_cleaning_options = (
+        ioc_cleaning_options if ioc_cleaning_options is not None else existing.get("ioc_cleaning_options")
+    )
     now = _utc_now_iso()
 
     async with aiosqlite.connect(_TH_DB_PATH) as db:
@@ -2668,6 +2803,7 @@ async def update_playbook(
                name=?, models=?, auto_approve_analysis=?, auto_run_comparison=?,
                auto_compare_preliminary=?, auto_compare_full=?,
                auto_create_run_from_recommendations=?, auto_generate_full_report=?,
+               ioc_cleaning_enabled=?, ioc_cleaning_scope=?, ioc_mode=?, ioc_cleaning_options=?,
                updated_at=?
                WHERE id=?""",
             (
@@ -2679,6 +2815,12 @@ async def update_playbook(
                 resolved["auto_compare_full"],
                 resolved["auto_create_run_from_recommendations"],
                 resolved["auto_generate_full_report"],
+                int(new_ioc_cleaning_enabled),
+                new_ioc_cleaning_scope if new_ioc_cleaning_enabled else None,
+                new_ioc_mode if new_ioc_cleaning_enabled else None,
+                _json.dumps(new_ioc_cleaning_options)
+                if new_ioc_cleaning_enabled and new_ioc_cleaning_options
+                else None,
                 now,
                 playbook_id,
             ),
@@ -2711,6 +2853,10 @@ async def clone_playbook(
         auto_compare_full=source["auto_compare_full"],
         auto_create_run_from_recommendations=source["auto_create_run_from_recommendations"],
         auto_generate_full_report=source["auto_generate_full_report"],
+        ioc_cleaning_enabled=source["ioc_cleaning_enabled"],
+        ioc_cleaning_scope=source.get("ioc_cleaning_scope"),
+        ioc_mode=source.get("ioc_mode"),
+        ioc_cleaning_options=source.get("ioc_cleaning_options"),
         created_by=created_by,
     )
 
