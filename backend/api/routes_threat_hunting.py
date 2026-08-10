@@ -154,8 +154,15 @@ async def get_package(pkg_id: str) -> dict:
 
 
 @router.put("/packages/{pkg_id}", response_model=HuntPackageOut)
-async def update_package(pkg_id: str, body: HuntPackageUpdate) -> dict:
-    """Update a hunt package's name, description, or status."""
+async def update_package(pkg_id: str, body: HuntPackageUpdate, request: Request) -> dict:
+    """Update a hunt package's name, description, or status.
+
+    issue-local-044: a status change (e.g. unarchive) is scoped to the
+    package's owner or an admin — see _require_package_owner_or_admin.
+    Renaming/description edits are unaffected, matching prior behavior.
+    """
+    if body.status is not None:
+        _require_package_owner_or_admin(_pkg_or_404(await th_db.get_hunt_package(pkg_id)), request)
     updated = await th_db.update_hunt_package(
         pkg_id,
         name=body.name,
@@ -166,9 +173,14 @@ async def update_package(pkg_id: str, body: HuntPackageUpdate) -> dict:
 
 
 @router.delete("/packages/{pkg_id}", status_code=204)
-async def archive_package(pkg_id: str) -> None:
-    """Archive a hunt package (soft delete)."""
-    _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+async def archive_package(pkg_id: str, request: Request) -> None:
+    """Archive a hunt package (soft delete).
+
+    issue-local-044: scoped to the package's owner or an admin — see
+    _require_package_owner_or_admin.
+    """
+    pkg = _pkg_or_404(await th_db.get_hunt_package(pkg_id))
+    _require_package_owner_or_admin(pkg, request)
     await th_db.update_hunt_package(pkg_id, status="archived")
 
 
@@ -1037,16 +1049,17 @@ async def test_connector(conn_id: str) -> dict:
 # every other role check in this app (main.py's admin bypass is total).
 
 
-def _require_playbook_owner_or_admin(playbook: dict, request: Request) -> None:
-    """Raise 403 unless *request*'s caller may edit/delete *playbook*.
+def _require_resource_owner_or_admin(
+    created_by: str | None, request: Request, resource_label: str
+) -> None:
+    """Raise 403 unless *request*'s caller owns the resource or is an admin.
 
-    issue-local-041: "Only Threat researcher role is able to read/edit/delete
-    (own) playbooks" — admins are exempt from the ownership check (they can
-    edit/delete any playbook, exactly as before this change). A playbook
-    with no recorded owner (created_by NULL — created before this field
-    existed, or while auth was disabled) has no owner to enforce, so it
-    remains editable/deletable by any researcher, same as pre-issue-local-041
-    behavior. Auth-disabled requests (no request.state.user at all) are
+    Shared by playbook (issue-local-041) and hunt-package (issue-local-044)
+    ownership checks. Admins are exempt (can act on any resource, exactly
+    as before either of those changes). A resource with no recorded owner
+    (created_by NULL — created before ownership tracking existed, or while
+    auth was disabled) has no owner to enforce, so it remains open to any
+    researcher. Auth-disabled requests (no request.state.user at all) are
     likewise unrestricted — there is no identity to compare against.
     """
     if not (hasattr(request.state, "user") and request.state.user):
@@ -1054,10 +1067,35 @@ def _require_playbook_owner_or_admin(playbook: dict, request: Request) -> None:
     user = request.state.user
     if user.get("role") == "admin":
         return
-    owner = playbook.get("created_by")
-    if owner is None or owner == user.get("username"):
+    if created_by is None or created_by == user.get("username"):
         return
-    raise HTTPException(status_code=403, detail="Only the playbook's owner or an admin may do this.")
+    raise HTTPException(
+        status_code=403, detail=f"Only the {resource_label}'s owner or an admin may do this."
+    )
+
+
+def _require_playbook_owner_or_admin(playbook: dict, request: Request) -> None:
+    """Raise 403 unless *request*'s caller may edit/delete *playbook*.
+
+    issue-local-041: "Only Threat researcher role is able to read/edit/delete
+    (own) playbooks".
+    """
+    _require_resource_owner_or_admin(playbook.get("created_by"), request, "playbook")
+
+
+def _require_package_owner_or_admin(package: dict, request: Request) -> None:
+    """Raise 403 unless *request*'s caller may archive/unarchive *package*.
+
+    issue-local-044: bulk (and single-item) archive/unarchive from the Data
+    Explorer's Hunt Packages list is scoped to the package's owner or an
+    admin, same ownership model as playbooks. Deliberately NOT applied to
+    every update_package field — rename/description stay open to any
+    researcher (existing behavior, unchanged) — only to status-changing
+    calls, since ownership scoping was asked for archive/delete/unarchive
+    specifically. Hard delete (DELETE /packages/{id}/hard) already has its
+    own, stricter admin-only gate and is intentionally not touched here.
+    """
+    _require_resource_owner_or_admin(package.get("created_by"), request, "hunt package")
 
 
 class PlaybookModelEntry(BaseModel):

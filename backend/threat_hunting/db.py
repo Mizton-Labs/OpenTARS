@@ -1344,7 +1344,12 @@ async def _matching_pkg_rows(
         search=search, date_from=date_from, date_to=date_to, include_archived=include_archived
     )
     cur = await db.execute(
-        "SELECT hp.id, hp.status, hp.name, hp.hunt_seq, hp.created_at "
+        # issue-local-044: created_by added so list_explorer_rows can
+        # surface package ownership for the Data Explorer's bulk
+        # archive/unarchive action (owner-or-admin scoped, see
+        # _require_package_owner_or_admin). get_hunt_dashboard_stats (the
+        # other caller) simply ignores the extra column.
+        "SELECT hp.id, hp.status, hp.name, hp.hunt_seq, hp.created_at, hp.created_by "
         f"FROM hunt_packages hp WHERE {where_sql}",  # noqa: S608
         params,
     )
@@ -1635,6 +1640,10 @@ async def list_explorer_rows(
                     "hunt_id_display": hunt_id_by_pkg.get(r["id"], ""),
                     "name": r["name"],
                     "status": r["status"],
+                    # issue-local-044: lets the frontend decide whether the
+                    # current user may bulk-archive/unarchive this row
+                    # (owner or admin) without an extra round trip.
+                    "created_by": r["created_by"],
                 }
                 for r in pkg_rows
             ]

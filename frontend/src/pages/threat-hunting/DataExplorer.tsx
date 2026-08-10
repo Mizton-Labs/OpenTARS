@@ -15,7 +15,7 @@
  * tracking categories — see HUNTING_TAB_ROW/THREAT_INTEL_TAB_ROW below.
  */
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
@@ -36,11 +36,16 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Archive,
+  ArchiveRestore,
+  Trash2,
 } from 'lucide-react'
 import { api, type ExplorerRow } from '../../api/client'
+import { useAuth } from '../../auth/useAuth'
 import { HUNT_ID_BADGE } from './runStatusUtils'
 import Pagination from '../../components/Pagination'
 import EvidenceContent from './EvidenceContent'
+import ConfirmDialog from '../../components/ConfirmDialog'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 
@@ -135,6 +140,16 @@ function SourceBadges({ sources }: { sources?: ExplorerRow['sources'] }) {
       ))}
     </div>
   )
+}
+
+// issue-local-044: mirrors the backend's _require_resource_owner_or_admin
+// exactly — admin bypasses, a package with no recorded owner is open to
+// any researcher, otherwise only the package's own creator. Used purely
+// to decide which rows offer a bulk-select checkbox; the backend is the
+// actual enforcement point (this is UX, not the security boundary).
+function canBulkActOnPackage(row: ExplorerRow, username: string | undefined, isAdmin: boolean): boolean {
+  if (isAdmin) return true
+  return row.created_by == null || row.created_by === username
 }
 
 function cell(value: unknown): React.ReactNode {
@@ -370,12 +385,21 @@ function EvidenceExplorerRow({ row, columns }: { row: ExplorerRow; columns: { he
 
 export default function DataExplorer() {
   const location = useLocation()
+  const qc = useQueryClient()
+  const { user, isAdmin, isResearcher } = useAuth()
   const [category, setCategory] = useState(DEFAULT_CATEGORY)
   const [searchInput, setSearchInput] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   // issue-local-034: pagination, page-size selectable (default 25).
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25)
+  // issue-local-044: bulk archive/unarchive/delete for the 'hunts'
+  // category — selection persists across pages within the same
+  // category+search (a Set keyed by package id), but resets whenever
+  // either changes since the underlying row set is a different thing.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [bulkResult, setBulkResult] = useState<string | null>(null)
 
   // Deep-link from a Dashboard panel — same ?tab= pattern as Configuration/
   // About/Viewer.
@@ -391,9 +415,11 @@ export default function DataExplorer() {
     return () => clearTimeout(t)
   }, [searchInput])
 
-  // Changing category or search invalidates the current page.
+  // Changing category or search invalidates the current page + selection.
   useEffect(() => {
     setPage(1)
+    setSelectedIds(new Set())
+    setBulkResult(null)
   }, [category, debouncedSearch])
 
   const { data: rows = [], isLoading } = useQuery({
@@ -401,10 +427,77 @@ export default function DataExplorer() {
     queryFn: () => api.threatHunting.getExplorerRows(category, { search: debouncedSearch || undefined }),
   })
 
+  // issue-local-044: fires one request per selected package (there's no
+  // dedicated bulk backend route — the existing per-package routes already
+  // do the right thing, including the owner-or-admin check) and reports a
+  // combined result. Partial failures (e.g. a row the user doesn't own
+  // slipping through, or a package deleted by someone else meanwhile)
+  // don't roll back the ones that succeeded — matches how every other
+  // bulk-ish flow in this app degrades.
+  const bulkMutation = useMutation({
+    mutationFn: async ({ ids, action }: { ids: string[]; action: 'archive' | 'unarchive' | 'delete' }) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => {
+          if (action === 'archive') return api.threatHunting.archivePackage(id)
+          if (action === 'unarchive') return api.threatHunting.updatePackage(id, { status: 'draft' })
+          return api.threatHunting.hardDeletePackage(id)
+        }),
+      )
+      const failed = results.filter((r) => r.status === 'rejected').length
+      return { total: ids.length, failed, action }
+    },
+    onSuccess: ({ total, failed, action }) => {
+      qc.invalidateQueries({ queryKey: ['th-explorer', 'hunts'] })
+      qc.invalidateQueries({ queryKey: ['th-packages'] })
+      setSelectedIds(new Set())
+      setConfirmBulkDelete(false)
+      const verb = action === 'archive' ? 'Archived' : action === 'unarchive' ? 'Unarchived' : 'Deleted'
+      setBulkResult(
+        failed === 0
+          ? `${verb} ${total} hunt package${total === 1 ? '' : 's'}.`
+          : `${verb} ${total - failed} of ${total} — ${failed} failed (permission or already-gone).`,
+      )
+    },
+  })
+
   const columns = columnsFor(category)
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize))
   const clampedPage = Math.min(page, totalPages)
   const pageRows = rows.slice((clampedPage - 1) * pageSize, clampedPage * pageSize)
+
+  // issue-local-044: bulk actions only apply to the Hunt Packages category,
+  // and only for researchers/admins — same role floor as every other TH
+  // write action in the app.
+  const bulkEnabled = category === 'hunts' && isResearcher
+  const selectablePageRows = bulkEnabled
+    ? pageRows.filter((r) => r.id && canBulkActOnPackage(r, user?.username, isAdmin))
+    : []
+  const allSelectableOnPageSelected =
+    selectablePageRows.length > 0 && selectablePageRows.every((r) => selectedIds.has(r.id!))
+  const selectedRows = bulkEnabled ? rows.filter((r) => r.id && selectedIds.has(r.id)) : []
+  const selectedHasArchived = selectedRows.some((r) => r.status === 'archived')
+  const selectedHasNonArchived = selectedRows.some((r) => r.status !== 'archived')
+
+  function toggleRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allSelectableOnPageSelected) {
+        for (const r of selectablePageRows) next.delete(r.id!)
+      } else {
+        for (const r of selectablePageRows) next.add(r.id!)
+      }
+      return next
+    })
+  }
 
   return (
     <div className="p-6 space-y-5">
@@ -481,6 +574,58 @@ export default function DataExplorer() {
         )}
       </div>
 
+      {/* issue-local-044: bulk archive/unarchive/delete — owner-or-admin,
+          enforced server-side too; this bar just reflects what the current
+          user is actually allowed to do. */}
+      {bulkEnabled && selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 flex-wrap rounded-lg border border-gray-800 bg-gray-800/40 px-3 py-2">
+          <span className="text-xs text-gray-400">
+            {selectedIds.size} selected
+          </span>
+          <button
+            type="button"
+            className="btn-secondary text-xs flex items-center gap-1.5"
+            disabled={bulkMutation.isPending || !selectedHasNonArchived}
+            onClick={() => bulkMutation.mutate({ ids: [...selectedIds], action: 'archive' })}
+            title={!selectedHasNonArchived ? 'Every selected package is already archived' : undefined}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Archive
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-xs flex items-center gap-1.5"
+            disabled={bulkMutation.isPending || !selectedHasArchived}
+            onClick={() => bulkMutation.mutate({ ids: [...selectedIds], action: 'unarchive' })}
+            title={!selectedHasArchived ? 'No selected package is archived' : undefined}
+          >
+            <ArchiveRestore className="w-3.5 h-3.5" />
+            Unarchive
+          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1.5 disabled:opacity-50"
+              disabled={bulkMutation.isPending}
+              onClick={() => setConfirmBulkDelete(true)}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          )}
+          <button
+            type="button"
+            className="text-xs text-gray-500 hover:text-gray-300 ml-auto"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+      {bulkResult && (
+        <p className="text-xs text-gray-400" role="status">{bulkResult}</p>
+      )}
+
       {isLoading ? (
         <div className="flex items-center gap-2 text-sm text-gray-500 py-8">
           <Loader2 className="w-4 h-4 animate-spin" /> Loading…
@@ -493,6 +638,17 @@ export default function DataExplorer() {
             <table className="w-full min-w-[700px]">
               <thead>
                 <tr className="bg-gray-800/50 text-[10px] uppercase tracking-wider text-gray-500">
+                  {bulkEnabled && (
+                    <th className="w-6 pl-2">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all on this page"
+                        checked={allSelectableOnPageSelected}
+                        disabled={selectablePageRows.length === 0}
+                        onChange={toggleSelectAllOnPage}
+                      />
+                    </th>
+                  )}
                   {category === 'evidence' && <th className="w-6" />}
                   {columns.map((col) => (
                     <th key={col.header} className="text-left py-1.5 px-2">
@@ -508,6 +664,18 @@ export default function DataExplorer() {
                     ))
                   : pageRows.map((row, i) => (
                       <tr key={row.id ?? i} className="border-t border-gray-800/60">
+                        {bulkEnabled && (
+                          <td className="py-1.5 pl-2">
+                            {row.id && canBulkActOnPackage(row, user?.username, isAdmin) && (
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${row.name ?? row.id}`}
+                                checked={selectedIds.has(row.id)}
+                                onChange={() => toggleRow(row.id!)}
+                              />
+                            )}
+                          </td>
+                        )}
                         {columns.map((col) => (
                           <td key={col.header} className="py-1.5 px-2 text-[12px] text-gray-300">
                             {col.render(row)}
@@ -532,6 +700,16 @@ export default function DataExplorer() {
             }}
           />
         </>
+      )}
+
+      {confirmBulkDelete && (
+        <ConfirmDialog
+          title="Permanently Delete Hunt Packages?"
+          message={`This permanently deletes ${selectedIds.size} hunt package${selectedIds.size === 1 ? '' : 's'} — every run, evidence item, IOC, task result, report, comment, and threat-intel analysis tied to ${selectedIds.size === 1 ? 'it' : 'them'}. This cannot be undone.`}
+          confirmLabel="Delete Permanently"
+          onConfirm={() => bulkMutation.mutate({ ids: [...selectedIds], action: 'delete' })}
+          onCancel={() => setConfirmBulkDelete(false)}
+        />
       )}
     </div>
   )

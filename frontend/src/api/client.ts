@@ -3185,6 +3185,10 @@ export interface ExplorerRow {
   description?: string
   rationale?: string
   sources?: { id: string; name: string; hunt_id_display: string }[]
+  // issue-local-044: 'hunts' rows only — lets the Data Explorer decide
+  // whether the current user may bulk-archive/unarchive this package
+  // (owner or admin) client-side, without an extra round trip.
+  created_by?: string | null
 }
 
 // issue-local-033: Audit section — one row per event, one of the four tab
