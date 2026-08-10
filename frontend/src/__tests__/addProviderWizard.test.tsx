@@ -429,6 +429,9 @@ describe('AddProviderWizard (027)', () => {
         // prompts-031 change 1: the discovered catalog is persisted so
         // the new provider's card keeps the model dropdown after Save.
         available_models: ['gpt-4o', 'gpt-4o-mini'],
+        // issue-local-043: discovered_models seeded identically, so the
+        // persisted card's toggle list is accurate from creation.
+        discovered_models: ['gpt-4o', 'gpt-4o-mini'],
       }),
     )
     expect(onAdded).toHaveBeenCalledTimes(1)
@@ -455,6 +458,7 @@ describe('AddProviderWizard (027)', () => {
     const body = vi.mocked(api.llm.addProvider).mock.calls[0][0]
     expect(body.model).toBe('my-local-model')
     expect(body.available_models).toBeUndefined()
+    expect(body.discovered_models).toBeUndefined()
   })
 
   it('addProvider error renders inline without closing', async () => {

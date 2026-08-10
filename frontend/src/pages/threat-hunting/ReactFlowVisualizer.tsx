@@ -226,10 +226,14 @@ export default function ReactFlowVisualizer({
         border: `1px solid ${nodeBorderColor(s.id, completed, active)}`,
         color: completed.has(s.id) ? '#d1fae5' : active === s.id ? '#bfdbfe' : '#6b7280',
         borderRadius: '8px',
-        padding: '6px 12px',
-        fontSize: '10px',
+        // issue-local-042 (item 24) follow-up: nodes bumped up a size
+        // notch (padding/minWidth) while the label font shrinks further,
+        // so the box comfortably fits its text instead of the two moving
+        // in the same direction.
+        padding: '8px 14px',
+        fontSize: '9px',
         fontWeight: 500,
-        minWidth: '160px',
+        minWidth: '180px',
         textAlign: 'center' as const,
       },
     }))
@@ -261,7 +265,11 @@ export default function ReactFlowVisualizer({
           id: `src_${i}`,
           position: { x: startX + i * spacing, y: -120 },
           data: {
-            label: `${(src.label || src.item_type || 'source').slice(0, 20)}\n(${src.item_type})`,
+            // issue-local-042 follow-up: shortened from 20 to 16 chars —
+            // paired with the wider/taller box below, the two-line label
+            // (name + type) now reliably fits inside the pill instead of
+            // wrapping or overflowing it.
+            label: `${(src.label || src.item_type || 'source').slice(0, 16)}\n(${src.item_type})`,
             tooltip: [
               src.label || src.item_type || 'Evidence source',
               `Type: ${src.item_type}`,
@@ -279,10 +287,14 @@ export default function ReactFlowVisualizer({
             border: `1px dashed ${borderColor}`,
             borderRadius: '20px',
             color,
-            padding: '4px 10px',
+            // issue-local-042 follow-up: taller/wider pill + shorter
+            // truncated label (above) so the two-line "name / (type)"
+            // text always fits inside the node instead of clipping.
+            padding: '6px 14px',
             fontSize: '9px',
             fontWeight: 500,
-            minWidth: '120px',
+            minWidth: '150px',
+            minHeight: '38px',
             textAlign: 'center' as const,
           },
         }
@@ -311,7 +323,13 @@ export default function ReactFlowVisualizer({
               borderRadius: '4px',
               color: '#c4b5fd',
               fontSize: '9px',
-              padding: '4px 8px',
+              // issue-local-042 follow-up: this node type had no minWidth
+              // at all (padding-only sizing) — added for the same
+              // "always fits its label" consistency as the other node
+              // types above.
+              padding: '5px 10px',
+              minWidth: '110px',
+              textAlign: 'center' as const,
             },
           })
         }

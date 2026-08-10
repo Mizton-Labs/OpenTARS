@@ -115,6 +115,11 @@ def list_provider_names() -> list[dict[str, Any]]:
                 # (no green Test required). Public ids, never a secret; [] when the
                 # provider has not been discovered yet.
                 "available_models": list(p.get("available_models") or []),
+                # issue-local-043: raw catalog from the most recent Discover call
+                # — lets the LLM Providers tab render a toggle list (available_
+                # models = enabled subset) instead of conflating "discovered"
+                # with "enabled". Public ids, never a secret.
+                "discovered_models": list(p.get("discovered_models") or []),
             }
         )
     return out

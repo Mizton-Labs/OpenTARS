@@ -2023,13 +2023,24 @@ export interface LLMProvider {
    */
   api_style?: 'unified' | 'anthropic'
   /**
-   * prompts-027: persisted list of models last returned by the
-   * "Discover Models" button on the persisted ProviderCard. Lets the
+   * prompts-027: persisted list of MODELS THE ADMIN HAS ENABLED — what the
+   * rest of the platform (Threat Hunting run config, Hunt Playbooks,
+   * Comparison Assessment) actually offers in its model pickers. Lets the
    * default-model dropdown render on first paint without forcing the
    * operator to click Discover every time the page loads. Not a secret;
    * never redacted. Absent / [] on legacy records.
    */
   available_models?: string[]
+  /**
+   * issue-local-043: raw catalog from the most recent Discover call (or a
+   * manual "Add model") — REPLACED wholesale on each fresh Discover, not
+   * unioned with available_models. Distinct from available_models: a
+   * model can be discovered without being enabled, and can stay enabled
+   * after it drops out of this list (surfaced in the UI as "not in latest
+   * discovery" rather than silently disabled). Not a secret; never
+   * redacted. Absent / [] on legacy records / providers never discovered.
+   */
+  discovered_models?: string[]
 }
 
 /**
@@ -2067,11 +2078,14 @@ export interface LLMProviderSummary {
   // this provider. Still recorded on a green probe but, as of prompts-036, no
   // longer the proposal-dropdown source. Default [] on legacy records.
   tested_models?: string[]
-  // prompts-036: discovered model catalog for this provider. Drives the
+  // prompts-036: models the admin has ENABLED for this provider. Drives the
   // per-proposal model dropdown in Smart Mappings (a green Test is no longer
   // required — bad models surface at proposal request/response time). Default
-  // [] on providers that have not been discovered yet.
+  // [] on providers that have not been discovered/enabled yet.
   available_models?: string[]
+  // issue-local-043: raw catalog from the most recent Discover call — see
+  // LLMProvider.discovered_models for the full explanation. Default [].
+  discovered_models?: string[]
 }
 
 // issue-local-039: the AI Assistant's pinned LLM provider (null = follow the

@@ -285,6 +285,112 @@ def test_redact_config_does_not_touch_available_models():
     assert out["providers"][0]["available_models"] == ["m1"]
 
 
+# ── discovered_models field (issue-local-043) ────────────────────────────────
+
+
+def test_validate_accepts_optional_discovered_models():
+    cfg_mod.save_llm_config(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                    "discovered_models": ["m1", "m2"],
+                },
+            ],
+        }
+    )
+    loaded = cfg_mod.load_llm_config()
+    assert loaded["providers"][0]["discovered_models"] == ["m1", "m2"]
+
+
+def test_validate_rejects_non_list_discovered_models():
+    with pytest.raises(LLMConfigError, match="discovered_models"):
+        cfg_mod.save_llm_config(
+            {
+                "enabled": False,
+                "providers": [
+                    {
+                        "name": "p1",
+                        "kind": "openai",
+                        "base_url": "https://x",
+                        "model": "m",
+                        "api_key": "sk",
+                        "discovered_models": "not-a-list",
+                    },
+                ],
+            }
+        )
+
+
+def test_validate_rejects_empty_strings_in_discovered_models():
+    with pytest.raises(LLMConfigError, match="discovered_models"):
+        cfg_mod.save_llm_config(
+            {
+                "enabled": False,
+                "providers": [
+                    {
+                        "name": "p1",
+                        "kind": "openai",
+                        "base_url": "https://x",
+                        "model": "m",
+                        "api_key": "sk",
+                        "discovered_models": ["ok", ""],
+                    },
+                ],
+            }
+        )
+
+
+def test_redact_config_does_not_touch_discovered_models():
+    """discovered_models is not a secret; redact_config must preserve it."""
+    cfg = {
+        "enabled": False,
+        "providers": [
+            {
+                "name": "p1",
+                "kind": "openai",
+                "base_url": "https://x",
+                "model": "m",
+                "api_key": "sk-real",
+                "discovered_models": ["m1"],
+            },
+        ],
+    }
+    out = cfg_mod.redact_config(cfg)
+    assert out["providers"][0]["api_key"] == "***"
+    assert out["providers"][0]["discovered_models"] == ["m1"]
+
+
+def test_available_and_discovered_models_are_independent():
+    """A model can be enabled without being in the latest discovered catalog
+    (issue-local-043 decision 2: vanished-but-enabled stays enabled, flagged
+    in the UI) — the two fields must round-trip independently."""
+    cfg_mod.save_llm_config(
+        {
+            "enabled": False,
+            "providers": [
+                {
+                    "name": "p1",
+                    "kind": "openai",
+                    "base_url": "https://x",
+                    "model": "m",
+                    "api_key": "sk",
+                    "available_models": ["legacy-model"],
+                    "discovered_models": ["fresh-model"],
+                },
+            ],
+        }
+    )
+    loaded = cfg_mod.load_llm_config()
+    assert loaded["providers"][0]["available_models"] == ["legacy-model"]
+    assert loaded["providers"][0]["discovered_models"] == ["fresh-model"]
+
+
 # ── tested_models field + record_tested_model (prompts-034) ─────────────────
 
 

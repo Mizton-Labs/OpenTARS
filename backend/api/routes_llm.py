@@ -1,6 +1,12 @@
 """LLM provider API routes (prompts-021D, refactored in 022 step 4).
 
-Default-off, no-auth (matches project posture).
+Default-off. issue-local-043: every mutating/probing route (add, update,
+delete, discover, test) requires an admin session via
+``require_admin_when_enabled`` — a no-op when auth is globally disabled
+(matching the project's other settings routes), but a real gate once auth
+is on, since this surface controls which providers/models are reachable
+platform-wide and can consume API budget. GET routes stay open, matching
+every other read-only settings route in the app.
 
 Route map (post-022):
 
@@ -32,8 +38,9 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
+from backend.auth.dependencies import require_admin_when_enabled
 from backend.llm.config import (
     load_llm_config,
     merge_write_only_key,
@@ -119,7 +126,10 @@ async def get_llm_providers() -> list[dict[str, Any]]:
 
 
 @router.post("/providers", status_code=201)
-async def add_llm_provider(body: dict[str, Any]) -> dict[str, Any]:
+async def add_llm_provider(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Append a new provider to llm-providers.yaml.
 
     prompts-022: enforces the new identifier regex and uniqueness via
@@ -156,7 +166,11 @@ async def add_llm_provider(body: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.put("/providers/{name}")
-async def update_llm_provider(name: str, body: dict[str, Any]) -> dict[str, Any]:
+async def update_llm_provider(
+    name: str,
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Replace an existing provider in-place.
 
     The path ``name`` is authoritative; if the body carries a different
@@ -199,7 +213,10 @@ async def update_llm_provider(name: str, body: dict[str, Any]) -> dict[str, Any]
 
 
 @router.delete("/providers/{name}", status_code=204)
-async def delete_llm_provider(name: str) -> Response:
+async def delete_llm_provider(
+    name: str,
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> Response:
     """Remove a provider. Clears ``default_provider`` if it pointed here."""
     cfg = load_llm_config()
     providers: list[dict[str, Any]] = cfg.get("providers", [])
@@ -230,7 +247,10 @@ async def delete_llm_provider(name: str) -> Response:
 
 
 @router.post("/providers/test")
-async def test_llm_provider_draft(body: dict[str, Any]) -> dict[str, Any]:
+async def test_llm_provider_draft(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Run Test Connection against a *draft* provider (not yet persisted).
 
     prompts-022: used by the Add LLM wizard before the operator clicks
@@ -289,7 +309,10 @@ async def test_llm_provider_draft(body: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/providers/discover")
-async def discover_llm_provider_draft(body: dict[str, Any]) -> dict[str, Any]:
+async def discover_llm_provider_draft(
+    body: dict[str, Any],
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Run the discover (list_models) step ONLY against a draft provider.
 
     prompts-027 stage 2: the Add Provider wizard's "Connect to provider"
@@ -307,7 +330,10 @@ async def discover_llm_provider_draft(body: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/providers/{name}/discover")
-async def discover_llm_provider(name: str) -> dict[str, Any]:
+async def discover_llm_provider(
+    name: str,
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Run the discover (list_models) step ONLY against a persisted provider.
 
     prompts-027: the persisted ProviderCard's "Discover Models" button
@@ -325,7 +351,10 @@ async def discover_llm_provider(name: str) -> dict[str, Any]:
 
 
 @router.post("/providers/{name}/test")
-async def test_llm_provider(name: str) -> dict[str, Any]:
+async def test_llm_provider(
+    name: str,
+    _admin: dict | None = Depends(require_admin_when_enabled),
+) -> dict[str, Any]:
     """Run Test Connection against an already-persisted provider.
 
     prompts-022: response shape changed from

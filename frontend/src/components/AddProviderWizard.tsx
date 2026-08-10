@@ -354,12 +354,21 @@ export default function AddProviderWizard({ existingNames, onClose, onAdded }: P
       // freshly-added provider's card keeps the model dropdown after
       // Save (the operator can re-Discover later). Anthropic / empty-
       // catalog drafts leave it omitted and stay on the free-text path.
+      // issue-local-043: also seed discovered_models with the same list —
+      // there's no curation step in this wizard (it's a single-model
+      // picker, not the toggle list), so everything found starts enabled,
+      // same as today; the admin can toggle individual models off from
+      // the persisted card afterward, and discovered_models being
+      // populated from the start keeps that card's "not in latest
+      // discovery" flag accurate without forcing a redundant re-Discover.
+      const catalog =
+        discoverResult?.models && discoverResult.models.length > 0
+          ? discoverResult.models
+          : undefined
       const addBody: LLMProviderConfig = {
         ...draftPayload,
-        available_models:
-          discoverResult?.models && discoverResult.models.length > 0
-            ? discoverResult.models
-            : undefined,
+        available_models: catalog,
+        discovered_models: catalog,
       }
       await api.llm.addProvider(addBody)
       onAdded()
