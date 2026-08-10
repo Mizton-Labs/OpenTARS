@@ -102,6 +102,19 @@ class TestHunts:
         assert rows[0]["id"] == pkg["id"]
         assert rows[0]["status"] == "archived"
 
+    @pytest.mark.asyncio
+    async def test_includes_created_by_for_bulk_action_eligibility(self, db_path: Path) -> None:
+        # issue-local-044: the Data Explorer's bulk archive/unarchive needs
+        # each row's owner to decide whether the current user may select it.
+        with patch.object(th_db, "_TH_DB_PATH", db_path):
+            owned = await th_db.create_hunt_package("Owned", "", created_by="alice")
+            unowned = await th_db.create_hunt_package("Unowned", "")
+            rows = await th_db.list_explorer_rows("hunts")
+
+        by_id = {r["id"]: r for r in rows}
+        assert by_id[owned["id"]]["created_by"] == "alice"
+        assert by_id[unowned["id"]]["created_by"] is None
+
 
 class TestRuns:
     @pytest.mark.asyncio

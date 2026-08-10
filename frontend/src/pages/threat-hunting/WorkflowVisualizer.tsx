@@ -435,20 +435,59 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   // issue-local-022 (item 7): defaults on.
   const [trackWorkflow, setTrackWorkflow] = useState(true)
 
-  const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as
-    | 'info'
-    | 'detailed'
-    | 'verbose'
-    | 'debug'
+  type Verbosity = 'info' | 'detailed' | 'verbose' | 'debug'
+  const verbosityDefault = (verbosityData?.agent_workflow_verbosity ?? 'info') as Verbosity
+  // issue-local-044: the configured agent_workflow_verbosity is only the
+  // DEFAULT the view opens at — a local, session-only override (same
+  // pattern as showSubtasks/trackWorkflow below) lets the user switch the
+  // logging detail level for THIS view without touching the saved config.
+  const [verbosity, setVerbosity] = useState<Verbosity>('info')
+  useEffect(() => {
+    setVerbosity(verbosityDefault)
+  }, [verbosityDefault])
+
   const visualization = (vizData?.agent_workflow_visualization ?? 'timeline') as 'timeline' | 'mermaid' | 'reactflow'
 
   const completed = genRecord.completed_steps ?? []
   const currentStep = genRecord.current_step ?? ''
 
+  // issue-local-044: logging-level selector, shown above the diagram in
+  // every non-compact view (including 'info', so the user can switch UP
+  // into more detail even when the configured default is minimal).
+  const VERBOSITY_LEVELS: { id: Verbosity; label: string }[] = [
+    { id: 'info', label: 'Info' },
+    { id: 'detailed', label: 'Detailed' },
+    { id: 'verbose', label: 'Verbose' },
+    { id: 'debug', label: 'Debug' },
+  ]
+  const VerbosityToolbar = !compact && (
+    <div className="flex items-center gap-2 pb-1">
+      <span className="text-[11px] text-gray-500 uppercase tracking-wide">View</span>
+      <div className="flex gap-1">
+        {VERBOSITY_LEVELS.map((lvl) => (
+          <button
+            key={lvl.id}
+            type="button"
+            onClick={() => setVerbosity(lvl.id)}
+            className={clsx(
+              'px-2 py-0.5 rounded text-[11px] font-medium transition-colors',
+              verbosity === lvl.id
+                ? 'bg-brand-900/40 text-brand-300 border border-brand-700'
+                : 'text-gray-500 border border-transparent hover:text-gray-300 hover:border-gray-700',
+            )}
+          >
+            {lvl.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
   // Info / compact — minimal checklist (existing behavior)
   if (compact || verbosity === 'info') {
     return (
       <div className="space-y-1.5">
+        {VerbosityToolbar}
         {PIPELINE_STEPS.map((step) => {
           const isDone = completed.includes(step.id)
           const isActive = currentStep === step.id
@@ -520,6 +559,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   if (visualization === 'mermaid') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        <div className="col-span-2">{VerbosityToolbar}</div>
         {/* Part 1b: toolbar row spans both columns */}
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
@@ -546,6 +586,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   if (visualization === 'reactflow') {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(200px,1fr)_minmax(0,1.6fr)] gap-4">
+        <div className="col-span-2">{VerbosityToolbar}</div>
         {/* Part 1b: toolbar row spans both columns */}
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
@@ -570,5 +611,10 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   }
 
   // Default: timeline (full width, includes debug panel)
-  return <TimelineVisualizer genRecord={genRecord} verbosity={verbosity} onShowIocs={onShowIocs} />
+  return (
+    <div className="space-y-2">
+      {VerbosityToolbar}
+      <TimelineVisualizer genRecord={genRecord} verbosity={verbosity} onShowIocs={onShowIocs} />
+    </div>
+  )
 }
