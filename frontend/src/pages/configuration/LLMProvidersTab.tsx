@@ -54,7 +54,6 @@ import {
   Save,
   Search,
   Trash2,
-  X,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -374,7 +373,12 @@ function ProviderCard({
           )
           return
         }
-        working = { ...draft, available_models: d.models }
+        // issue-local-043: a base_url change points at a different
+        // endpoint entirely, so the old catalog is no longer meaningful —
+        // wholesale-replace and enable everything found, same as a
+        // brand-new provider. Keep discovered_models in sync too, so the
+        // toggle list's "not in latest discovery" flag stays correct.
+        working = { ...draft, available_models: d.models, discovered_models: d.models }
         setDraft(working)
       }
 
@@ -396,7 +400,18 @@ function ProviderCard({
     onSuccess: () => onPersisted(),
   })
 
-  /** Discover Models: refresh ``available_models`` and persist via PUT. */
+  /**
+   * Discover Models (issue-local-043): stages the fresh catalog into the
+   * draft ONLY — nothing is persisted here. `discovered_models` is
+   * replaced wholesale with the fresh result (so a model that drops out
+   * naturally becomes "not in latest discovery" wherever it's still
+   * enabled — see ModelToggleList). A model id that has never appeared in
+   * this provider's catalog before is auto-enabled (added to
+   * available_models); a model the admin previously toggled off on
+   * purpose stays off even if re-discovered, since it's already present
+   * in the prior catalog. The admin reviews the toggle list and must
+   * press Save to actually apply anything.
+   */
   const runDiscover = async () => {
     setDiscovering(true)
     setDiscoverError(null)
@@ -424,14 +439,12 @@ function ProviderCard({
         setDiscoverError(detailErr || 'No models discovered.')
         return
       }
-      // Persist the freshly-discovered list. Use the draft so the
-      // operator's unsaved changes ride along, with stored-key merge
-      // via "***" in the PUT body.
-      const nextDraft: ProviderDraft = { ...draft, available_models: r.models }
-      setDraft(nextDraft)
-      await api.llm.updateProvider(initial.name, toPersistPayload(nextDraft))
-      onPersisted()
-      setDiscoverNote(`Discovered ${r.models.length} models.`)
+      const previousCatalog = new Set(draft.discovered_models ?? [])
+      const currentlyEnabled = new Set(draft.available_models ?? [])
+      const brandNew = r.models.filter(m => !previousCatalog.has(m))
+      const nextAvailable = [...new Set([...currentlyEnabled, ...brandNew])]
+      setDraft({ ...draft, discovered_models: r.models, available_models: nextAvailable })
+      setDiscoverNote(`Discovered ${r.models.length} models — review below, then Save to apply.`)
     } catch (e) {
       setDiscoverError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -539,6 +552,7 @@ function ProviderCard({
               draft={draft}
               onChange={onChange}
               availableModels={availableModels}
+              discoveredModels={draft.discovered_models ?? []}
               disableName
             />
 
@@ -754,10 +768,72 @@ function AddModelInput({
   )
 }
 
+/**
+ * ModelToggleList (issue-local-043) — replaces the old chip-list +
+ * remove-only "Available models" UI. One row per model in the union of
+ * the discovered catalog and the currently-enabled set, each with a
+ * Toggle bound to whether that model is in `available_models`. Purely a
+ * draft-staging control: `onChange` only updates local state, never
+ * persists — the provider card's own Save button is the single point of
+ * persistence (issue-local-043's core requirement).
+ */
+function ModelToggleList({
+  discoveredModels,
+  availableModels,
+  onChange,
+}: {
+  discoveredModels: string[]
+  availableModels: string[]
+  onChange: (nextAvailableModels: string[]) => void
+}) {
+  const discoveredSet = new Set(discoveredModels)
+  const enabledSet = new Set(availableModels)
+  // Discovered models first (in discovery order), then any enabled model
+  // that isn't (or is no longer) in the catalog — so a flagged/vanished
+  // model still gets a row to toggle off.
+  const catalog = [...discoveredModels, ...availableModels.filter(m => !discoveredSet.has(m))]
+
+  if (catalog.length === 0) return null
+
+  return (
+    <div className="space-y-1 mb-1.5" data-testid="model-toggle-list">
+      {catalog.map(m => {
+        const enabled = enabledSet.has(m)
+        const flagged = enabled && !discoveredSet.has(m)
+        return (
+          <div
+            key={m}
+            className="flex items-center justify-between gap-2 rounded border border-gray-800 bg-gray-800/30 px-2.5 py-1.5"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="text-xs font-mono truncate">{m}</span>
+              {flagged && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 shrink-0"
+                  title="Enabled, but this model did not appear in the most recent Discover result."
+                >
+                  not in latest discovery
+                </span>
+              )}
+            </span>
+            <Toggle
+              checked={enabled}
+              onChange={value =>
+                onChange(value ? [...availableModels, m] : availableModels.filter(x => x !== m))
+              }
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function ProviderFields({
   draft,
   onChange,
   availableModels,
+  discoveredModels,
   disableName = false,
 }: {
   draft: ProviderDraft
@@ -765,6 +841,9 @@ function ProviderFields({
   /** Persisted list of models, used to render the "Default model to use"
    *  dropdown. Empty array means the operator has not run Discover yet. */
   availableModels: string[]
+  /** issue-local-043: raw catalog from the most recent Discover call, used
+   *  to render the toggle list and its "not in latest discovery" flag. */
+  discoveredModels: string[]
   disableName?: boolean
 }) {
   return (
@@ -873,39 +952,44 @@ function ProviderFields({
         )}
       </div>
 
-      {/* issue-local-027: manual model management — the only way to
-          populate available_models for a provider with no discovery
-          endpoint (anthropic-protocol kinds), and a useful supplement for
-          any other kind too (a model Discover Models doesn't surface yet). */}
+      {/* issue-local-043: toggle-based model curation — Discover Models
+          only stages the catalog (see runDiscover); the admin decides which
+          discovered models are actually exposed to the platform via these
+          toggles, and nothing is written to disk until Save. The manual
+          "Add model" input is still the only way to introduce a model id
+          for providers with no discovery endpoint (issue-local-027,
+          anthropic-protocol kinds), and stays a useful supplement for any
+          other kind too — it now feeds the same toggle list (default ON),
+          not a separate always-enabled chip. */}
       <div className="col-span-2">
         <label className="label">Available models (for the Threat Hunting model picker)</label>
-        {availableModels.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-1.5" data-testid="available-models-chips">
-            {availableModels.map(m => (
-              <span
-                key={m}
-                className="inline-flex items-center gap-1 text-xs bg-gray-800 border border-gray-700 rounded-full pl-2.5 pr-1.5 py-0.5"
-              >
-                {m}
-                <button
-                  type="button"
-                  className="text-gray-500 hover:text-red-400"
-                  aria-label={`Remove ${m}`}
-                  onClick={() =>
-                    onChange({ available_models: availableModels.filter(x => x !== m) })
-                  }
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
+        <p className="text-xs text-gray-500 mb-1.5">
+          Toggle which models the platform can use. Changes here are staged — press Save below to
+          apply them.
+        </p>
+        <ModelToggleList
+          discoveredModels={discoveredModels}
+          availableModels={availableModels}
+          onChange={next => onChange({ available_models: next })}
+        />
+        {discoveredModels.length === 0 && availableModels.length === 0 && (
+          <div className="text-xs text-gray-500 italic mb-1.5">
+            No models discovered yet. Click &quot;Discover Models&quot; above, or add one manually
+            below.
           </div>
         )}
         <AddModelInput
           onAdd={model =>
-            onChange({ available_models: [...availableModels, model] })
+            onChange({
+              discovered_models: discoveredModels.includes(model)
+                ? discoveredModels
+                : [...discoveredModels, model],
+              available_models: availableModels.includes(model)
+                ? availableModels
+                : [...availableModels, model],
+            })
           }
-          existing={availableModels}
+          existing={[...new Set([...discoveredModels, ...availableModels])]}
         />
       </div>
 

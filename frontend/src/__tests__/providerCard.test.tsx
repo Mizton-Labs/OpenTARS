@@ -126,12 +126,47 @@ describe('ProviderCard (027 step 5: Discover-then-Probe per-card surface)', () =
     expect(api.llm.discoverProvider).not.toHaveBeenCalled()
   })
 
-  it('"Discover Models" calls discoverProvider then PUTs the new available_models list', async () => {
+  it('"Discover Models" (issue-local-043) stages the catalog and does NOT persist', async () => {
     vi.mocked(api.llm.getConfig).mockResolvedValue(makeConfig({ available_models: undefined }))
     vi.mocked(api.llm.discoverProvider).mockResolvedValue({
       status: 'ok',
       details: [],
       models: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
+    })
+    renderTab()
+    await expandP1()
+    fireEvent.click(await screen.findByRole('button', { name: /Discover Models/i }))
+    await waitFor(() => expect(api.llm.discoverProvider).toHaveBeenCalledWith('p1'))
+
+    // Note makes clear nothing is saved yet.
+    expect(
+      await screen.findByText(/Discovered 3 models — review below, then Save to apply\./i),
+    ).toBeInTheDocument()
+    // A brand-new provider's never-seen-before models default to enabled
+    // (toggle ON) — but staged only, not persisted.
+    const list = screen.getByTestId('model-toggle-list')
+    for (const m of ['gpt-4o', 'gpt-4o-mini', 'o1-mini']) {
+      const row = within(list).getByText(m).closest('div[class*="justify-between"]')!
+      expect(within(row as HTMLElement).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    }
+    expect(api.llm.updateProvider).not.toHaveBeenCalled()
+
+    // Save is what actually persists the staged catalog.
+    fireEvent.click(screen.getAllByRole('button', { name: /^Save$/ })[1])
+    await waitFor(() => expect(api.llm.updateProvider).toHaveBeenCalledTimes(1))
+    const [name, payload] = vi.mocked(api.llm.updateProvider).mock.calls[0]
+    expect(name).toBe('p1')
+    expect(payload.available_models).toEqual(['gpt-4o', 'gpt-4o-mini', 'o1-mini'])
+    expect(payload.discovered_models).toEqual(['gpt-4o', 'gpt-4o-mini', 'o1-mini'])
+    expect(payload.api_key).toBe('***')
+  })
+
+  it('toggling a discovered model off, then Save, removes it from available_models (issue-local-043)', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(makeConfig({ available_models: undefined }))
+    vi.mocked(api.llm.discoverProvider).mockResolvedValue({
+      status: 'ok',
+      details: [],
+      models: ['gpt-4o', 'gpt-4o-mini'],
     })
     vi.mocked(api.llm.updateProvider).mockResolvedValue({
       name: 'p1', kind: 'openai', model: 'gpt-4o-mini',
@@ -140,16 +175,67 @@ describe('ProviderCard (027 step 5: Discover-then-Probe per-card surface)', () =
     renderTab()
     await expandP1()
     fireEvent.click(await screen.findByRole('button', { name: /Discover Models/i }))
-    await waitFor(() => expect(api.llm.discoverProvider).toHaveBeenCalledWith('p1'))
-    // Persist call: PUT carries the newly-discovered list and the
-    // stored-key sentinel because the operator did not type a new key.
+    await screen.findByTestId('model-toggle-list')
+
+    const list = screen.getByTestId('model-toggle-list')
+    const row = within(list).getByText('gpt-4o').closest('div[class*="justify-between"]')!
+    fireEvent.click(within(row as HTMLElement).getByRole('switch'))
+    expect(within(row as HTMLElement).getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+    // Nothing persisted just from toggling.
+    expect(api.llm.updateProvider).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Save$/ })[1])
     await waitFor(() => expect(api.llm.updateProvider).toHaveBeenCalledTimes(1))
-    const [name, payload] = vi.mocked(api.llm.updateProvider).mock.calls[0]
-    expect(name).toBe('p1')
-    expect(payload.available_models).toEqual(['gpt-4o', 'gpt-4o-mini', 'o1-mini'])
-    expect(payload.api_key).toBe('***')
-    // Success note rendered.
-    expect(await screen.findByText(/Discovered 3 models\./i)).toBeInTheDocument()
+    const [, payload] = vi.mocked(api.llm.updateProvider).mock.calls[0]
+    expect(payload.available_models).toEqual(['gpt-4o-mini'])
+  })
+
+  it('re-discovering does not silently re-enable a model the admin already toggled off (issue-local-043)', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({ available_models: ['gpt-4o-mini'], discovered_models: ['gpt-4o-mini', 'gpt-4o'] }),
+    )
+    vi.mocked(api.llm.discoverProvider).mockResolvedValue({
+      status: 'ok',
+      details: [],
+      // gpt-4o was already known (previously toggled off) and still comes
+      // back; o1-mini is genuinely brand-new.
+      models: ['gpt-4o-mini', 'gpt-4o', 'o1-mini'],
+    })
+    renderTab()
+    await expandP1()
+    fireEvent.click(await screen.findByRole('button', { name: /Discover Models/i }))
+    await screen.findByText(/Discovered 3 models/i)
+
+    const list = screen.getByTestId('model-toggle-list')
+    const rowFor = (m: string) => within(list).getByText(m).closest('div[class*="justify-between"]') as HTMLElement
+    expect(within(rowFor('gpt-4o-mini')).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    // Known-but-previously-disabled model stays off.
+    expect(within(rowFor('gpt-4o')).getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+    // Genuinely new model defaults on.
+    expect(within(rowFor('o1-mini')).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('a model enabled but absent from the latest discovery is flagged, not silently disabled (issue-local-043)', async () => {
+    vi.mocked(api.llm.getConfig).mockResolvedValue(
+      makeConfig({ available_models: ['legacy-model'], discovered_models: ['legacy-model'] }),
+    )
+    vi.mocked(api.llm.discoverProvider).mockResolvedValue({
+      status: 'ok',
+      details: [],
+      // legacy-model no longer comes back from a fresh discovery.
+      models: ['gpt-4o'],
+    })
+    renderTab()
+    await expandP1()
+    fireEvent.click(await screen.findByRole('button', { name: /Discover Models/i }))
+    await screen.findByText(/Discovered 1 models/i)
+
+    const list = screen.getByTestId('model-toggle-list')
+    const row = within(list).getByText('legacy-model').closest('div[class*="justify-between"]') as HTMLElement
+    // Still enabled...
+    expect(within(row).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    // ...but flagged.
+    expect(within(row).getByText(/not in latest discovery/i)).toBeInTheDocument()
   })
 
   it('"Discover Models" surfaces the inline error when the upstream returns zero models', async () => {
@@ -455,7 +541,7 @@ describe('ProviderCard (prompts-031: delete confirm + dropdown-after-save)', () 
 })
 
 describe('ProviderCard (issue-local-027: manual model management + Azure anthropic-passthrough fixes)', () => {
-  it('typing a model and clicking Add appends it as a removable chip in available_models', async () => {
+  it('typing a model and clicking Add appends it to the toggle list, enabled by default (issue-local-043)', async () => {
     vi.mocked(api.llm.getConfig).mockResolvedValue(
       makeConfig({
         kind: 'azure_ai_foundry',
@@ -472,7 +558,9 @@ describe('ProviderCard (issue-local-027: manual model management + Azure anthrop
     fireEvent.change(addInput, { target: { value: 'claude-opus-4-8' } })
     fireEvent.click(screen.getByRole('button', { name: /^Add$/ }))
 
-    expect(await screen.findByText('claude-opus-4-8')).toBeInTheDocument()
+    const list = await screen.findByTestId('model-toggle-list')
+    const row = within(list).getByText('claude-opus-4-8').closest('div[class*="justify-between"]')!
+    expect(within(row as HTMLElement).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
     // Input clears after a successful add.
     expect((addInput as HTMLInputElement).value).toBe('')
   })
@@ -516,29 +604,42 @@ describe('ProviderCard (issue-local-027: manual model management + Azure anthrop
     // Duplicate (already present) is a no-op.
     fireEvent.change(addInput, { target: { value: 'gpt-4o' } })
     fireEvent.click(screen.getByRole('button', { name: /^Add$/ }))
-    // Scoped to the chips row — "gpt-4o" also legitimately appears as a
-    // dropdown <option>, which a page-wide query would double-count.
-    const chips = screen.getByTestId('available-models-chips')
-    expect(within(chips).getAllByText('gpt-4o')).toHaveLength(1)
+    // Scoped to the toggle-list row — "gpt-4o" also legitimately appears
+    // as a dropdown <option>, which a page-wide query would double-count.
+    const list = screen.getByTestId('model-toggle-list')
+    expect(within(list).getAllByText('gpt-4o')).toHaveLength(1)
 
     // Blank/whitespace-only is a no-op — the Add button stays disabled.
     fireEvent.change(addInput, { target: { value: '   ' } })
     expect(screen.getByRole('button', { name: /^Add$/ })).toBeDisabled()
   })
 
-  it('removing a model chip drops it from available_models', async () => {
+  it('toggling a model off in the list, then Save, drops it from available_models (issue-local-043)', async () => {
     vi.mocked(api.llm.getConfig).mockResolvedValue(
-      makeConfig({ available_models: ['gpt-4o-mini', 'gpt-4o'] }),
+      makeConfig({ available_models: ['gpt-4o-mini', 'gpt-4o'], discovered_models: ['gpt-4o-mini', 'gpt-4o'] }),
     )
+    vi.mocked(api.llm.updateProvider).mockResolvedValue({
+      name: 'p1', kind: 'openai', model: 'gpt-4o-mini',
+      has_api_key: true, skip_tls_verify: false,
+    })
     renderTab()
     await expandP1()
 
-    const chips = await screen.findByTestId('available-models-chips')
-    expect(within(chips).getByText('gpt-4o')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Remove gpt-4o' }))
-    expect(within(chips).queryByText('gpt-4o')).not.toBeInTheDocument()
-    // The other model, and the dropdown's own option list, are untouched.
-    expect(within(chips).getByText('gpt-4o-mini')).toBeInTheDocument()
+    const list = await screen.findByTestId('model-toggle-list')
+    const row = within(list).getByText('gpt-4o').closest('div[class*="justify-between"]') as HTMLElement
+    expect(within(row).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(row).getByRole('switch'))
+    expect(within(row).getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+    // The row stays visible (toggled off, not removed) — the other
+    // model is untouched.
+    expect(within(list).getByText('gpt-4o-mini')).toBeInTheDocument()
+    // Nothing persisted until Save.
+    expect(api.llm.updateProvider).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Save$/ })[1])
+    await waitFor(() => expect(api.llm.updateProvider).toHaveBeenCalledTimes(1))
+    const [, payload] = vi.mocked(api.llm.updateProvider).mock.calls[0]
+    expect(payload.available_models).toEqual(['gpt-4o-mini'])
   })
 
   it('Discover Models shows an informational note (not an error) for an azure_ai_foundry anthropic-passthrough provider', async () => {

@@ -166,6 +166,23 @@ def validate_config(cfg: dict[str, Any]) -> None:
                     f"provider {name!r}: 'available_models' must be a list of non-empty strings"
                 )
 
+        # issue-local-043: raw catalog from the most recent Discover call
+        # (or a manual "Add model") — replaced wholesale on each fresh
+        # Discover, not unioned. Distinct from available_models (the
+        # admin-enabled subset): a model can be in discovered_models
+        # without being enabled, and can stay enabled after it drops out
+        # of discovered_models (flagged in the UI as "not in latest
+        # discovery" rather than silently disabled). Not a secret, stored
+        # verbatim. Validated as a list of non-empty strings if present.
+        discovered = p.get("discovered_models")
+        if discovered is not None:
+            if not isinstance(discovered, list) or not all(
+                isinstance(m, str) and m for m in discovered
+            ):
+                raise LLMConfigError(
+                    f"provider {name!r}: 'discovered_models' must be a list of non-empty strings"
+                )
+
         # prompts-034: persisted list of models that have passed a green
         # Test against this provider. Used as the source for the Smart
         # Mapping model dropdown (decision A). Public ids, not redacted.
