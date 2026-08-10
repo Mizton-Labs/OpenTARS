@@ -339,6 +339,68 @@ class TestSynthesizeRecommendationRun:
             assert "gpt-4o" in synthesized["extracted_text"] or "claude" in synthesized["extracted_text"]
 
     @pytest.mark.asyncio
+    async def test_synthetic_evidence_item_scoped_to_the_new_run_only_issue_local_041(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression for issue-local-041: the "Consolidated plan" evidence
+        item recommendation_synthesizer.py injects must only be ingested by
+        the consolidated run it was created for — not by every other run on
+        the same package (which would otherwise re-inject it as first-class
+        evidence on every subsequent run, compounding with each new
+        consolidated run)."""
+        db_path = tmp_path / "th.db"
+        with (
+            patch.object(th_db, "_TH_DB_PATH", db_path),
+            patch.object(runner, "_ACTIVE_JOBS", {}),
+            patch.object(runner, "_ACTIVE_RUN_PKG", {}),
+        ):
+            await th_db.init_threat_hunting_db()
+            pkg = await th_db.create_hunt_package("pkg", "")
+            await _seed_run_with_outputs(pkg["id"], "run-a", llm_model="gpt-4o")
+            await _seed_run_with_outputs(pkg["id"], "run-b", llm_model="claude")
+
+            with patch.object(
+                comparison_analyst, "call_llm", new=AsyncMock(return_value=LLM_COMPARISON_RESPONSE)
+            ):
+                await comparison_analyst.compare_runs(pkg["id"], phase="preliminary")
+
+            with (
+                patch.object(
+                    recommendation_synthesizer,
+                    "call_llm",
+                    new=AsyncMock(return_value="Synthesized consolidated plan text."),
+                ),
+                patch("backend.threat_hunting.agents.runner.asyncio.create_task") as mock_task,
+            ):
+                mock_task.return_value = object()
+                run_record = await recommendation_synthesizer.synthesize_recommendation_run(
+                    pkg["id"], phase="preliminary"
+                )
+
+            consolidated_run_id = run_record["run_id"]
+
+            # Scoped to the new consolidated run: the synthetic item is present.
+            for_new_run = await th_db.list_evidence_items(pkg["id"], run_id=consolidated_run_id)
+            assert any(
+                e["label"] == "Consolidated plan (from comparison recommendations)"
+                for e in for_new_run
+            )
+
+            # Scoped to an unrelated (pre-existing) run: excluded.
+            for_other_run = await th_db.list_evidence_items(pkg["id"], run_id="run-a")
+            assert not any(
+                e["label"] == "Consolidated plan (from comparison recommendations)"
+                for e in for_other_run
+            )
+
+            # Unscoped (Evidence tab / global search): still visible.
+            unscoped = await th_db.list_evidence_items(pkg["id"])
+            assert any(
+                e["label"] == "Consolidated plan (from comparison recommendations)"
+                for e in unscoped
+            )
+
+    @pytest.mark.asyncio
     async def test_run_ids_narrows_to_a_subset(self, tmp_path: Path) -> None:
         db_path = tmp_path / "th.db"
         with (

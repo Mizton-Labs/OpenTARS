@@ -1,12 +1,19 @@
 /**
- * Agents Configuration Tab — issue-local-004 / issue-007
+ * Agents Configuration Tab — issue-local-004 / issue-007 / issue-local-041
  *
  * Controls:
- *   1. Agentic Workflow Verbosity  (info | verbose | debug)
+ *   1. Agentic Workflow Verbosity  (info | detailed | verbose | debug)
  *   2. Visualization Style         (timeline | mermaid | reactflow)
- *      — only meaningful / shown when verbosity is verbose or debug
+ *      — only meaningful / shown above 'info'
  *   3. Show Granular Subtasks      (bool) — new Part 1b
  *   4. Agent Tools & Document Parsers  (per-tool enable/disable, issue-007)
+ *
+ * issue-local-041 renamed the old 3-tier scale (info/verbose/debug) to make
+ * room for a new, deeper debug level: old "verbose" -> "detailed", old
+ * "debug" -> "verbose" (identical behavior, just renamed), and the new
+ * "debug" adds agent-name highlighting, a full prompt inspector, and token
+ * usage totals. See config/loader.py's load_agent_verbosity for the
+ * one-time migration of values saved under the old names.
  */
 
 import { useEffect, useState } from 'react'
@@ -17,7 +24,7 @@ import { api, type ToolCatalogEntry } from '../../api/client'
 
 // ── Verbosity option definitions ──────────────────────────────────────────────
 
-type VerbosityLevel = 'info' | 'verbose' | 'debug'
+type VerbosityLevel = 'info' | 'detailed' | 'verbose' | 'debug'
 type VisualizationStyle = 'timeline' | 'mermaid' | 'reactflow'
 
 const VERBOSITY_OPTIONS: { id: VerbosityLevel; label: string; description: string }[] = [
@@ -28,16 +35,22 @@ const VERBOSITY_OPTIONS: { id: VerbosityLevel; label: string; description: strin
       'Shows the current processing step from the agents. Clean and only with the summary of activities done by the agents.',
   },
   {
+    id: 'detailed',
+    label: 'Detailed',
+    description:
+      'Dynamic view of how agents perform actions: data passed between agents, tools called, item counts, and per-step timing. Rendered as an animated pipeline in the selected visualization style.',
+  },
+  {
     id: 'verbose',
     label: 'Verbose',
     description:
-      'Dynamic view of how agents perform actions: data passed between agents, tools called, item counts, and per-step timing. Rendered as an animated pipeline in the selected visualization style.',
+      'Everything in Detailed plus a live log textbox at the bottom showing all backend pipeline log lines scoped to the current hunt run.',
   },
   {
     id: 'debug',
     label: 'Debug',
     description:
-      'Everything in Verbose plus a live log textbox at the bottom showing all backend pipeline log lines scoped to the current hunt run.',
+      'Everything in Verbose plus agent/component names highlighted in the console, a full inspector for every prompt sent to the model (labeled by type: system, user, agent, ...), and token usage totals per task/run/package where the model API provides them.',
   },
 ]
 
@@ -109,7 +122,7 @@ export default function AgentsConfigTab() {
   })
 
   // Part 4: defaults updated to debug / reactflow
-  const [verbosity, setVerbosity] = useState<VerbosityLevel>('debug')
+  const [verbosity, setVerbosity] = useState<VerbosityLevel>('verbose')
   const [visualization, setVisualization] = useState<VisualizationStyle>('reactflow')
   const [showSubtasks, setShowSubtasks] = useState(false)
   const [toolsEnabled, setToolsEnabled] = useState<Record<string, boolean>>({})
@@ -200,7 +213,7 @@ export default function AgentsConfigTab() {
   // Part 4: updated fallback defaults to debug / reactflow
   const showSubtasksDirty = showSubtasks !== (subtasksData?.agent_workflow_show_subtasks ?? false)
   const isDirty =
-    verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'debug') ||
+    verbosity !== (verbosityData?.agent_workflow_verbosity ?? 'verbose') ||
     visualization !== (vizData?.agent_workflow_visualization ?? 'reactflow') ||
     showSubtasksDirty ||
     toolsDirty ||

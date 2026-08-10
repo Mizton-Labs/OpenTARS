@@ -13,7 +13,7 @@
  */
 
 import { clsx } from 'clsx'
-import type { THPlaybook } from '../../api/client'
+import type { THPlaybook, THQueryLanguages } from '../../api/client'
 import {
   EFFORT_OPTIONS,
   playbookChoiceValue,
@@ -27,6 +27,16 @@ const CLEANING_TOGGLES = [
   ['remove_cdn_ranges', 'CDN ranges', 'Remove known CDN ranges'],
   ['remove_legit_services', 'Legit services', 'Remove known legit services'],
 ] as const
+
+// issue-local-041: SPL/KQL/CQL/ElasticSearch — same keys as
+// th_query_languages (the global default) and run_config.query_languages
+// (the per-run override this form edits).
+const QUERY_LANGUAGE_TOGGLES: { key: keyof THQueryLanguages; label: string }[] = [
+  { key: 'spl', label: 'SPL' },
+  { key: 'kql', label: 'KQL' },
+  { key: 'cql', label: 'CQL' },
+  { key: 'elasticsearch', label: 'Elasticsearch' },
+]
 
 export default function RunConfigForm({
   variant,
@@ -42,6 +52,8 @@ export default function RunConfigForm({
   onIocCleaningOptionsChange,
   includeThreatIntel,
   onIncludeThreatIntelChange,
+  queryLanguages,
+  onQueryLanguagesChange,
 }: {
   /** 'dialog' = vertical labeled layout (Re-run dialog); 'compact' = centered
    *  pill layout (first-run form). */
@@ -61,6 +73,11 @@ export default function RunConfigForm({
   onIocCleaningOptionsChange: (updater: (prev: IocCleaningOptions) => IocCleaningOptions) => void
   includeThreatIntel: boolean
   onIncludeThreatIntelChange: (include: boolean) => void
+  /** issue-local-041: which SIEM query languages this run should draft —
+   *  seeded from the configured global default (th_query_languages) by the
+   *  call site, editable here as a per-run override. */
+  queryLanguages: THQueryLanguages
+  onQueryLanguagesChange: (updater: (prev: THQueryLanguages) => THQueryLanguages) => void
 }) {
   if (variant === 'compact') {
     return (
@@ -156,6 +173,23 @@ export default function RunConfigForm({
           />
           Include Threat Intel analysis (preliminary + post-execution)
         </label>
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[12px]">
+          <span className="text-gray-500">Query languages:</span>
+          {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-1 text-gray-400">
+              <input
+                type="checkbox"
+                checked={queryLanguages[key]}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
+                }}
+                className="accent-brand-500"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
       </div>
     )
   }
@@ -263,6 +297,27 @@ export default function RunConfigForm({
         />
         Include Threat Intel analysis (preliminary + post-execution)
       </label>
+
+      {/* Query languages (issue-local-041) */}
+      <div className="space-y-1.5">
+        <label className="block text-sm text-gray-400">Query Languages</label>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {QUERY_LANGUAGE_TOGGLES.map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-2 text-[12px] text-gray-400">
+              <input
+                type="checkbox"
+                checked={queryLanguages[key]}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  onQueryLanguagesChange((prev) => ({ ...prev, [key]: checked }))
+                }}
+                className="accent-brand-500"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

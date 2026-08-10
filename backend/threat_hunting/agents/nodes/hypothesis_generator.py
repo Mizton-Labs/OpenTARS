@@ -87,12 +87,16 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
         )
 
         debug_lines.append(f"LLM_CALL: requesting {h_min}-{h_max} hypotheses")
+        usage: dict = {}
+        prompts: list = []
         response = await call_llm(
             user,
             system=system,
             provider_name=state.get("provider_name"),
             model=state.get("model_name"),
             max_tokens=profile["hypothesis_tokens"],
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
 
         parsed = parse_json_response(response, context=step)
@@ -142,6 +146,8 @@ async def hypothesis_generator(state: HuntPipelineState) -> dict:
                 "item_count": len(hypotheses),
                 "effort": state.get("research_effort", "medium"),
                 "debug_lines": debug_lines,
+                "tokens": usage or None,
+                "prompts": prompts or None,
             }
         )
         completed.append(step)

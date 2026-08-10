@@ -19,6 +19,7 @@ run from recommendations", that instead:
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from backend.threat_hunting import db as th_db
@@ -202,6 +203,13 @@ async def synthesize_recommendation_run(
         f"{synthesized_text}\n\n"
         f"Kept IOCs from the compared run(s):\n{ioc_csv or '(no kept IOCs)'}"
     )
+    # issue-local-041: pre-generate the run id so the synthetic evidence item
+    # can be scoped to it (scope_run_id) BEFORE the run exists — otherwise
+    # every later run on this package (manual, playbook, or another
+    # consolidated run) would re-ingest this text as first-class evidence,
+    # compounding with each consolidated run created. The item still shows
+    # up in the (unscoped) Evidence tab and global search.
+    new_run_id = str(uuid.uuid4())
     await th_db.add_evidence_item(
         hunt_package_id,
         item_type="text",
@@ -211,6 +219,7 @@ async def synthesize_recommendation_run(
         provenance_notes=(
             "issue-local-040: auto-generated from a Comparison Assessment's recommendations."
         ),
+        scope_run_id=new_run_id,
     )
 
     from backend.config.loader import load_th_research_effort
@@ -219,6 +228,7 @@ async def synthesize_recommendation_run(
     effort = research_effort or load_th_research_effort()
     run_record = await start_generation(
         hunt_package_id,
+        run_id=new_run_id,
         provider_name=provider_name,
         model_name=model_name,
         research_effort=effort,

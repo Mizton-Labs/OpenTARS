@@ -1,11 +1,18 @@
 /**
  * Tests for issue-local-021's verbosity-gated Pipeline Log console content
- * (pipelineLogUtils.ts) — 'verbose' shows only error/disabled/failed
- * reasoning lines, 'debug' shows the full raw trace.
+ * (pipelineLogUtils.ts) — issue-local-041 renamed the tiers: 'detailed'
+ * (old 'verbose') shows only error/disabled/failed reasoning lines,
+ * 'verbose' (old 'debug') and 'debug' (new, deepest) both show the full raw
+ * trace.
  */
 import { describe, it, expect } from 'vitest'
-import { isReasoningDebugLine, buildPipelineLogLines } from '../pages/threat-hunting/pipelineLogUtils'
-import type { THGenerationRecord } from '../api/client'
+import {
+  isReasoningDebugLine,
+  isPipelineLogSectionHeader,
+  buildPipelineLogLines,
+  sumTokenUsage,
+} from '../pages/threat-hunting/pipelineLogUtils'
+import type { THGenerationRecord, THStepLog } from '../api/client'
 
 const STEPS = [
   { id: 'ttp_analyst', label: 'TTP Analyst' },
@@ -40,7 +47,7 @@ describe('isReasoningDebugLine', () => {
 })
 
 describe('buildPipelineLogLines', () => {
-  it('verbose: only includes reasoning lines, omitting steps with none', () => {
+  it("detailed: only includes reasoning lines, omitting steps with none (issue-local-041: renamed from old 'verbose')", () => {
     const record = makeRecord({
       step_logs: [
         {
@@ -58,7 +65,7 @@ describe('buildPipelineLogLines', () => {
       ],
     })
 
-    const lines = buildPipelineLogLines(record, 'verbose', STEPS)
+    const lines = buildPipelineLogLines(record, 'detailed', STEPS)
 
     // ttp_analyst had no reasoning lines -> its header is omitted entirely.
     expect(lines).not.toContain('=== TTP Analyst ===')
@@ -70,24 +77,27 @@ describe('buildPipelineLogLines', () => {
     expect(lines).not.toContain('LLM_CALL: requesting hypotheses')
   })
 
-  it('debug: includes every line, unfiltered', () => {
-    const record = makeRecord({
-      step_logs: [
-        {
-          step: 'ttp_analyst',
-          status: 'ok',
-          elapsed_s: 0,
-          debug_lines: ['LLM_CALL: requesting TTP analysis', 'LLM_RESPONSE: 2 techniques parsed'],
-        },
-      ],
-    })
+  it.each(['verbose', 'debug'] as const)(
+    "%s: includes every line, unfiltered (issue-local-041: 'verbose' renamed from old 'debug'; new 'debug' behaves the same here)",
+    (tier) => {
+      const record = makeRecord({
+        step_logs: [
+          {
+            step: 'ttp_analyst',
+            status: 'ok',
+            elapsed_s: 0,
+            debug_lines: ['LLM_CALL: requesting TTP analysis', 'LLM_RESPONSE: 2 techniques parsed'],
+          },
+        ],
+      })
 
-    const lines = buildPipelineLogLines(record, 'debug', STEPS)
+      const lines = buildPipelineLogLines(record, tier, STEPS)
 
-    expect(lines).toContain('=== TTP Analyst ===')
-    expect(lines).toContain('LLM_CALL: requesting TTP analysis')
-    expect(lines).toContain('LLM_RESPONSE: 2 techniques parsed')
-  })
+      expect(lines).toContain('=== TTP Analyst ===')
+      expect(lines).toContain('LLM_CALL: requesting TTP analysis')
+      expect(lines).toContain('LLM_RESPONSE: 2 techniques parsed')
+    },
+  )
 
   it('returns an empty array when no step has debug_lines', () => {
     const record = makeRecord({
@@ -95,5 +105,36 @@ describe('buildPipelineLogLines', () => {
     })
     expect(buildPipelineLogLines(record, 'debug', STEPS)).toEqual([])
     expect(buildPipelineLogLines(record, 'verbose', STEPS)).toEqual([])
+    expect(buildPipelineLogLines(record, 'detailed', STEPS)).toEqual([])
+  })
+})
+
+describe('sumTokenUsage (issue-local-041)', () => {
+  it('sums across every step that reported usage', () => {
+    const stepLogs: THStepLog[] = [
+      { step: 'a', status: 'ok', elapsed_s: 1, tokens: { input_tokens: 10, output_tokens: 5, cache_read_tokens: null, cache_creation_tokens: null, total_tokens: 15 } },
+      { step: 'b', status: 'ok', elapsed_s: 1, tokens: { input_tokens: 20, output_tokens: 8, cache_read_tokens: null, cache_creation_tokens: null, total_tokens: 28 } },
+    ]
+    expect(sumTokenUsage(stepLogs)).toEqual({ input_tokens: 30, output_tokens: 13, total_tokens: 43 })
+  })
+
+  it('returns null when no step reported usage', () => {
+    const stepLogs: THStepLog[] = [{ step: 'a', status: 'ok', elapsed_s: 1 }]
+    expect(sumTokenUsage(stepLogs)).toBeNull()
+  })
+
+  it('returns null for an empty or missing step_logs array', () => {
+    expect(sumTokenUsage([])).toBeNull()
+    expect(sumTokenUsage(null)).toBeNull()
+    expect(sumTokenUsage(undefined)).toBeNull()
+  })
+})
+
+describe('isPipelineLogSectionHeader (issue-local-041)', () => {
+  it('matches a "=== Component ===" header line', () => {
+    expect(isPipelineLogSectionHeader('=== TTP Analyst ===')).toBe(true)
+  })
+  it('does not match an ordinary log line', () => {
+    expect(isPipelineLogSectionHeader('LLM_CALL: requesting TTP analysis')).toBe(false)
   })
 })

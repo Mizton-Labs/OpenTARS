@@ -80,8 +80,15 @@ def _utc_now() -> str:
 # ── Deterministic report assembly ─────────────────────────────────────────────
 
 
-def _evidence_summary(evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
-    ioc_total = sum(int(e.get("ioc_count", 0)) for e in evidence_items)
+def _evidence_summary(
+    evidence_items: list[dict[str, Any]], extracted_iocs: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    # issue-local-041: evidence_items rows never had an ioc_count column (the
+    # old `e.get("ioc_count", 0)` read was always 0, for every row, in every
+    # report) — the real count is the number of IOCs the pipeline actually
+    # extracted for this run, i.e. len(extracted_iocs), the same table
+    # RetrohuntPanel/RunsStatusTable's IOC counts are derived from.
+    ioc_total = len(extracted_iocs or [])
     return {
         "total_items": len(evidence_items),
         "ioc_count": ioc_total,
@@ -147,6 +154,7 @@ def assemble_report(
     *,
     executive_summary: str = "",
     findings: str = "",
+    extracted_iocs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the full_report dict from all available data."""
     hypotheses = generation_record.get("hypotheses") or []
@@ -195,7 +203,7 @@ def assemble_report(
         "app_version": __version__,
         "app_commit": get_git_commit(),
         "package_status": hunt_package.get("status", ""),
-        "evidence_summary": _evidence_summary(evidence_items),
+        "evidence_summary": _evidence_summary(evidence_items, extracted_iocs),
         "evidence_items": _evidence_items_full(evidence_items),
         # issue-local-019: full per-IOC list (same shape RetrohuntPanel.tsx's
         # All/Sanitized/Removed table uses), not just the aggregate counts in
@@ -228,6 +236,8 @@ async def _generate_executive_summary(
     *,
     provider_name: str | None,
     model_name: str | None,
+    usage_out: dict | None = None,
+    prompt_log_out: list | None = None,
 ) -> str:
 
     threat_ctx = full_report.get("threat_context") or {}
@@ -284,6 +294,8 @@ async def _generate_executive_summary(
         provider_name=provider_name,
         model=model_name,
         max_tokens=400,
+        usage_out=usage_out,
+        prompt_log_out=prompt_log_out,
     )
     return _clean_prose_response(raw)
 
@@ -306,6 +318,8 @@ async def _generate_findings(
     *,
     provider_name: str | None,
     model_name: str | None,
+    usage_out: dict | None = None,
+    prompt_log_out: list | None = None,
 ) -> str:
     """Generate a detailed Findings/Conclusion section via LLM.
 
@@ -390,6 +404,8 @@ async def _generate_findings(
             provider_name=provider_name,
             model=model_name,
             max_tokens=1200,
+            usage_out=usage_out,
+            prompt_log_out=prompt_log_out,
         )
         return _clean_prose_response(raw)
     except Exception as exc:  # noqa: BLE001
@@ -458,11 +474,16 @@ async def _report_step_log(
     elapsed_s: float | None = None,
     decision: str = "",
     debug_lines: list[str] | None = None,
+    tokens: dict | None = None,
+    prompts: list | None = None,
 ) -> None:
     """Write a report-phase step entry into the run's step_logs (soft-fail).
 
     issue-local-021: *debug_lines* feeds WorkflowVisualizer.tsx's per-run
     "Pipeline Log" debug console — this node previously never populated it.
+    issue-local-041: *tokens* is this step's LLM call usage (see
+    ``LLMClient.last_usage()``), when the step made one and the provider
+    reported it.
     """
     if not run_id:
         return
@@ -476,6 +497,10 @@ async def _report_step_log(
             entry["decision"] = decision
         if debug_lines:
             entry["debug_lines"] = debug_lines
+        if tokens:
+            entry["tokens"] = tokens
+        if prompts:
+            entry["prompts"] = prompts
         await th_db.append_run_step_log(run_id, entry)
     except Exception as exc:  # noqa: BLE001
         get_run_logger(__name__, None, run_id).debug(
@@ -530,12 +555,16 @@ async def write_report(
     generation_record = (
         await th_db.get_generation_record_public(hunt_package_id, run_id=run_id) or {}
     )
-    evidence_items = await th_db.list_evidence_items(hunt_package_id)
-    # Scope SIEM results to this run if run_id is provided
+    # issue-local-041: scoped to this run when known, so a consolidated
+    # run's synthetic "Consolidated plan" evidence item only ever appears in
+    # that run's own report — not every other run's.
+    evidence_items = await th_db.list_evidence_items(hunt_package_id, run_id=run_id)
+    # Scope SIEM results and extracted IOCs to this run if run_id is provided
     if run_id:
         task_results = await th_db.list_task_results_by_run(run_id)
     else:
         task_results = await th_db.list_task_results(hunt_package_id)
+    extracted_iocs = await th_db.list_extracted_iocs(hunt_package_id, run_id=run_id)
 
     # Stage 1: deterministic assembly (no LLM)
     full_report = assemble_report(
@@ -543,6 +572,7 @@ async def write_report(
         generation_record,
         evidence_items,
         task_results,
+        extracted_iocs=extracted_iocs,
     )
     await _report_step_log(
         run_id,
@@ -561,11 +591,17 @@ async def write_report(
     )
     t_step = time.monotonic()
     executive_summary = ""
+    exec_summary_usage: dict = {}
+    exec_summary_prompts: list = []
     try:
         from backend.llm.errors import LLMDisabledError
 
         executive_summary = await _generate_executive_summary(
-            full_report, provider_name=provider_name, model_name=model_name
+            full_report,
+            provider_name=provider_name,
+            model_name=model_name,
+            usage_out=exec_summary_usage,
+            prompt_log_out=exec_summary_prompts,
         )
         await _report_step_log(
             run_id,
@@ -573,6 +609,8 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Executive summary generated",
+            tokens=exec_summary_usage or None,
+            prompts=exec_summary_prompts or None,
         )
     except Exception as exc:
         from backend.llm.errors import LLMDisabledError
@@ -601,11 +639,17 @@ async def write_report(
     )
     t_step = time.monotonic()
     findings = ""
+    findings_usage: dict = {}
+    findings_prompts: list = []
     try:
         from backend.llm.errors import LLMDisabledError
 
         findings = await _generate_findings(
-            full_report, provider_name=provider_name, model_name=model_name
+            full_report,
+            provider_name=provider_name,
+            model_name=model_name,
+            usage_out=findings_usage,
+            prompt_log_out=findings_prompts,
         )
         await _report_step_log(
             run_id,
@@ -613,6 +657,8 @@ async def write_report(
             "ok",
             elapsed_s=time.monotonic() - t_step,
             decision="Findings/Conclusion section generated",
+            tokens=findings_usage or None,
+            prompts=findings_prompts or None,
         )
     except Exception as exc:
         from backend.llm.errors import LLMDisabledError

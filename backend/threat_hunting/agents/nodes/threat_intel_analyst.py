@@ -90,6 +90,8 @@ async def analyze_threat_intel(
     # issue-local-021: feeds WorkflowVisualizer.tsx's per-run "Pipeline Log"
     # debug console — this node previously emitted none.
     debug_lines: list[str] = []
+    usage: dict = {}
+    prompts: list = []
 
     record = await th_db.get_generation_run(run_id)
     if not record:
@@ -233,6 +235,8 @@ async def analyze_threat_intel(
             provider_name=provider_name,
             model=model_name,
             max_tokens=1500,
+            usage_out=usage,
+            prompt_log_out=prompts,
         )
         parsed = parse_json_response(response, context="threat_intel_analyst")
         if isinstance(parsed, dict):
@@ -303,6 +307,8 @@ async def analyze_threat_intel(
                     f"cross-package IOC match(es)"
                 ),
                 "debug_lines": debug_lines,
+                "tokens": usage or None,
+                "prompts": prompts or None,
             },
         )
     except Exception as exc:  # noqa: BLE001

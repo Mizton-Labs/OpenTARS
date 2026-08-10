@@ -2,7 +2,7 @@ import { useState, useMemo, lazy, Suspense } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Play, Loader2, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw, Network,
+  ChevronDown, ChevronRight, Code2, Target, Brain, Crosshair, Ban, RotateCcw, Network, Workflow,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
@@ -14,6 +14,7 @@ import {
   type THHuntTask,
   type LLMProviderSummary,
   type THPlaybookJob,
+  type THQueryLanguages,
 } from '../../api/client'
 import { useAuth } from '../../auth/useAuth'
 import WorkflowVisualizer from './WorkflowVisualizer'
@@ -26,6 +27,7 @@ import {
   DEFAULT_IOC_MODE,
   DEFAULT_IOC_CLEANING_OPTIONS,
   DEFAULT_INCLUDE_THREAT_INTEL,
+  DEFAULT_QUERY_LANGUAGES,
 } from './runConfigUtils'
 
 // issue-local-022 (item 2): lazy-loaded, matching WorkflowVisualizer.tsx's
@@ -109,6 +111,10 @@ export default function AnalysisTab({
   const [iocMode, setIocMode] = useState<'tagging_only' | 'active_cleaning'>(DEFAULT_IOC_MODE)
   const [iocCleaningOptions, setIocCleaningOptions] = useState(DEFAULT_IOC_CLEANING_OPTIONS)
   const [includeThreatIntel, setIncludeThreatIntel] = useState(DEFAULT_INCLUDE_THREAT_INTEL)
+  // issue-local-041: null until the user actually touches a toggle — see
+  // buildRunConfig's docstring for why an untouched form omits the key
+  // entirely rather than freezing in the default at page-load time.
+  const [queryLanguagesOverride, setQueryLanguagesOverride] = useState<THQueryLanguages | null>(null)
 
   // Load global default effort for the Generate screen
   const { data: effortData } = useQuery({
@@ -116,6 +122,15 @@ export default function AnalysisTab({
     queryFn: () => api.getThResearchEffort(),
     staleTime: 30_000,
   })
+
+  // issue-local-041: configured default query languages for the Generate screen.
+  const { data: queryLanguagesData } = useQuery({
+    queryKey: ['th-query-languages'],
+    queryFn: () => api.getThQueryLanguages(),
+    staleTime: 30_000,
+  })
+  const effectiveQueryLanguages =
+    queryLanguagesOverride ?? queryLanguagesData?.th_query_languages ?? DEFAULT_QUERY_LANGUAGES
 
   // Load LLM providers for the model selector
   const { data: providers = [] } = useQuery({
@@ -167,7 +182,7 @@ export default function AnalysisTab({
         research_effort: effort,
         provider_name: chosenModel?.provider ?? undefined,
         model_name: chosenModel?.model ?? undefined,
-        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel),
+        run_config: buildRunConfig(iocMode, iocCleaningOptions, includeThreatIntel, queryLanguagesOverride),
       })
     },
     onSuccess: (data) => {
@@ -256,6 +271,10 @@ export default function AnalysisTab({
                 onIocCleaningOptionsChange={setIocCleaningOptions}
                 includeThreatIntel={includeThreatIntel}
                 onIncludeThreatIntelChange={setIncludeThreatIntel}
+                queryLanguages={effectiveQueryLanguages}
+                onQueryLanguagesChange={(updater) =>
+                  setQueryLanguagesOverride((prev) => updater(prev ?? effectiveQueryLanguages))
+                }
               />
               <button
                 className="btn-primary flex items-center gap-2 mx-auto"
@@ -330,7 +349,7 @@ export default function AnalysisTab({
         </div>
 
         {iocVerdictsDirty && isResearcher && (
-          <p className="text-xs text-amber-400">
+          <p className="text-sm text-amber-400">
             You have unapplied IOC verdict changes — apply them before approving this run for Execution.
           </p>
         )}
@@ -358,7 +377,7 @@ export default function AnalysisTab({
           </div>
         )}
 
-        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} />
+        <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} onShowIocs={onShowIocs} />
       </div>
     )
   }
@@ -370,7 +389,7 @@ export default function AnalysisTab({
         <CheckCircle className="w-4 h-4 text-green-400" />
         <p className="text-sm font-semibold text-green-400">Hunt Package Approved</p>
       </div>
-      <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} readOnly />
+      <HuntingPackageDraft record={genRecord} pkgId={pkgId} runId={runId} onShowIocs={onShowIocs} readOnly />
     </div>
   )
 }
@@ -381,11 +400,14 @@ function HuntingPackageDraft({
   record,
   pkgId,
   runId,
+  onShowIocs,
   readOnly = false,
 }: {
   record: THGenerationRecord
   pkgId: string
   runId?: string
+  /** Called when the user clicks "View IOCs" in the pipeline diagram. */
+  onShowIocs?: () => void
   readOnly?: boolean
 }) {
   const qc = useQueryClient()
@@ -431,6 +453,14 @@ function HuntingPackageDraft({
   // up space above the main summary.
   const [showChart, setShowChart] = useState(false)
 
+  // issue-local-041 follow-up: the pipeline diagram (with its per-node hover
+  // tooltips) previously only rendered while a run's status was 'running' —
+  // once a run reached awaiting_approval/completed it disappeared entirely,
+  // so the tooltips were unreachable during review, the state a run is in
+  // almost all the time. Collapsed by default, same as the relationship
+  // chart above, so the review screen doesn't default to two large diagrams.
+  const [showPipeline, setShowPipeline] = useState(false)
+
   const discardMut = useMutation({
     mutationFn: ({ hypothesisId, discarded }: { hypothesisId: string; discarded: boolean }) =>
       api.threatHunting.discardHypothesis(pkgId, runId ?? '', hypothesisId, discarded),
@@ -451,6 +481,22 @@ function HuntingPackageDraft({
     <div className="space-y-5">
       {/* Threat Context (main summary) */}
       {record.threat_context && <ThreatContextCard ctx={record.threat_context} />}
+
+      {/* issue-local-041 follow-up: pipeline diagram — collapsed by default,
+          right below the Threat Context summary. Gives review of a
+          finished/awaiting-approval run access to the same hover-tooltip
+          flowchart shown live while the run was 'running'. */}
+      <div className="space-y-3">
+        <button
+          onClick={() => setShowPipeline((v) => !v)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border-2 border-brand-600/60 bg-brand-900/20 text-brand-300 hover:bg-brand-900/30 hover:border-brand-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          <Workflow className="w-4 h-4" />
+          {showPipeline ? 'Hide Pipeline Diagram' : 'Show Pipeline Diagram'}
+          {showPipeline ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        </button>
+        {showPipeline && <WorkflowVisualizer genRecord={record} onShowIocs={onShowIocs} />}
+      </div>
 
       {/* issue-local-023: relationship overview chart — moved below the main
           summary, collapsed by default behind an emphasized toggle rather
@@ -523,50 +569,55 @@ function HuntingPackageDraft({
                       </span>
                     )}
                   </div>
-                  <p className={clsx('text-sm font-medium', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
+                  <p className={clsx('text-base font-semibold', h.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                     {h.title}
                   </p>
                   <p className="text-sm text-gray-400">{h.description}</p>
                   {h.justification && <p className="text-sm text-gray-500 italic">{h.justification}</p>}
-                  {/* issue-006-E: ioc_basis */}
+                  {/* issue-006-E: ioc_basis — issue-local-041: labeled "Related IOCs" subcard */}
                   {h.ioc_basis && h.ioc_basis.length > 0 && (
-                    <div className="flex flex-wrap gap-1 pt-0.5">
-                      {h.ioc_basis.map((ioc) => {
-                        const removed = iocActionByValue.get(ioc) === 'remove'
-                        return (
-                          <span
-                            key={ioc}
-                            className={clsx(
-                              'text-[10px] font-mono border rounded px-1',
-                              removed
-                                ? 'bg-red-950/20 text-red-500/70 border-red-900/40 line-through'
-                                : 'bg-gray-800 text-gray-400 border-gray-700',
-                            )}
-                            title={removed ? 'This IOC was manually removed and is no longer part of the sanitized set' : undefined}
-                          >
-                            {ioc}
-                          </span>
-                        )
-                      })}
+                    <div className="mt-1.5 pl-2 border-l border-gray-700 space-y-1">
+                      <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Related IOCs</p>
+                      <div className="flex flex-wrap gap-1">
+                        {h.ioc_basis.map((ioc) => {
+                          const removed = iocActionByValue.get(ioc) === 'remove'
+                          return (
+                            <span
+                              key={ioc}
+                              className={clsx(
+                                'text-sm font-mono border rounded px-1',
+                                removed
+                                  ? 'bg-red-950/20 text-red-500/70 border-red-900/40 line-through'
+                                  : 'bg-gray-800 text-gray-400 border-gray-700',
+                              )}
+                              title={removed ? 'This IOC was manually removed and is no longer part of the sanitized set' : undefined}
+                            >
+                              {ioc}
+                            </span>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
-                  {/* issue-local-015: evidence-source cards */}
+                  {/* issue-local-015: evidence-source cards — issue-local-041: labeled "Source" subcard */}
                   {evidenceLabels.length > 0 && (
-                    <div className="flex flex-wrap gap-1 pt-0.5">
-                      <span className="text-[10px] text-gray-600 uppercase tracking-wider self-center mr-1">From:</span>
-                      {evidenceLabels.map((label) => (
-                        <span key={label} className="text-[10px] bg-blue-900/20 text-blue-400 border border-blue-800/30 rounded px-1.5 py-0.5">
-                          {label}
-                        </span>
-                      ))}
+                    <div className="mt-1.5 pl-2 border-l border-blue-800/40 space-y-1">
+                      <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Source</p>
+                      <div className="flex flex-wrap gap-1">
+                        {evidenceLabels.map((label) => (
+                          <span key={label} className="text-sm bg-blue-900/20 text-blue-400 border border-blue-800/30 rounded px-1.5 py-0.5">
+                            {label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                   {/* issue-006-E: suggested_actions */}
                   {h.suggested_actions && h.suggested_actions.length > 0 && (
-                    <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-0.5">
-                      <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+                    <div className="mt-1.5 pl-2 border-l border-brand-800/40 space-y-1">
+                      <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Suggested Actions</p>
                       {h.suggested_actions.map((action, i) => (
-                        <p key={i} className="text-[11px] text-gray-400 font-mono leading-relaxed">
+                        <p key={i} className="text-sm text-gray-400 font-mono leading-relaxed">
                           {asDisplayText(action, ['action', 'text', 'description'])}
                         </p>
                       ))}
@@ -625,7 +676,7 @@ function HuntingPackageDraft({
                     </span>
                   )}
                 </div>
-                <p className={clsx('text-sm font-medium', lead.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
+                <p className={clsx('text-base font-semibold', lead.discarded ? 'text-gray-400 line-through' : 'text-gray-200')}>
                   {lead.title}
                 </p>
                 <p className="text-sm text-gray-400">{lead.description}</p>
@@ -634,8 +685,8 @@ function HuntingPackageDraft({
                     {lead.tasks.map((task: THHuntTask) => (
                       <div key={task.id}>
                         <p className="text-sm text-gray-300 font-medium">{task.id}: {task.title}</p>
-                        <p className="text-[11px] text-gray-500">{task.description}</p>
-                        {task.query_hint && <p className="text-[11px] text-gray-600 font-mono">Hint: {task.query_hint}</p>}
+                        <p className="text-sm text-gray-500">{task.description}</p>
+                        {task.query_hint && <p className="text-sm text-gray-600 font-mono">Hint: {task.query_hint}</p>}
                       </div>
                     ))}
                   </div>
@@ -669,13 +720,13 @@ function HuntingPackageDraft({
                   <span className="text-[11px] font-mono text-brand-400">{t.technique_id}</span>
                   <span className="text-[11px] text-gray-500">{t.tactic}</span>
                 </div>
-                <p className="text-sm font-medium text-gray-200">{t.technique_name}</p>
-                <p className="text-[11px] text-gray-500">{t.description}</p>
+                <p className="text-base font-semibold text-gray-200">{t.technique_name}</p>
+                <p className="text-sm text-gray-500">{t.description}</p>
               </div>
             ))}
             {record.ttp_analysis.detection_opportunities?.length > 0 && (
               <div>
-                <p className="text-sm font-medium text-gray-400 mb-1">Detection Opportunities:</p>
+                <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Detection Opportunities:</p>
                 <ul className="space-y-0.5">
                   {record.ttp_analysis.detection_opportunities.map((opp, i) => (
                     <li key={i} className="text-sm text-gray-500 flex gap-1.5">
@@ -698,10 +749,10 @@ function HuntingPackageDraft({
               <div key={q.id} className="border border-gray-700 rounded-lg p-3 space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-mono uppercase">{q.language}</span>
-                  <p className="text-sm font-medium text-gray-200">{q.title}</p>
+                  <p className="text-base font-semibold text-gray-200">{q.title}</p>
                 </div>
-                {q.description && <p className="text-[11px] text-gray-500">{q.description}</p>}
-                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-[11px] text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{asQueryText(q.query)}</pre>
+                {q.description && <p className="text-sm text-gray-500">{q.description}</p>}
+                <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-sm text-green-400 font-mono overflow-x-auto whitespace-pre-wrap">{asQueryText(q.query)}</pre>
               </div>
             ))}
           </div>
@@ -711,9 +762,9 @@ function HuntingPackageDraft({
       {/* Errors */}
       {record.generation_errors && record.generation_errors.length > 0 && (
         <div className="rounded-lg border border-amber-800/40 bg-amber-900/10 p-3 space-y-1">
-          <p className="text-sm font-medium text-amber-400">Generation warnings:</p>
+          <p className="text-sm font-semibold text-amber-400 uppercase tracking-wide">Generation warnings:</p>
           {record.generation_errors.map((e: string, i: number) => (
-            <p key={i} className="text-[11px] text-amber-500">• {e}</p>
+            <p key={i} className="text-sm text-amber-500">• {e}</p>
           ))}
         </div>
       )}
@@ -725,7 +776,7 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
   if (ctx.parse_error) {
     return (
       <div className="card space-y-2">
-        <p className="text-sm font-semibold text-gray-200">Threat Context</p>
+        <p className="text-base font-semibold text-gray-200">Threat Context</p>
         <p className="text-sm text-gray-500 whitespace-pre-wrap">{String(ctx.raw_response || '')}</p>
       </div>
     )
@@ -737,7 +788,7 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
   const confidence   = typeof ctx.confidence   === 'string' ? ctx.confidence   : ''
   return (
     <div className="card space-y-3">
-      <p className="text-sm font-semibold text-gray-200">Threat Context</p>
+      <p className="text-base font-semibold text-gray-200">Threat Context</p>
       {summary      && <p className="text-sm text-gray-300">{summary}</p>}
       <div className="grid grid-cols-2 gap-2 text-sm">
         {threatActor  && <div><span className="text-gray-500">Actor: </span><span className="text-gray-300">{threatActor}</span></div>}
@@ -746,10 +797,10 @@ function ThreatContextCard({ ctx }: { ctx: Record<string, unknown> }) {
       </div>
       {Array.isArray(ctx.key_observations) && ctx.key_observations.length > 0 && (
         <div>
-          <p className="text-[11px] text-gray-500 font-medium mb-1">Key observations:</p>
+          <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Key observations:</p>
           <ul className="space-y-0.5">
             {(ctx.key_observations as unknown[]).map((obs, i) => (
-              <li key={i} className="text-[11px] text-gray-400 flex gap-1.5">
+              <li key={i} className="text-sm text-gray-400 flex gap-1.5">
                 <span className="text-brand-600">•</span>
                 {asDisplayText(obs, ['observation', 'text', 'description', 'summary'])}
               </li>
@@ -780,7 +831,7 @@ function CollapsibleSection({
         onClick={() => setOpen(!open)}
       >
         <Icon className="w-4 h-4 text-brand-400 shrink-0" />
-        <span className="text-sm font-medium text-gray-200 flex-1 text-left">{title}</span>
+        <span className="text-base font-semibold text-gray-200 flex-1 text-left">{title}</span>
         {open ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
       </button>
       {open && <div className="p-4">{children}</div>}

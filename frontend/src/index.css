@@ -17,9 +17,15 @@
     --color-gray-100: 243 244 246;
     --color-gray-200: 229 231 235;
     --color-gray-300: 209 213 219;
-    --color-gray-400: 156 163 175;
-    --color-gray-500: 107 114 128;
-    --color-gray-600: 75 85 99;
+    /* issue-local-041: gray-400/500/600 brightened — these are the app's
+     * de-facto "muted body text" stops (text-gray-400/500, and text-gray-600
+     * for micro-labels), and read low-contrast on the near-black gray-950
+     * page background. Classic was already the best-tuned of the four dark
+     * themes, so this is a modest bump; Energy/Ocean/RedHunter below needed
+     * a bigger one. Never darkens, only brightens — no other rule changes. */
+    --color-gray-400: 168 174 184;
+    --color-gray-500: 122 128 140;
+    --color-gray-600: 92 98 110;
     --color-gray-700: 55 65 81;
     --color-gray-800: 31 41 55;
     --color-gray-900: 17 24 39;
@@ -51,9 +57,10 @@
     --color-gray-100: 236 236 236;
     --color-gray-200: 212 212 212;
     --color-gray-300: 176 176 176;
-    --color-gray-400: 134 134 134;
-    --color-gray-500: 97 97 97;
-    --color-gray-600: 69 69 69;
+    /* issue-local-041: brightened (see Classic's comment above). */
+    --color-gray-400: 168 168 168;
+    --color-gray-500: 128 128 128;
+    --color-gray-600: 96 96 96;
     --color-gray-700: 46 46 46;
     --color-gray-800: 28 28 28;
     --color-gray-900: 18 18 18;
@@ -127,9 +134,10 @@
     --color-gray-100: 219 238 241;
     --color-gray-200: 186 219 224;
     --color-gray-300: 148 195 203;
-    --color-gray-400: 100 158 168;
-    --color-gray-500: 68 122 133;
-    --color-gray-600: 46 89 99;
+    /* issue-local-041: brightened, hue preserved (see Classic's comment above). */
+    --color-gray-400: 130 180 190;
+    --color-gray-500: 95 150 160;
+    --color-gray-600: 68 116 126;
     --color-gray-700: 30 61 69;
     --color-gray-800: 17 38 45;
     --color-gray-900: 8 22 28;
@@ -158,17 +166,23 @@
    * red-600/red-700 danger/error color, which stays unchanged everywhere —
    * an intense-but-distinct ruby rather than colliding with error states. */
   :root[data-theme='redhunter'] {
-    --color-gray-50:  245 245 245;
-    --color-gray-100: 229 229 229;
-    --color-gray-200: 200 200 200;
-    --color-gray-300: 163 163 163;
-    --color-gray-400: 115 115 115;
-    --color-gray-500: 82 82 82;
-    --color-gray-600: 58 58 58;
-    --color-gray-700: 38 38 38;
-    --color-gray-800: 23 23 23;
-    --color-gray-900: 14 14 14;
-    --color-gray-950: 8 8 8;
+    /* issue-local-041: two changes at once, both requested for this theme —
+     * (a) text stops (400/500/600) brightened, same as every other dark
+     *     theme above; (b) surface stops (700-950) raised from near-black to
+     *     an actual dark GREY ("less dark, with darker grey tone") — the old
+     *     gray-950=8 was RGB(8,8,8), indistinguishable from pure black.
+     *     Rose/red brand-* accent below is untouched, per "keep red tones". */
+    --color-gray-50:  248 248 248;
+    --color-gray-100: 232 232 232;
+    --color-gray-200: 210 210 210;
+    --color-gray-300: 180 180 180;
+    --color-gray-400: 150 150 150;
+    --color-gray-500: 118 118 118;
+    --color-gray-600: 90 90 90;
+    --color-gray-700: 64 64 64;
+    --color-gray-800: 46 46 46;
+    --color-gray-900: 34 34 34;
+    --color-gray-950: 24 24 24;
 
     --color-brand-50:  255 241 242;
     --color-brand-100: 255 228 230;
@@ -332,12 +346,15 @@
  * but deliberately more pronounced at rest (not just on hover), since an
  * "intense" red contrast is the whole point of this theme rather than a
  * subtle decorative touch. */
+/* issue-local-041: lightened alongside the ramp change above (was 20/26,
+ * near-indistinguishable from the old near-black page) — still visibly a
+ * step above the page's gray-950 (24 24 24), same relationship as before. */
 :root[data-theme='redhunter'] .card {
-  background-color: rgb(20 20 20);
+  background-color: rgb(40 40 40);
   box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.3);
 }
 :root[data-theme='redhunter'] .card:hover {
-  background-color: rgb(26 26 26);
+  background-color: rgb(48 48 48);
   box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.7);
 }
 
@@ -438,3 +455,19 @@
 :root[data-theme='light'] .text-red-100   { color: rgb(185 28 28); }
 :root[data-theme='light'] .text-blue-100  { color: rgb(29 78 216); }
 :root[data-theme='light'] .text-amber-100 { color: rgb(180 83 9); }
+
+/* issue-local-041: Light theme's gray-* ramp is intentionally MIRRORED
+ * (gray-950 = near-white page bg, gray-50 = near-black — see the theme
+ * block's own comment above), so it can double as both a text-shade AND a
+ * surface-shade scale everywhere else. But `text-gray-500`/`-600`/`-700` are
+ * the app's most common "muted body/subtitle" text classes (hypothesis
+ * descriptions, card subtitles, timestamps, ...) — mirrored, those same
+ * stops become progressively LIGHTER, not darker, so muted text reads as
+ * pale grey on the near-white page/card ("white/grey combination... hard to
+ * read"). Overriding only the `.text-*` utility (not the `--color-gray-*`
+ * variable) fixes exactly the text case without touching a single
+ * `border-gray-*`/`bg-gray-*` usage of the same stops — those keep the
+ * light, subtle borders/surfaces a "modern" light theme calls for. */
+:root[data-theme='light'] .text-gray-500 { color: rgb(90 96 107); }
+:root[data-theme='light'] .text-gray-600 { color: rgb(71 77 89); }
+:root[data-theme='light'] .text-gray-700 { color: rgb(51 57 68); }

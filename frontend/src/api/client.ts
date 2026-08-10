@@ -1064,6 +1064,14 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ th_report_formats: value }),
     }),
+  // issue-local-041: default SIEM connector query languages for query
+  // generation — global default, overridable per-run (RunConfigForm.tsx).
+  getThQueryLanguages: () => request<{ th_query_languages: THQueryLanguages }>('/app/th-query-languages'),
+  setThQueryLanguages: (value: THQueryLanguages) =>
+    request<{ th_query_languages: THQueryLanguages }>('/app/th-query-languages', {
+      method: 'PUT',
+      body: JSON.stringify({ th_query_languages: value }),
+    }),
   // issue-local-018: HuntID prefix (e.g. "TH" -> "TH01")
   getHuntIdPrefix: () => request<{ hunt_id_prefix: string }>('/app/hunt-id-prefix'),
   setHuntIdPrefix: (value: string) =>
@@ -2364,6 +2372,16 @@ export interface THExtractedIOC {
   created_at: string
 }
 
+/** issue-local-041: which SIEM query languages query_drafting_agent should
+ *  draft — both the global default (Threat Hunting config card) and the
+ *  per-run override carry this same shape. */
+export interface THQueryLanguages {
+  spl: boolean
+  kql: boolean
+  cql: boolean
+  elasticsearch: boolean
+}
+
 /** issue-local-015: per-run IOC handling config, sent when starting a run. */
 export interface THIocRunConfig {
   ioc_mode: 'tagging_only' | 'active_cleaning'
@@ -2376,6 +2394,9 @@ export interface THIocRunConfig {
   /** issue-local-021: include the Threat Hunt Intelligence Analyst (both the
    *  preliminary and post-execution phases) in this run's workflow. */
   include_threat_intel?: boolean
+  /** issue-local-041: overrides the configured default query languages for
+   *  this run specifically; omitted means "use the configured default". */
+  query_languages?: THQueryLanguages
 }
 
 /** Per-source intake metadata emitted by intake_classifier (issue-006-C / issue-local-011). */
@@ -2409,6 +2430,32 @@ export interface THStepLog {
   decision?: string
   /** Per-source intake metadata from intake_classifier (issue-006-C). */
   intake_sources?: THIntakeSource[]
+  /** issue-local-041: this step's LLM call token usage, when it made one
+   *  and the provider reported it (see backend LLMClient.last_usage()). A
+   *  field this provider doesn't expose stays undefined/null rather than 0,
+   *  so "0 cached tokens" can be told apart from "not reported". */
+  tokens?: THTokenUsage | null
+  /** issue-local-041: this step's typed prompt/response log — only
+   *  populated when agent verbosity is 'debug' (prompts can be large, so
+   *  capture is opt-in per level, unlike tokens). */
+  prompts?: THPromptLogEntry[] | null
+}
+
+/** issue-local-041: one entry in a step's prompt/response log. */
+export interface THPromptLogEntry {
+  type: 'system' | 'user' | 'agent'
+  content: string
+}
+
+/** issue-local-041: normalized token-usage shape (mirrors backend
+ *  LLMUsage). Every field is nullable independently — not every provider
+ *  reports every kind of token. */
+export interface THTokenUsage {
+  input_tokens: number | null
+  output_tokens: number | null
+  cache_read_tokens: number | null
+  cache_creation_tokens: number | null
+  total_tokens: number | null
 }
 
 /** Lightweight run summary returned by GET /packages/{id}/runs */
@@ -2461,6 +2508,11 @@ export interface THuntPackageRun extends THRunSummary {
   playbook_id?: string | null
   playbook_name?: string | null
   run_origin?: 'manual' | 'playbook' | 'consolidated'
+  /** issue-local-041: summed across every step of this run that reported
+   *  usage; null if no step did (predates this feature, or the provider(s)
+   *  involved don't expose it). Sum across a package's runs client-side for
+   *  the package-wide total. */
+  token_usage_total?: Partial<THTokenUsage> | null
 }
 
 /** issue-local-040: one model a Hunt Playbook fires a run for. */

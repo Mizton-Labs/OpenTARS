@@ -26,16 +26,15 @@ class TestLoaderAgentVerbosity:
         from backend.config.loader import load_agent_verbosity
 
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
-            assert load_agent_verbosity() == "debug"  # issue-local-012: default changed
+            assert load_agent_verbosity() == "verbose"  # issue-local-041: renamed from "debug"
 
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         from backend.config.loader import load_agent_verbosity, save_agent_verbosity
 
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
-            save_agent_verbosity("verbose")
-            assert load_agent_verbosity() == "verbose"
-            save_agent_verbosity("debug")
-            assert load_agent_verbosity() == "debug"
+            for value in ("info", "detailed", "verbose", "debug"):
+                save_agent_verbosity(value)
+                assert load_agent_verbosity() == value
 
     def test_invalid_raises(self, tmp_path: Path) -> None:
         from backend.config.loader import save_agent_verbosity
@@ -50,7 +49,43 @@ class TestLoaderAgentVerbosity:
         p = tmp_path / "app.yaml"
         p.write_text("agent_workflow_verbosity: nonsense\n")
         with patch("backend.config.loader.APP_CONFIG_PATH", p):
-            assert load_agent_verbosity() == "debug"  # issue-local-012: default changed
+            assert load_agent_verbosity() == "verbose"  # issue-local-041: renamed from "debug"
+
+
+class TestLoaderAgentVerbosityLegacyMigration:
+    """issue-local-041: old 3-tier values (info/verbose/debug) stored before
+    the 4-tier rename must transparently become the new equivalents exactly
+    once, and never again re-map a legitimately-saved new-schema value."""
+
+    def test_legacy_verbose_becomes_detailed(self, tmp_path: Path) -> None:
+        from backend.config.loader import load_agent_verbosity
+
+        p = tmp_path / "app.yaml"
+        p.write_text("agent_workflow_verbosity: verbose\n")
+        with patch("backend.config.loader.APP_CONFIG_PATH", p):
+            assert load_agent_verbosity() == "detailed"
+            # Persisted, not just translated in-memory — a second load must
+            # not translate it a second time.
+            assert "detailed" in p.read_text()
+
+    def test_legacy_debug_becomes_verbose(self, tmp_path: Path) -> None:
+        from backend.config.loader import load_agent_verbosity
+
+        p = tmp_path / "app.yaml"
+        p.write_text("agent_workflow_verbosity: debug\n")
+        with patch("backend.config.loader.APP_CONFIG_PATH", p):
+            assert load_agent_verbosity() == "verbose"
+
+    def test_new_schema_debug_is_not_mistaken_for_legacy(self, tmp_path: Path) -> None:
+        """Once a value has gone through the (explicit or migrated) new
+        schema, a later save of 'debug' (the new, deepest tier) must round-
+        trip as 'debug' — not be silently re-mapped to 'verbose' forever."""
+        from backend.config.loader import load_agent_verbosity, save_agent_verbosity
+
+        with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
+            save_agent_verbosity("debug")
+            assert load_agent_verbosity() == "debug"
+            assert load_agent_verbosity() == "debug"  # repeat: still not re-mapped
 
 
 class TestLoaderAgentVisualization:
@@ -150,7 +185,7 @@ class TestRoutesAgentVerbosity:
         with patch("backend.config.loader.APP_CONFIG_PATH", tmp_path / "app.yaml"):
             r = client.get("/api/app/agent-verbosity")
         assert r.status_code == 200
-        assert r.json()["agent_workflow_verbosity"] == "debug"  # issue-local-012: default changed
+        assert r.json()["agent_workflow_verbosity"] == "verbose"  # issue-local-041: renamed from "debug"
 
     def test_put_valid(self, tmp_path: Path) -> None:
         client = _test_client()

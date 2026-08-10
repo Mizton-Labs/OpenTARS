@@ -68,7 +68,7 @@ function Section({
         onClick={() => setOpen((v) => !v)}
       >
         <Icon className="w-4 h-4 text-brand-400 shrink-0" />
-        <span className="text-sm font-medium text-gray-200 flex-1 text-left">{title}</span>
+        <span className="text-base font-semibold text-gray-200 flex-1 text-left">{title}</span>
         {open ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
       </button>
       {open && <div className="p-4">{children}</div>}
@@ -192,15 +192,15 @@ function EvidenceSummarySection({ r }: { r: THFullReport }) {
     <div className="grid grid-cols-3 gap-3">
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{ev.total_items}</p>
-        <p className="text-[11px] text-gray-500 mt-0.5">Evidence Items</p>
+        <p className="text-sm text-gray-500 mt-0.5">Evidence Items</p>
       </div>
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{ev.ioc_count}</p>
-        <p className="text-[11px] text-gray-500 mt-0.5">IOCs Extracted</p>
+        <p className="text-sm text-gray-500 mt-0.5">IOCs Extracted</p>
       </div>
       <div className="bg-gray-800/50 rounded-lg p-3 text-center">
         <p className="text-2xl font-bold text-gray-100">{r.hypotheses.length}</p>
-        <p className="text-[11px] text-gray-500 mt-0.5">Hypotheses</p>
+        <p className="text-sm text-gray-500 mt-0.5">Hypotheses</p>
       </div>
     </div>
   )
@@ -255,25 +255,28 @@ function HypothesesSection({ hypotheses }: { hypotheses: THHypothesis[] }) {
               h.relevance === 'medium' ? 'bg-amber-900/30 text-amber-400' : 'bg-gray-800 text-gray-500'
             )}>{h.relevance}</span>
           </div>
-          <p className="text-sm font-medium text-gray-200">{h.title}</p>
+          <p className="text-base font-semibold text-gray-200">{h.title}</p>
           <p className="text-sm text-gray-400">{h.description}</p>
           {h.justification && <p className="text-sm text-gray-600 italic">{h.justification}</p>}
-          {/* issue-008-2C-B: ioc_basis chips — matches Analysis tab */}
+          {/* issue-008-2C-B / issue-local-041: ioc_basis — labeled "Related IOCs" subcard, matches Analysis tab */}
           {h.ioc_basis && h.ioc_basis.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {h.ioc_basis.map((ioc) => (
-                <span key={ioc} className="text-[10px] font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
-                  {ioc}
-                </span>
-              ))}
+            <div className="mt-1.5 pl-2 border-l border-gray-700 space-y-1">
+              <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Related IOCs</p>
+              <div className="flex flex-wrap gap-1">
+                {h.ioc_basis.map((ioc) => (
+                  <span key={ioc} className="text-sm font-mono bg-gray-800 text-gray-400 border border-gray-700 rounded px-1">
+                    {ioc}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           {/* issue-008-2C-B: suggested_actions — matches Analysis tab */}
           {h.suggested_actions && h.suggested_actions.length > 0 && (
-            <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-0.5">
-              <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Suggested Actions</p>
+            <div className="mt-1 pl-2 border-l border-brand-800/40 space-y-1">
+              <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Suggested Actions</p>
               {h.suggested_actions.map((action, i) => (
-                <p key={i} className="text-[11px] text-gray-400 font-mono leading-relaxed">
+                <p key={i} className="text-sm text-gray-400 font-mono leading-relaxed">
                   {asDisplayText(action, ['action', 'text', 'description'])}
                 </p>
               ))}
@@ -294,11 +297,11 @@ function RetrohuntSummarySection({ r }: { r: THFullReport }) {
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-gray-800/50 rounded-lg p-3">
           <p className="text-lg font-bold text-gray-100">{dr.total_iocs}</p>
-          <p className="text-[11px] text-gray-500">IOCs searched</p>
+          <p className="text-sm text-gray-500">IOCs searched</p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3">
           <p className="text-lg font-bold text-gray-100">{execEvents}</p>
-          <p className="text-[11px] text-gray-500">SIEM events matched</p>
+          <p className="text-sm text-gray-500">SIEM events matched</p>
         </div>
       </div>
       {dr.noisy_iocs > 0 && (
@@ -307,7 +310,7 @@ function RetrohuntSummarySection({ r }: { r: THFullReport }) {
           {dr.noisy_iocs} noisy IOC(s) excluded from queries
         </p>
       )}
-      <p className="text-[11px] text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
+      <p className="text-sm text-gray-500 font-mono">Macro: {dr.spl_macro_name}</p>
       {dr.search_hint && <p className="text-sm text-gray-400">{dr.search_hint}</p>}
     </div>
   )
@@ -325,13 +328,13 @@ function TTPSection({ r }: { r: THFullReport }) {
             <span className="text-[11px] font-mono text-brand-400">{t.technique_id}</span>
             <span className="text-[11px] text-gray-500">{t.tactic}</span>
           </div>
-          <p className="text-sm font-medium text-gray-200">{t.technique_name}</p>
-          <p className="text-[11px] text-gray-500">{t.description}</p>
+          <p className="text-base font-semibold text-gray-200">{t.technique_name}</p>
+          <p className="text-sm text-gray-500">{t.description}</p>
         </div>
       ))}
       {(ttp.detection_opportunities || []).length > 0 && (
         <div>
-          <p className="text-sm font-medium text-gray-400 mb-1">Detection opportunities:</p>
+          <p className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-1">Detection opportunities:</p>
           <ul className="space-y-0.5">
             {(ttp.detection_opportunities as unknown[]).map((opp, i) => (
               <li key={i} className="text-sm text-gray-500 flex gap-1.5">
@@ -431,7 +434,7 @@ export default function ReportPanel({
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <FileText className="w-5 h-5 text-brand-400" />
-          <h3 className="text-sm font-semibold text-gray-200">Hunt Report</h3>
+          <h3 className="text-base font-semibold text-gray-200">Hunt Report</h3>
           {report && (
             <span className="text-[11px] text-gray-500">
               {report.created_at.slice(0, 19).replace('T', ' ')} UTC
@@ -539,7 +542,7 @@ export default function ReportPanel({
           <div className="card space-y-2">
             <div className="flex items-center gap-2">
               <Shield className="w-4 h-4 text-brand-400" />
-              <h4 className="text-sm font-semibold text-gray-200">Executive Summary</h4>
+              <h4 className="text-base font-semibold text-gray-200">Executive Summary</h4>
             </div>
             <p className="text-sm text-gray-300 leading-relaxed">
               {report.full_report.executive_summary || <span className="italic text-gray-500">Not available.</span>}

@@ -298,6 +298,37 @@ def test_assemble_report_includes_hypotheses_with_suggested_actions() -> None:
     assert h_out.get("justification") == "just"
 
 
+def test_assemble_report_ioc_count_reflects_extracted_iocs_issue_local_041() -> None:
+    """Regression for issue-local-041: evidence_summary.ioc_count (shown as
+    "IOCs Extracted" in the report) always read 0 because it summed a
+    nonexistent `ioc_count` field off evidence_items rows. It must now
+    reflect the real extracted_iocs rows passed in for the run."""
+    from backend.threat_hunting.agents.nodes.report_writer import assemble_report
+
+    full_report = assemble_report(
+        hunt_package={"id": "pkg-1", "name": "Test", "status": "approved"},
+        generation_record={},
+        evidence_items=[{"id": "e1", "item_type": "text"}],
+        task_results=[],
+        extracted_iocs=[
+            {"id": "ioc-1", "ioc": "8.8.8.8", "ioc_type": "ip"},
+            {"id": "ioc-2", "ioc": "evil.com", "ioc_type": "domain"},
+        ],
+    )
+
+    assert full_report["evidence_summary"]["ioc_count"] == 2
+
+    # Omitting extracted_iocs (e.g. old test call sites, or a package with no
+    # extractions yet) must still yield 0, not raise.
+    empty_report = assemble_report(
+        hunt_package={"id": "pkg-1", "name": "Test", "status": "approved"},
+        generation_record={},
+        evidence_items=[],
+        task_results=[],
+    )
+    assert empty_report["evidence_summary"]["ioc_count"] == 0
+
+
 def test_render_report_markdown_includes_suggested_actions() -> None:
     """Markdown render must include suggested_actions and ioc_basis per hypothesis."""
     from backend.threat_hunting.agents.nodes.report_writer import render_report_markdown

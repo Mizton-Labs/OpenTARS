@@ -49,11 +49,12 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 // ── AgentsConfigTab ───────────────────────────────────────────────────────────
 
 describe('AgentsConfigTab', () => {
-  it('renders all three verbosity options', async () => {
+  it('renders all four verbosity options (issue-local-041: Detailed added)', async () => {
     const { default: AgentsConfigTab } = await import('../pages/configuration/AgentsConfigTab')
     render(<AgentsConfigTab />, { wrapper: Wrapper })
 
     expect(await screen.findByText('Info')).toBeTruthy()
+    expect(screen.getByText('Detailed')).toBeTruthy()
     expect(screen.getByText('Verbose')).toBeTruthy()
     expect(screen.getByText('Debug')).toBeTruthy()
   })

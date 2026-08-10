@@ -18,6 +18,12 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       ...actual.api,
+      // issue-local-041 follow-up: the new "Show Pipeline Diagram" toggle
+      // mounts WorkflowVisualizer, which queries these on its own — mocked
+      // here so opening it doesn't hit a real, unmocked fetch().
+      getAgentVerbosity: vi.fn().mockResolvedValue({ agent_workflow_verbosity: 'verbose' }),
+      getAgentVisualization: vi.fn().mockResolvedValue({ agent_workflow_visualization: 'timeline' }),
+      getAgentShowSubtasks: vi.fn().mockResolvedValue({ agent_workflow_show_subtasks: false }),
       threatHunting: {
         ...actual.api.threatHunting,
         updateIocVerdicts: vi.fn(),
@@ -358,6 +364,59 @@ describe('AnalysisTab — evidence-chip flag for manually removed IOCs', () => {
     fireEvent.click(toggle)
 
     expect(await screen.findByRole('button', { name: /Hide Hunting Artifacts Relationship/i })).toBeInTheDocument()
+  })
+
+  // issue-local-041 follow-up: the pipeline diagram (with its per-node hover
+  // tooltips) used to only render while a run's status was 'running' —
+  // unreachable once a run finished, which is the state a run is in during
+  // almost all review. It now also renders here, collapsed by default below
+  // Threat Context, behind its own toggle.
+  it('keeps the pipeline diagram collapsed by default, below Threat Context, revealed by its own toggle', async () => {
+    vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+      hunt_package_id: 'pkg-1',
+      run_id: 'run-1',
+      generation_status: 'awaiting_approval',
+      threat_context: { summary: 'A summary of the threat.' },
+      hypotheses: [],
+      current_step: 'report_render',
+      completed_steps: ['intake_classifier'],
+    })
+    vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+
+    renderTab()
+
+    const summary = await screen.findByText('A summary of the threat.')
+    const toggle = screen.getByRole('button', { name: /Show Pipeline Diagram/i })
+    expect(summary.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Collapsed by default — the timeline's step list hasn't rendered yet.
+    expect(screen.queryByText('Intake Classifier')).not.toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(toggle)
+    })
+
+    expect(await screen.findByRole('button', { name: /Hide Pipeline Diagram/i })).toBeInTheDocument()
+    expect(await screen.findByText('Intake Classifier')).toBeInTheDocument()
+  })
+
+  it('also renders the Pipeline Diagram toggle on a completed (read-only) run', async () => {
+    vi.mocked(api.threatHunting.getRunStatus).mockResolvedValue({
+      hunt_package_id: 'pkg-1',
+      run_id: 'run-1',
+      generation_status: 'completed',
+      threat_context: { summary: 'A summary of the threat.' },
+      hypotheses: [],
+      current_step: 'report_render',
+      completed_steps: ['intake_classifier'],
+    })
+    vi.mocked(api.threatHunting.listIocs).mockResolvedValue([])
+    vi.mocked(api.threatHunting.listEvidence).mockResolvedValue([])
+
+    renderTab()
+
+    await screen.findByText('A summary of the threat.')
+    expect(screen.getByRole('button', { name: /Show Pipeline Diagram/i })).toBeInTheDocument()
   })
 
   describe('Approve gating on unapplied IOC verdict changes (issue-local-018 follow-up)', () => {

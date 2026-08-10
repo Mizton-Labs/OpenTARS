@@ -19,6 +19,7 @@ import {
   Gauge,
   Compass,
   ScrollText,
+  ListChecks,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { api } from '../api/client'
@@ -50,6 +51,10 @@ type NavItem = {
   // would highlight simultaneously while on the packages route. Defaults to
   // false (unchanged behaviour) everywhere else.
   end?: boolean
+  // issue-local-041: min-role gate (researcher AND admin, not viewer) —
+  // distinct from adminOnly (admin exclusively). Defaults to false
+  // (unchanged behaviour) everywhere else.
+  researcherOnly?: boolean
 }
 
 type NavSection = {
@@ -92,6 +97,10 @@ const navSections: NavSection[] = [
       { to: 'threat-hunting/tracking', label: 'Threat Intel Tracking', icon: Network, adminOnly: false, authOnly: false },
       // issue-local-033: row-level data behind each Dashboard panel.
       { to: 'threat-hunting/explorer', label: 'Data Explorer', icon: Compass, adminOnly: false, authOnly: false },
+      // issue-local-041: moved out of admin-only Configuration — researcher
+      // or admin (not threat-viewer); researchers can edit/delete only
+      // their own playbooks (enforced server-side), admins can manage any.
+      { to: 'threat-hunting/playbooks', label: 'Hunt Playbooks', icon: ListChecks, adminOnly: false, authOnly: false, researcherOnly: true },
     ],
   },
 ]
@@ -144,11 +153,13 @@ export default function Sidebar() {
   })
   const displayTitle = titleData?.app_title?.trim() || 'OpenTARS'
 
-  // Unused: isResearcher is available for future gating within sections
-  void isResearcher
-
   const filterItems = (items: NavItem[]) =>
-    items.filter((it) => (!it.adminOnly || isAdmin) && (!it.authOnly || authEnabled))
+    items.filter(
+      (it) =>
+        (!it.adminOnly || isAdmin) &&
+        (!it.authOnly || authEnabled) &&
+        (!it.researcherOnly || isResearcher || isAdmin),
+    )
 
   const filteredUtility = filterItems(utilityItems)
 

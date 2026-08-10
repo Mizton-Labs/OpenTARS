@@ -9,7 +9,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import RunConfigForm from '../pages/threat-hunting/RunConfigForm'
-import { DEFAULT_IOC_CLEANING_OPTIONS, playbookChoiceValue } from '../pages/threat-hunting/runConfigUtils'
+import { DEFAULT_IOC_CLEANING_OPTIONS, DEFAULT_QUERY_LANGUAGES, playbookChoiceValue } from '../pages/threat-hunting/runConfigUtils'
 import type { THPlaybook } from '../api/client'
 
 function baseProps(overrides: Partial<React.ComponentProps<typeof RunConfigForm>> = {}) {
@@ -26,6 +26,8 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof RunConfigForm>
     onIocCleaningOptionsChange: vi.fn(),
     includeThreatIntel: true,
     onIncludeThreatIntelChange: vi.fn(),
+    queryLanguages: DEFAULT_QUERY_LANGUAGES,
+    onQueryLanguagesChange: vi.fn(),
     ...overrides,
   }
 }
@@ -59,6 +61,46 @@ describe('RunConfigForm', () => {
     render(<RunConfigForm {...baseProps({ effort: 'medium', onEffortChange })} />)
     fireEvent.click(screen.getByRole('button', { name: 'high' }))
     expect(onEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  describe('issue-local-041: query language toggles', () => {
+    it('renders SPL/KQL/CQL/Elasticsearch checkboxes reflecting the queryLanguages prop in both variants', () => {
+      const { unmount } = render(
+        <RunConfigForm
+          {...baseProps({
+            variant: 'dialog',
+            queryLanguages: { spl: true, kql: true, cql: false, elasticsearch: true },
+          })}
+        />,
+      )
+      expect(screen.getByLabelText('SPL')).toBeChecked()
+      expect(screen.getByLabelText('KQL')).toBeChecked()
+      expect(screen.getByLabelText('CQL')).not.toBeChecked()
+      expect(screen.getByLabelText('Elasticsearch')).toBeChecked()
+      unmount()
+
+      render(
+        <RunConfigForm
+          {...baseProps({
+            variant: 'compact',
+            queryLanguages: { spl: false, kql: false, cql: true, elasticsearch: false },
+          })}
+        />,
+      )
+      expect(screen.getByLabelText('SPL')).not.toBeChecked()
+      expect(screen.getByLabelText('CQL')).toBeChecked()
+    })
+
+    it('calls onQueryLanguagesChange with an updater toggling only the clicked language', () => {
+      const onQueryLanguagesChange = vi.fn()
+      const queryLanguages = { spl: true, kql: true, cql: false, elasticsearch: true }
+      render(<RunConfigForm {...baseProps({ queryLanguages, onQueryLanguagesChange })} />)
+
+      fireEvent.click(screen.getByLabelText('CQL'))
+      expect(onQueryLanguagesChange).toHaveBeenCalledTimes(1)
+      const updater = onQueryLanguagesChange.mock.calls[0][0]
+      expect(updater(queryLanguages)).toEqual({ spl: true, kql: true, cql: true, elasticsearch: true })
+    })
   })
 
   describe('issue-local-040: playbook options in the model dropdown', () => {

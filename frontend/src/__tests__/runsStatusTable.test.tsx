@@ -130,6 +130,50 @@ describe('RunsStatusTable', () => {
     expect(iocPhase).toHaveClass('text-red-400')
   })
 
+  // issue-local-041: every cell wraps its content EXCEPT the Workflow/phases
+  // column, which must stay a single line "so the progress is seen clearly
+  // from left to right" — previously exactly inverted (the phase track
+  // wrapped, everything else forced a fixed-width horizontal scroll).
+  it('keeps the Workflow phase track single-line while other cells wrap (issue-local-041)', () => {
+    render(
+      <RunsStatusTable
+        pkgId="pkg-1"
+        runs={[makeRun({ llm_model: 'a-very-long-model-name-that-should-wrap-in-its-cell' })]}
+      />,
+    )
+    const table = screen.getByRole('table')
+    expect(table).not.toHaveClass('min-w-[900px]')
+
+    const modelCell = screen.getByText('a-very-long-model-name-that-should-wrap-in-its-cell').closest('td')!
+    expect(modelCell).not.toHaveClass('whitespace-nowrap')
+
+    const phaseTrack = within(screen.getByRole('table').querySelector('tbody')!).getByText('Evidence').closest('div.flex-nowrap')!
+    expect(phaseTrack).toHaveClass('flex-nowrap')
+    expect(phaseTrack.closest('td')).toHaveClass('whitespace-nowrap')
+  })
+
+  // issue-local-041: per-run token total (alongside Duration) + a
+  // package-wide total footer summed across every run.
+  it('shows the per-run token total and a package-wide total footer', () => {
+    render(
+      <RunsStatusTable
+        pkgId="pkg-1"
+        runs={[
+          makeRun({ id: 'run-1', token_usage_total: { total_tokens: 100 } }),
+          makeRun({ id: 'run-2', token_usage_total: { total_tokens: 250 } }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('100 tok')).toBeInTheDocument()
+    expect(screen.getByText('250 tok')).toBeInTheDocument()
+    expect(screen.getByText(/Hunt package total: 350 tokens across 2 runs/)).toBeInTheDocument()
+  })
+
+  it('omits the package total footer when no run reported token usage', () => {
+    render(<RunsStatusTable pkgId="pkg-1" runs={[makeRun()]} />)
+    expect(screen.queryByText(/Hunt package total:/)).not.toBeInTheDocument()
+  })
+
   it('renders one row per run', () => {
     render(
       <RunsStatusTable

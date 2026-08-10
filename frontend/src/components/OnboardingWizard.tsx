@@ -30,6 +30,114 @@ const THEME_OPTIONS: { id: ThemeName; label: string; colors: string[] }[] = [
   { id: 'redhunter', label: 'RedHunter', colors: ['#080808', '#141414', '#f43f5e', '#dc2626'] },
 ]
 
+// issue-local-041: full palette per theme for the live demo-table preview
+// below — page/card/border/text/accent, mirroring frontend/src/index.css's
+// current `--color-*` custom properties (and the per-theme `.card`
+// background overrides). Same "duplicated literal, not read from the CSS
+// variables" trade-off THEME_OPTIONS.colors above already accepts — kept in
+// sync by hand when index.css's ramps change.
+interface DemoPalette {
+  page: string
+  card: string
+  cardBorder: string
+  headerBg: string
+  textPrimary: string
+  textMuted: string
+  textFaint: string
+  accent: string
+  accentBg: string
+}
+
+const DEMO_PALETTES: Record<ThemeName, DemoPalette> = {
+  classic: {
+    page: '#030712', card: '#111827', cardBorder: '#1f2937', headerBg: '#1f2937',
+    textPrimary: '#f3f4f6', textMuted: '#a8b0b8', textFaint: '#5c626e',
+    accent: '#2f58f0', accentBg: 'rgba(47, 88, 240, 0.18)',
+  },
+  energy: {
+    page: '#0a0a0a', card: '#181818', cardBorder: '#2e2e2e', headerBg: '#1c1c1c',
+    textPrimary: '#ececec', textMuted: '#a8a8a8', textFaint: '#606060',
+    accent: '#facc15', accentBg: 'rgba(250, 204, 21, 0.18)',
+  },
+  light: {
+    page: '#fafbfd', card: '#e3e6e9', cardBorder: '#cbd5e1', headerBg: '#dbdee1',
+    textPrimary: '#111827', textMuted: '#5a606b', textFaint: '#474d56',
+    accent: '#2f58f0', accentBg: 'rgba(47, 88, 240, 0.12)',
+  },
+  ocean: {
+    page: '#02080b', card: '#08161c', cardBorder: '#1e3d45', headerBg: '#11262d',
+    textPrimary: '#dbeef1', textMuted: '#5f96a0', textFaint: '#44747a',
+    accent: '#0ea5e9', accentBg: 'rgba(14, 165, 233, 0.18)',
+  },
+  redhunter: {
+    page: '#181818', card: '#282828', cardBorder: '#404040', headerBg: '#2e2e2e',
+    textPrimary: '#e8e8e8', textMuted: '#969696', textFaint: '#5a5a5a',
+    accent: '#f43f5e', accentBg: 'rgba(244, 63, 94, 0.18)',
+  },
+}
+
+// issue-local-041: a short, static sample of what RunsStatusTable.tsx's
+// runs table looks like — purely illustrative, not real data.
+const DEMO_RUNS: { id: string; model: string; status: string; statusColor: 'green' | 'blue' | 'red'; created: string }[] = [
+  { id: 'TH01-X03', model: 'gpt-4o · high', status: 'completed', statusColor: 'green', created: '2 hours ago' },
+  { id: 'TH01-X02', model: 'claude · medium', status: 'running', statusColor: 'blue', created: '5 min ago' },
+  { id: 'TH01-X01', model: 'gpt-oss · high', status: 'completed', statusColor: 'green', created: '1 day ago' },
+]
+
+const DEMO_STATUS_COLOR: Record<'green' | 'blue' | 'red', string> = {
+  green: '#4ade80',
+  blue: '#60a5fa',
+  red: '#f87171',
+}
+
+function DemoRunsTable({ palette }: { palette: DemoPalette }) {
+  return (
+    <div
+      className="rounded-lg border overflow-hidden"
+      style={{ backgroundColor: palette.card, borderColor: palette.cardBorder }}
+    >
+      <table className="w-full text-left">
+        <thead>
+          <tr style={{ backgroundColor: palette.headerBg }}>
+            {['Run ID', 'Model', 'Status', 'Created'].map((h) => (
+              <th
+                key={h}
+                className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: palette.textFaint }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {DEMO_RUNS.map((run) => (
+            <tr key={run.id} style={{ borderTop: `1px solid ${palette.cardBorder}` }}>
+              <td className="px-2.5 py-1.5 text-[11px] font-mono" style={{ color: palette.textPrimary }}>
+                {run.id}
+              </td>
+              <td className="px-2.5 py-1.5 text-[11px] font-mono" style={{ color: palette.textMuted }}>
+                {run.model}
+              </td>
+              <td className="px-2.5 py-1.5">
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ color: DEMO_STATUS_COLOR[run.statusColor], backgroundColor: palette.accentBg }}
+                >
+                  {run.status}
+                </span>
+              </td>
+              <td className="px-2.5 py-1.5 text-[10px]" style={{ color: palette.textFaint }}>
+                {run.created}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 const DENSITY_OPTIONS: { id: HuntDensity; label: string; description: string }[] = [
   { id: 'simple', label: 'Simple', description: 'One line per hunt package — just the run count.' },
   { id: 'compact', label: 'Compact', description: 'Status, evidence count, and per-run chips.' },
@@ -48,6 +156,7 @@ export default function OnboardingWizard({ onDone }: { onDone: () => void }) {
   const selectedThemeInfo = THEME_OPTIONS.find((t) => t.id === selectedTheme) ?? THEME_OPTIONS[0]
   const selectedDensityInfo =
     DENSITY_OPTIONS.find((d) => d.id === selectedDensity) ?? DENSITY_OPTIONS[3]
+  const selectedPalette = DEMO_PALETTES[selectedTheme]
 
   async function handleFinish() {
     setSaving(true)
@@ -73,6 +182,13 @@ export default function OnboardingWizard({ onDone }: { onDone: () => void }) {
           </div>
           <div className="space-y-1">
             <h1 className="text-lg font-semibold text-gray-100">Welcome to OpenTARS</h1>
+            {/* issue-local-041: explicit "why am I seeing this" — the wizard
+                is gated by AuthUser.onboarded and only ever shows once
+                (or when an admin re-triggers it), which wasn't stated
+                anywhere on the screen itself. */}
+            <p className="text-[11px] text-brand-400 font-medium uppercase tracking-wide">
+              Shown because this is your first sign-in
+            </p>
             <p className="text-xs text-gray-400">
               Pick a theme and how you'd like Hunt Packages to display. You can always change
               these later in Configuration and Account.
@@ -132,15 +248,16 @@ export default function OnboardingWizard({ onDone }: { onDone: () => void }) {
           </div>
         </div>
 
-        {/* Preview card — swatch + description, live-updating (issue-local-038) */}
-        <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3 space-y-1.5">
+        {/* issue-local-041: real demo table preview (a short version of the
+            Hunt Package runs table), live-styled with the selected theme's
+            actual palette — not just abstract swatches, so the user sees a
+            real table before committing to a theme. */}
+        <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3 space-y-2">
           <p className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">
             Preview
           </p>
-          <div className="flex gap-1">
-            {selectedThemeInfo.colors.map((c, i) => (
-              <span key={i} className="w-4 h-4 rounded border border-gray-700/40" style={{ backgroundColor: c }} />
-            ))}
+          <div className="rounded-lg p-3" style={{ backgroundColor: selectedPalette.page }}>
+            <DemoRunsTable palette={selectedPalette} />
           </div>
           <p className="text-xs text-gray-300">
             <span className="font-medium">{selectedThemeInfo.label}</span> theme ·{' '}

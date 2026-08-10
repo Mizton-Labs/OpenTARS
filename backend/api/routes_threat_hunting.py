@@ -617,6 +617,18 @@ async def start_generation(pkg_id: str, body: GenerateBody, request: Request) ->
             status_code=400,
             detail="run_config.ioc_mode must be 'tagging_only' or 'active_cleaning'",
         )
+    # issue-local-041: per-run override of the default query languages
+    # query_drafting_agent drafts — same keys/shape as th_query_languages.
+    query_languages = run_config.get("query_languages")
+    if query_languages is not None:
+        if not isinstance(query_languages, dict) or not all(
+            k in ("spl", "kql", "cql", "elasticsearch") and isinstance(v, bool)
+            for k, v in query_languages.items()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="run_config.query_languages must be an object with spl/kql/cql/elasticsearch booleans",
+            )
 
     created_by = None
     if hasattr(request.state, "user") and request.state.user:
@@ -1003,11 +1015,37 @@ async def test_connector(conn_id: str) -> dict:
     }
 
 
-# ── Hunt Playbooks (issue-local-040) ─────────────────────────────────────────
-# Global, DB-backed automation configs — same "any researcher/admin can
-# manage" role model as SIEM connectors above (no per-object ownership exists
-# anywhere in this codebase; every write here relies on the app-wide auth
-# middleware's path-prefix role gate, not a per-route Depends()).
+# ── Hunt Playbooks (issue-local-040, ownership issue-local-041) ─────────────
+# Global, DB-backed automation configs. Any researcher/admin can create, list,
+# read, run, and clone playbooks (relies on the app-wide auth middleware's
+# path-prefix role gate — /api/threat-hunting/ writes and reads both already
+# require researcher-or-admin, excluding viewer). Editing/deleting an
+# EXISTING playbook is additionally scoped to its owner (created_by) for
+# researchers — admins bypass this and may edit/delete any playbook, same as
+# every other role check in this app (main.py's admin bypass is total).
+
+
+def _require_playbook_owner_or_admin(playbook: dict, request: Request) -> None:
+    """Raise 403 unless *request*'s caller may edit/delete *playbook*.
+
+    issue-local-041: "Only Threat researcher role is able to read/edit/delete
+    (own) playbooks" — admins are exempt from the ownership check (they can
+    edit/delete any playbook, exactly as before this change). A playbook
+    with no recorded owner (created_by NULL — created before this field
+    existed, or while auth was disabled) has no owner to enforce, so it
+    remains editable/deletable by any researcher, same as pre-issue-local-041
+    behavior. Auth-disabled requests (no request.state.user at all) are
+    likewise unrestricted — there is no identity to compare against.
+    """
+    if not (hasattr(request.state, "user") and request.state.user):
+        return
+    user = request.state.user
+    if user.get("role") == "admin":
+        return
+    owner = playbook.get("created_by")
+    if owner is None or owner == user.get("username"):
+        return
+    raise HTTPException(status_code=403, detail="Only the playbook's owner or an admin may do this.")
 
 
 class PlaybookModelEntry(BaseModel):
@@ -1079,8 +1117,12 @@ async def get_playbook_route(playbook_id: str) -> dict:
 
 
 @router.put("/playbooks/{playbook_id}")
-async def update_playbook_route(playbook_id: str, body: PlaybookUpdateBody) -> dict:
+async def update_playbook_route(playbook_id: str, body: PlaybookUpdateBody, request: Request) -> dict:
     """Update a Hunt Playbook. Only supplied fields are changed."""
+    existing = await th_db.get_playbook(playbook_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    _require_playbook_owner_or_admin(existing, request)
     try:
         result = await th_db.update_playbook(
             playbook_id,
@@ -1101,9 +1143,13 @@ async def update_playbook_route(playbook_id: str, body: PlaybookUpdateBody) -> d
 
 
 @router.delete("/playbooks/{playbook_id}", status_code=204)
-async def delete_playbook_route(playbook_id: str) -> None:
+async def delete_playbook_route(playbook_id: str, request: Request) -> None:
     """Delete a Hunt Playbook. Runs already tagged with it keep their
     snapshotted playbook_id/playbook_name — they are untouched."""
+    existing = await th_db.get_playbook(playbook_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    _require_playbook_owner_or_admin(existing, request)
     deleted = await th_db.delete_playbook(playbook_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Playbook not found")

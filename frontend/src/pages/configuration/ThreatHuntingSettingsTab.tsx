@@ -2,19 +2,29 @@
  * Threat Hunting Settings Tab — issue-local-004
  *
  * Controls:
- *   1. Research Effort  (high | medium | low)
- *   2. Report Format    (pdf: boolean, markdown: boolean — both default on)
+ *   1. Research Effort     (high | medium | low)
+ *   2. Report Format       (pdf: boolean, markdown: boolean — both default on)
+ *   3. Default Query Languages (issue-local-041: spl/kql/cql/elasticsearch —
+ *      what query_drafting_agent generates by default; overridable per-run
+ *      in RunConfigForm.tsx's Query Languages toggles)
  */
 
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, Save, Loader2, Search } from 'lucide-react'
+import { FileText, Save, Loader2, Search, Terminal } from 'lucide-react'
 import { clsx } from 'clsx'
-import { api } from '../../api/client'
+import { api, type THQueryLanguages } from '../../api/client'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ResearchEffort = 'high' | 'medium' | 'low'
+
+const QUERY_LANGUAGE_OPTIONS: { id: keyof THQueryLanguages; label: string; description: string }[] = [
+  { id: 'spl', label: 'SPL', description: 'Splunk Search Processing Language.' },
+  { id: 'kql', label: 'KQL', description: 'Kusto Query Language, for Microsoft Sentinel/Defender.' },
+  { id: 'cql', label: 'CQL', description: 'CrowdStrike Query Language, for Falcon LogScale.' },
+  { id: 'elasticsearch', label: 'Elasticsearch', description: 'Elasticsearch Query DSL.' },
+]
 
 const EFFORT_OPTIONS: { id: ResearchEffort; label: string; description: string }[] = [
   {
@@ -54,11 +64,21 @@ export default function ThreatHuntingSettingsTab() {
     queryKey: ['hunt-id-prefix'],
     queryFn: () => api.getHuntIdPrefix(),
   })
+  const { data: queryLanguagesData, isLoading: queryLanguagesLoading } = useQuery({
+    queryKey: ['th-query-languages'],
+    queryFn: () => api.getThQueryLanguages(),
+  })
 
   const [effort, setEffort] = useState<ResearchEffort>('high')
   const [pdfEnabled, setPdfEnabled] = useState(true)
   const [markdownEnabled, setMarkdownEnabled] = useState(true)
   const [huntIdPrefix, setHuntIdPrefix] = useState('TH')
+  const [queryLanguages, setQueryLanguages] = useState<THQueryLanguages>({
+    spl: true,
+    kql: true,
+    cql: false,
+    elasticsearch: true,
+  })
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -80,27 +100,44 @@ export default function ThreatHuntingSettingsTab() {
     }
   }, [prefixData])
 
+  useEffect(() => {
+    if (queryLanguagesData?.th_query_languages) {
+      setQueryLanguages(queryLanguagesData.th_query_languages)
+    }
+  }, [queryLanguagesData])
+
   const saveMut = useMutation({
     mutationFn: async () => {
       await api.setThResearchEffort(effort)
       await api.setThReportFormats({ pdf: pdfEnabled, markdown: markdownEnabled })
       await api.setHuntIdPrefix(huntIdPrefix)
+      await api.setThQueryLanguages(queryLanguages)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['th-research-effort'] })
       qc.invalidateQueries({ queryKey: ['th-report-formats'] })
       qc.invalidateQueries({ queryKey: ['hunt-id-prefix'] })
+      qc.invalidateQueries({ queryKey: ['th-query-languages'] })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     },
   })
 
-  const isLoading = effortLoading || formatsLoading || prefixLoading
+  const DEFAULT_QUERY_LANGUAGES_FALLBACK: THQueryLanguages = {
+    spl: true,
+    kql: true,
+    cql: false,
+    elasticsearch: true,
+  }
+
+  const isLoading = effortLoading || formatsLoading || prefixLoading || queryLanguagesLoading
   const isDirty =
     effort !== (effortData?.th_research_effort ?? 'high') ||
     pdfEnabled !== (formatsData?.th_report_formats?.pdf ?? true) ||
     markdownEnabled !== (formatsData?.th_report_formats?.markdown ?? true) ||
-    huntIdPrefix !== (prefixData?.hunt_id_prefix ?? 'TH')
+    huntIdPrefix !== (prefixData?.hunt_id_prefix ?? 'TH') ||
+    JSON.stringify(queryLanguages) !==
+      JSON.stringify(queryLanguagesData?.th_query_languages ?? DEFAULT_QUERY_LANGUAGES_FALLBACK)
 
   if (isLoading) {
     return (
@@ -294,6 +331,63 @@ export default function ThreatHuntingSettingsTab() {
         {!pdfEnabled && !markdownEnabled && (
           <p className="text-xs text-amber-400 px-1">
             At least one format should be enabled for report export to work.
+          </p>
+        )}
+      </div>
+
+      {/* Default Query Languages (issue-local-041) */}
+      <div className="space-y-3">
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+          Default Query Languages
+        </p>
+        <p className="text-xs text-gray-500">
+          Which SIEM query languages are drafted by default when a hunt run generates queries.
+          These are defaults only — users can enable/disable languages per run in the run
+          configuration cards.
+        </p>
+        <div className="space-y-2">
+          {QUERY_LANGUAGE_OPTIONS.map((opt) => {
+            const enabled = queryLanguages[opt.id]
+            return (
+              <button
+                key={opt.id}
+                onClick={() => setQueryLanguages((prev) => ({ ...prev, [opt.id]: !enabled }))}
+                className={clsx(
+                  'w-full flex items-center justify-between rounded-lg border px-4 py-3 transition-colors',
+                  enabled
+                    ? 'border-brand-500 bg-brand-900/20'
+                    : 'border-gray-700 hover:border-gray-500 bg-gray-800/30',
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <Terminal className={clsx('w-4 h-4', enabled ? 'text-brand-400' : 'text-gray-600')} />
+                  <div className="text-left">
+                    <p className={clsx('text-sm font-medium', enabled ? 'text-brand-300' : 'text-gray-400')}>
+                      {opt.label}
+                    </p>
+                    <p className="text-xs text-gray-500">{opt.description}</p>
+                  </div>
+                </div>
+                <div
+                  className={clsx(
+                    'w-10 h-5 rounded-full transition-colors relative shrink-0',
+                    enabled ? 'bg-brand-500' : 'bg-gray-700',
+                  )}
+                >
+                  <div
+                    className={clsx(
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                      enabled ? 'translate-x-5' : 'translate-x-0.5',
+                    )}
+                  />
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        {Object.values(queryLanguages).every((v) => !v) && (
+          <p className="text-xs text-amber-400 px-1">
+            At least one query language should be enabled for query drafting to work.
           </p>
         )}
       </div>

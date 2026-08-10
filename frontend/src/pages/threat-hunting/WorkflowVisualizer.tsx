@@ -4,15 +4,19 @@
  * Renders the live agent pipeline during a generation run.
  * Reads the global verbosity + visualization settings and renders accordingly.
  *
- * Verbosity levels:
- *   info    — compact checklist
- *   verbose — 2-col layout: task list LEFT, diagram card RIGHT (issue-006-C);
- *             also shows the Pipeline Log console, filtered to error/
- *             disabled/failed reasoning lines only (issue-local-021)
- *   debug   — verbose view + the full Pipeline Log console (every
- *             TOOL_CALL/TOOL_RESULT/LLM_CALL/LLM_RESPONSE line, unfiltered)
+ * Verbosity levels (issue-local-041 renamed the old 3-tier scale — old
+ * "verbose" -> "detailed", old "debug" -> "verbose" — and added a new,
+ * deeper "debug"):
+ *   info     — compact checklist
+ *   detailed — 2-col layout: task list LEFT, diagram card RIGHT (issue-006-C);
+ *              also shows the Pipeline Log console, filtered to error/
+ *              disabled/failed reasoning lines only (issue-local-021)
+ *   verbose  — detailed + the full Pipeline Log console (every
+ *              TOOL_CALL/TOOL_RESULT/LLM_CALL/LLM_RESPONSE line, unfiltered)
+ *   debug    — verbose + agent/component names highlighted in the console, a
+ *              full prompt inspector, and token usage totals
  *
- * Visualization styles (only for verbose/debug):
+ * Visualization styles (only above 'info'):
  *   timeline  — animated vertical step list (no extra deps)
  *   mermaid   — live Mermaid flowchart (lazy-loaded)
  *   reactflow — interactive ReactFlow graph (lazy-loaded)
@@ -36,11 +40,14 @@ import {
   SkipForward,
   AlertCircle,
   ArrowRight,
+  MessageSquare,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useQuery } from '@tanstack/react-query'
 import { api, type THGenerationRecord, type THStepLog, type THIntakeSource } from '../../api/client'
-import { buildPipelineLogLines } from './pipelineLogUtils'
+import { buildPipelineLogLines, isPipelineLogSectionHeader, sumTokenUsage } from './pipelineLogUtils'
 
 // ── Lazy-loaded visualizers ───────────────────────────────────────────────────
 
@@ -49,7 +56,10 @@ const ReactFlowVisualizer = lazy(() => import('./ReactFlowVisualizer'))
 
 // ── Pipeline step metadata ────────────────────────────────────────────────────
 
-const PIPELINE_STEPS = [
+// issue-local-041: exported so ReactFlowVisualizer.tsx can reuse these
+// descriptions for its node hover tooltips instead of maintaining its own
+// separate, description-less copy of this list.
+export const PIPELINE_STEPS = [
   // ── LangGraph pipeline ──────────────────────────────────────────────────────
   { id: 'intake_classifier',       label: 'Intake Classifier',       description: 'Loads evidence, builds corpus, extracts IOC summary' },
   { id: 'threat_context_builder',  label: 'Threat Context Builder',  description: 'Produces structured threat actor/campaign context' },
@@ -139,10 +149,13 @@ function TimelineVisualizer({
   onShowIocs,
 }: {
   genRecord: THGenerationRecord
-  /** issue-local-021: 'verbose' now also shows the Pipeline Log console,
-   *  filtered to error/disabled lines only ("show the thinking depending on
-   *  verbosity" — the full raw trace is reserved for 'debug'). */
-  verbosity: 'verbose' | 'debug'
+  /** issue-local-041: three tiers reach this component (everything above
+   *  'info', which renders the compact checklist instead). 'detailed' shows
+   *  the Pipeline Log console filtered to error/disabled lines only; the
+   *  full raw trace appears at 'verbose' and above; 'debug' additionally
+   *  gets agent-name highlighting + (issue-local-041 F24) the prompt
+   *  inspector and token totals. */
+  verbosity: 'detailed' | 'verbose' | 'debug'
   onShowIocs?: () => void
 }) {
   const stepLogs: Record<string, THStepLog> = {}
@@ -152,8 +165,17 @@ function TimelineVisualizer({
   const completed = genRecord.completed_steps ?? []
   const currentStep = genRecord.current_step ?? ''
   const debug = verbosity === 'debug'
-  const showConsole = verbosity === 'verbose' || verbosity === 'debug'
+  const fullTrace = verbosity === 'verbose' || verbosity === 'debug'
+  const showConsole = verbosity === 'detailed' || verbosity === 'verbose' || verbosity === 'debug'
   const allDebugLines = buildPipelineLogLines(genRecord, verbosity, PIPELINE_STEPS)
+  // issue-local-041: run-level token total — shown whenever any step
+  // reported usage, regardless of verbosity tier ("this applies for all
+  // logging modes" per the issue, unlike prompts which are debug-only).
+  const runTokenTotal = sumTokenUsage(genRecord.step_logs)
+  // issue-local-041: which step's prompt inspector is expanded, if any —
+  // only ever has entries to show at 'debug' verbosity (step.prompts is
+  // only populated server-side at that tier).
+  const [expandedPromptsStep, setExpandedPromptsStep] = useState<string | null>(null)
 
   const debugRef = useRef<HTMLPreElement>(null)
   useEffect(() => {
@@ -164,6 +186,19 @@ function TimelineVisualizer({
 
   return (
     <div className="space-y-4">
+      {/* issue-local-041: run-level token total — "for all logging modes",
+          so shown whenever any step reported usage, not gated to 'debug'. */}
+      {runTokenTotal && (
+        <p className="text-[11px] text-amber-500 font-mono">
+          Run total: {(runTokenTotal.total_tokens ?? 0).toLocaleString()} tokens
+          {runTokenTotal.input_tokens != null && runTokenTotal.output_tokens != null && (
+            <span className="text-gray-600">
+              {' '}
+              ({runTokenTotal.input_tokens.toLocaleString()} in / {runTokenTotal.output_tokens.toLocaleString()} out)
+            </span>
+          )}
+        </p>
+      )}
       <div className="space-y-1">
         {PIPELINE_STEPS.map((step) => {
           const log = stepLogs[step.id]
@@ -231,6 +266,17 @@ function TimelineVisualizer({
                         effort={log.effort}
                       </span>
                     )}
+                    {/* issue-local-041: per-step token usage — shown at any
+                        verbosity that reaches this list (token counts apply
+                        "for all logging modes", unlike prompts below). */}
+                    {log?.tokens?.total_tokens != null && (
+                      <span
+                        className="text-[11px] text-amber-600 font-mono"
+                        title="Token usage for this step"
+                      >
+                        {log.tokens.total_tokens.toLocaleString()} tok
+                      </span>
+                    )}
                     {/* issue-006-C: tools_used pills */}
                     {log?.tools_used?.map((tool) => (
                       <span
@@ -240,6 +286,27 @@ function TimelineVisualizer({
                         {tool}()
                       </span>
                     ))}
+                    {/* issue-local-041: prompt inspector toggle — only ever
+                        renders when this step has prompts, which is only
+                        ever populated server-side at 'debug' verbosity. */}
+                    {debug && log?.prompts && log.prompts.length > 0 && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-0.5 text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
+                        onClick={() =>
+                          setExpandedPromptsStep(expandedPromptsStep === step.id ? null : step.id)
+                        }
+                        title="Inspect the prompts sent for this step"
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        Prompts
+                        {expandedPromptsStep === step.id ? (
+                          <ChevronUp className="w-3 h-3" />
+                        ) : (
+                          <ChevronDown className="w-3 h-3" />
+                        )}
+                      </button>
+                    )}
                   </div>
                   {/* issue-006-C: decision sub-text */}
                   {log?.decision && (
@@ -259,6 +326,30 @@ function TimelineVisualizer({
                       ))}
                     </div>
                   )}
+                  {/* issue-local-041: prompt inspector panel */}
+                  {debug && expandedPromptsStep === step.id && log?.prompts && (
+                    <div className="mt-1.5 pl-3 border-l border-blue-700/40 space-y-1.5">
+                      {log.prompts.map((p, i) => (
+                        <div key={i}>
+                          <p
+                            className={clsx(
+                              'text-[10px] uppercase tracking-wider font-semibold',
+                              p.type === 'system'
+                                ? 'text-purple-400'
+                                : p.type === 'user'
+                                  ? 'text-blue-400'
+                                  : 'text-green-400',
+                            )}
+                          >
+                            {p.type}
+                          </p>
+                          <pre className="text-[11px] text-gray-400 font-mono whitespace-pre-wrap bg-gray-950 border border-gray-800 rounded p-2 mt-0.5 max-h-48 overflow-y-auto">
+                            {p.content}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -266,21 +357,34 @@ function TimelineVisualizer({
         })}
       </div>
 
-      {/* issue-local-021: Pipeline Log console — now shown at 'verbose' too
-          (filtered to error/disabled reasoning lines), full raw trace at
-          'debug'. */}
+      {/* issue-local-041: Pipeline Log console — shown from 'detailed' up
+          (filtered to error/disabled reasoning lines there), full raw trace
+          at 'verbose' and 'debug'. */}
       {showConsole && (
         <div className="space-y-1">
           <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">
-            Pipeline Log {!debug && <span className="normal-case text-gray-600">(errors only — enable Debug verbosity for the full trace)</span>}
+            Pipeline Log {!fullTrace && <span className="normal-case text-gray-600">(errors only — enable Verbose or Debug for the full trace)</span>}
           </p>
           <pre
             ref={debugRef}
             className="bg-gray-950 border border-gray-800 rounded p-2 text-[10px] text-green-400 font-mono h-48 overflow-y-auto whitespace-pre-wrap"
           >
-            {allDebugLines.length > 0
-              ? allDebugLines.join('\n')
-              : '(No log lines yet. Lines will appear here as steps complete.)'}
+            {allDebugLines.length > 0 ? (
+              // issue-local-041: at 'debug' verbosity, highlight the
+              // "=== <Component> ===" section header each step's lines are
+              // grouped under — "highlight the names of the components/
+              // agents performing the tasks" in the debug console.
+              allDebugLines.map((line, i) => (
+                <div
+                  key={i}
+                  className={clsx(debug && isPipelineLogSectionHeader(line) && 'text-brand-400 font-bold')}
+                >
+                  {line}
+                </div>
+              ))
+            ) : (
+              '(No log lines yet. Lines will appear here as steps complete.)'
+            )}
           </pre>
         </div>
       )}
@@ -331,7 +435,11 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   // issue-local-022 (item 7): defaults on.
   const [trackWorkflow, setTrackWorkflow] = useState(true)
 
-  const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as 'info' | 'verbose' | 'debug'
+  const verbosity = (verbosityData?.agent_workflow_verbosity ?? 'info') as
+    | 'info'
+    | 'detailed'
+    | 'verbose'
+    | 'debug'
   const visualization = (vizData?.agent_workflow_visualization ?? 'timeline') as 'timeline' | 'mermaid' | 'reactflow'
 
   const completed = genRecord.completed_steps ?? []
@@ -367,8 +475,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
     )
   }
 
-  // Verbose / Debug — issue-006-C: 2-col layout (task list LEFT, diagram RIGHT)
-  const debug = verbosity === 'debug'
+  // Detailed / Verbose / Debug — issue-006-C: 2-col layout (task list LEFT, diagram RIGHT)
 
   // Part 1b: toolbar row component
   const SubtasksToolbar = (
@@ -417,7 +524,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
+          <TimelineVisualizer genRecord={genRecord} verbosity={verbosity} onShowIocs={onShowIocs} />
         </div>
         {/* Right: Mermaid diagram */}
         <div className="min-w-0">
@@ -443,7 +550,7 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
         {SubtasksToolbar}
         {/* Left: compact task list always visible */}
         <div className="min-w-0">
-          <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
+          <TimelineVisualizer genRecord={genRecord} verbosity={verbosity} onShowIocs={onShowIocs} />
         </div>
         {/* Right: ReactFlow graph */}
         <div className="min-w-0">
@@ -463,5 +570,5 @@ export default function WorkflowVisualizer({ genRecord, compact = false, onShowI
   }
 
   // Default: timeline (full width, includes debug panel)
-  return <TimelineVisualizer genRecord={genRecord} verbosity={debug ? 'debug' : 'verbose'} onShowIocs={onShowIocs} />
+  return <TimelineVisualizer genRecord={genRecord} verbosity={verbosity} onShowIocs={onShowIocs} />
 }
