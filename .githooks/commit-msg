@@ -8,6 +8,9 @@ set -euo pipefail
 
 msg_file="$1"
 
+# Reject co-author trailers (this repo records a single human author) and any
+# "<Something>-Session:" trailer. Both are matched as trailers — anchored to
+# the start of a line — so ordinary prose in the body is never affected.
 if grep -qiE '^[[:space:]]*co-authored-by:|^[[:space:]]*[A-Za-z][A-Za-z-]*-session:' "$msg_file"; then
   echo "commit-msg hook: rejected — commit message does not follow this repository's authorship guideline." >&2
   echo "Remove any additional authorship/session trailers and retry." >&2

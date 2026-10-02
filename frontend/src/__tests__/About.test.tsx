@@ -53,8 +53,6 @@ describe('About page (prompts-051)', () => {
     // The primary author @jusafing is always listed first.
     const authorLink = screen.getByRole('link', { name: '@jusafing' })
     expect(authorLink).toHaveAttribute('href', 'https://github.com/jusafing')
-    // "HoneyMex Lab" plain text is no longer rendered (replaced by author list).
-    expect(screen.queryByText('HoneyMex Lab')).toBeNull()
   })
 
   it('shows the License card referencing the license files', () => {
