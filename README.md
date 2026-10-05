@@ -829,7 +829,6 @@ Runs backend tests (`pytest`) and frontend tests (`vitest`).
 
 ```
 opentars                 # Startup script — entry point
-mizton-threatbox          # Deprecated alias for ./opentars (forwards to it)
 config/
   feed-fields.yaml          # Core + custom field definitions (gitignored — see below)
   sources.yaml              # Configured ingestion sources (gitignored — see below)

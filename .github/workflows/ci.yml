@@ -67,4 +67,4 @@ jobs:
         run: ruff format --check .
 
       - name: shellcheck (launcher)
-        run: shellcheck opentars mizton-threatbox docker/build/build.sh docker/build/docker-entrypoint.sh scripts/check.sh scripts/security-check.sh scripts/test.sh
+        run: shellcheck opentars docker/build/build.sh docker/build/docker-entrypoint.sh scripts/check.sh scripts/security-check.sh scripts/test.sh
