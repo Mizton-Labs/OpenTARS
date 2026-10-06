@@ -56,11 +56,12 @@ bootstrap_uv() {
     fi
     log "Bootstrapping 'uv' locally (user-space, no root) via astral.sh installer..."
     if curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh -s -- -q 2>/dev/null; then
-        local candidate
+        local candidate candidate_dir
         for candidate in "${HOME}/.local/bin/uv" "${HOME}/.cargo/bin/uv"; do
             if [ -x "${candidate}" ]; then
                 UV="${candidate}"
-                export PATH="${PATH}:$(dirname "${candidate}")"
+                candidate_dir="$(dirname "${candidate}")"
+                export PATH="${PATH}:${candidate_dir}"
                 log "uv installed at ${UV}."
                 return 0
             fi
